@@ -1,15 +1,23 @@
 ---
 name: qnh-fill-channel-unavailable
-description: 以版本化任务模式、动作白/黑名单、固定执行器、精确 Excel Schema、机器完成门和 Skill 文件哈希，批量处理牵牛花指定 SPU 的渠道类目属性、渠道不可售、专项/资质图或插件属性填充。用户要求登录远程牵牛花后做渠道属性 100% 填充、不可售治理、资质图、标准审计表、断点续跑或复用跨账号经验时使用。
+description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 牵牛花商品治理 v3.3.4
+# 多平台商品渠道治理 v3.6.0
 
 ## 不可跳过的第一步
 
-先完整阅读 [task-mode-contract-v3.md](references/task-mode-contract-v3.md) 和
-[standard-task-contract.md](references/standard-task-contract.md)。在任何商品读取、OCR、外部调用或平台写入前，
-先冻结唯一任务模式。不要把本 Skill 当作可以任意组合的能力清单。
+先冻结唯一 `platform_adapter` 与任务模式。不要把本 Skill 当作可以任意组合的能力清单：
+
+- 当前页面/请求主机为牵牛花时，`platform_adapter=qnh`；完整阅读
+  [task-mode-contract-v3.md](references/task-mode-contract-v3.md) 和
+  [standard-task-contract.md](references/standard-task-contract.md)，再走下述 QNH 合同与固定动作入口。
+- 当前页面为翱象（`saas-retail.ele.me`）且接口为 `tc-supply-chain-portal.ele.me` 时，
+  `platform_adapter=aoxiang`、任务模式固定为 `channel_attributes_only`；完整阅读
+  [aoxiang-channel-contract-v1.md](references/aoxiang-channel-contract-v1.md)，不要调用 QNH 的 H5guard、租户合同或编辑页 writer。
+
+在任何商品详情读取、外部调用或平台写入前完成该冻结。以下 `qnh_task_contract.py` 路由与合同命令只适用于
+`platform_adapter=qnh`。
 
 使用确定性路由器：
 
@@ -42,7 +50,9 @@ python3 scripts/qnh_task_contract.py create \
 
 - `channel_attributes_only`：完整阅读
   [channel-attribute-contract-v2.md](references/channel-attribute-contract-v2.md) 和
-  [excel-schema-v1.md](references/excel-schema-v1.md)。不要读取或执行不可售错误矩阵、媒体、OCR、博查和生图流程。
+  [excel-schema-v1.md](references/excel-schema-v1.md)。翱象适配器还必须完整阅读
+  [aoxiang-channel-contract-v1.md](references/aoxiang-channel-contract-v1.md)。不要读取或执行不可售错误矩阵、媒体、
+  OCR、博查和生图流程。
 - `unavailable_one_pass`：完整阅读
   [run-contract-541.md](references/run-contract-541.md)、
   [thread-928-empirical-contract.md](references/thread-928-empirical-contract.md)、
@@ -172,7 +182,66 @@ mutation + 最多 50 SPU 持久分片 + 分片完成后回收页面/进程 + 最
 （详情、建议、规划、预演、保存、两轮全量验证、Excel）总墙钟 4:47:21.604，1547 条端到端均值约 11.15 秒/SPU；
 这是当前 4.3.0、15 GiB 宿主的可复现实测基线，不承诺跨账号恒定。
 
-## `channel_attributes_only` 固定快速路径
+## 翱象 `channel_attributes_only` 固定快速路径
+
+翱象平台只复用当前用户已经登录的 Chrome 页面。以当前诊断页的 `planId/storeCode/channelCode/type` 冻结只读清单，
+分页最大 100，先记录顶层 `total` 与 2118 等基线数量；不得把 `data.total` 当作总数。目标 writer 固定为
+`scripts/aoxiang_channel_engine.js`，它只填美团 `MT` 与淘宝闪购/饿了么 `ELE` 的渠道属性，禁止修改价格、库存、
+上下架、图片、活动状态或其他商品主档字段。渠道类目默认不可改；若当前类目与标题明确冲突并直接产生无关的监管属性，
+只允许用当前渠道树中语义唯一的叶子类目做逐商品 `exact_obsolete_category_repair`，旧/新 ID、路径和回读必须入审计。
+
+先冻结 `fill_strategy`：首次安全补齐用 `deterministic_fill`；用户指出已有值不合理、平台红框/范围提示未识别，或重检后
+仍有大量“需手动修改”时，改为 `evidence_semantic_correction`。纠错模式仍然只改 MT/ELE 渠道属性，但允许读取同商品
+标题、规格、详情图 OCR、当前字段候选/范围/平台匹配提示，并用模型在当前精确候选中判断。完整规则见
+[aoxiang-channel-contract-v1.md](references/aoxiang-channel-contract-v1.md)。不得把模型输出直接提交；先运行
+`aoxiang_deepseek_semantic_planner.mjs` 的本地物化校验，再用 `aoxiang_audit_semantic_overrides.mjs` 独立审计。
+
+正式写入前固定通过：1 条 UI 原生 canary、1 条直接接口 canary、50 条只读覆盖、10 条多品类实写并独立回读。
+冻结后使用经同品证据复核的平台匹配值、已存在跨渠道等价事实、标题/规格明确事实与非监管安全默认，复合字段必须按目标
+渠道的值类型和单位候选重新物化。监管编号、功率、型号等不得凭空生成；缺少精确事实时先进入 blocker，残差只能由
+同品事实、平台候选、标题/规格或中性包装/铭牌回指规则收敛，并在字段审计中标明来源。
+`supportExtend=1` 且候选为空的下拉不是无候选：按翱象原生转换合同提交空 ID 与规格原文。实物图、检测报告或吊牌中
+有逐字事实时，只能通过逐 SKU `evidenceOverrides` 注入合法候选，并记录证据说明；不得把该覆盖扩散到其他商品。
+
+保存必须发送平台当前原生完整商品 payload，`updateOnExitActivityFlag=0`；同一商品 mutation 只发送一次。无论保存
+响应成功、失败还是未知，均重新 GET 商品详情并逐字段比较 ID、名称、类型与复合结构；mutation 失败不得自动重发。
+并发从 1 起步，连续健康波次按 `1→2→4→6` 提升；429、请求失败或 P95 恶化立即降档。每轮导出
+`aoxiang-channel-fill-checkpoint-v1`，新一轮只处理非 `verified/verified_no_change` 残差。
+
+纠错模式不得盲用 `matchValue`：必须先做只读扫描，逐项排除与标题/规格冲突的推荐（例如瓶装→罐装、预包装→散装、
+单件容量写成整箱总量、容量写入浓度）。只有与同品标题、规格、OCR 或已验证跨渠道事实交叉一致的值才标记为
+`platform_match_validated`。纠错模式只写审计通过且确实变化的字段，其他现值必须原样保留；用 `evidenceOverridesOnly=true` 与
+`allowPartialEvidence=true` 生成 `verified_partial` 回读结果。空覆盖、非法候选 ID、平台范围外数值、容量/重量误作浓度、
+证据说明含“通常/常识/推断/推测/默认/疑似/OCR 误差”以及没有同商品明确证据的监管事实必须阻断。本轮纠错的事实字段和普通候选语义字段都使用至少 0.8 置信门；平台真实事实若超出当前 schema（例如真实酒精度 13，但字段最大值为 10），
+不得夹到 10 或伪造；保留原值并记录平台 schema blocker。模型请求按批次写 call checkpoint，续跑只补失败批次。
+
+诊断列表是异步快照。批量保存后调用平台原生 `POST /goods/check/reCheck2`，请求体仅含当前 `storeCode`，再轮询
+`GET /goods/check/getReCheckTime` 与诊断分页；重检未完成时不得把旧残量当作新的真实缺项重复写入。
+`getReCheckTime=0` 或诊断 `total=0` 都可能是重检启动后的瞬时缓存，不代表清零。下一轮 residual 只能来自至少 60 秒内
+连续 3 次相同的非瞬时分页总数与稳定 SKU 集合；任一次出现 `0→部分值→另一值` 都重新开始稳定窗口。
+
+最终必须把 2118 等冻结清单合并成单一 checkpoint，所有商品状态只能是 `verified` 或
+`verified_no_change`，再用平台诊断 API 全量复读，确认属性问题 `problemType=4` 为 0。诊断页仍可能存在无图文等非属性
+问题；不得把它们误报为本属性任务失败，也不得越权治理。
+
+运营表使用平台中立导出器，并保持与牵牛花相同工作表顺序：执行汇总、SPU清单、字段级审计、平台不存在、
+最终结构复核、问题与策略回灌、性能与外部调用统计。只能从最终 checkpoint 导出：
+
+```bash
+node scripts/export_multiplatform_channel_workbook.mjs \
+  --checkpoint "$RUN_DIR/checkpoint-final.json" \
+  --platform-name 翱象 --store-name "$STORE_NAME" \
+  --skill-version "$(cat VERSION)" \
+  --preview-dir "$RUN_DIR/workbook-previews" \
+  --output "$OUTPUT_XLSX"
+
+node scripts/validate_multiplatform_channel_workbook.mjs \
+  --checkpoint "$RUN_DIR/checkpoint-final.json" \
+  --workbook "$OUTPUT_XLSX" \
+  --output "$RUN_DIR/workbook-validation.json"
+```
+
+## 牵牛花 `channel_attributes_only` 固定快速路径
 
 这个模式默认处理用户“指定 SPU + 渠道类目属性全部填满”的请求。目标是平台现存 SPU 最终结构问题为 0，
 不是处理不可售、图片或资质。
@@ -291,7 +360,7 @@ python3 scripts/run_task_action.py \
 
 ## 精确 Excel 与完成门
 
-渠道属性模式必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)。固定文件名为
+QNH 渠道属性模式必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)。固定文件名为
 `MMDD{实时租户名称}{源清单唯一SPU数}.xlsx`。保留源工作簿业务工作表和顺序，只更新第一工作表 B/C；
 同一逻辑任务因 Skill 字节升级而必须新建 run-dir 时，只能由导出器显式 `--history-run-dir` 合并历史。
 历史目录必须与当前 `session_identity` 的 tenant ID 完全一致，且只接纳带完整

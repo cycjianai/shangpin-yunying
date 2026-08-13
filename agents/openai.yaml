@@ -1,4 +1,4 @@
 interface:
-  display_name: "牵牛花商品属性治理"
-  short_description: "连续编排、100%属性验证、长尾计时与标准Excel"
-  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定唯一任务模式与版本指纹，再用连续固定执行器完成指定SPU、机器验收100%填充率并导出Schema一致的Excel。"
+  display_name: "多平台商品渠道治理"
+  short_description: "牵牛花/翱象批量填充、独立回读与统一运营表"
+  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定牵牛花或翱象适配器与唯一任务模式，批量填充美团和淘宝闪购/饿了么渠道属性，独立回读并导出统一运营表。"

@@ -59,9 +59,16 @@ ssh -fN -o ExitOnForwardFailure=yes \
 
 ## 标签与内存门禁
 
-- 所有未来 `apply-direct-batch` 必须使用 `scripts/run_qnh_batch.sh`，不得直接运行 `node scripts/qnh_direct.mjs apply-direct-batch`。当前 15 GiB 主机默认商品并发为 2，Node old-space 为 2560 MiB；只有用户明确授权具体任务并启用独立 state、分片 canary、软回收、外部看门狗和 cgroup 硬边界时，才允许在绝对上限 10 内自适应提速。
+- 所有未来 `apply-direct-batch` 必须使用 `scripts/run_qnh_batch.sh`，不得直接运行 `node scripts/qnh_direct.mjs apply-direct-batch`。单进程必须显式传稳定 `--offset` 与 `--limit 1..50`，大于 50 在 CDP 连接前失败关闭。当前 15 GiB 主机默认商品并发为 2，Node old-space 为 2560 MiB；只有用户明确授权具体任务并启用独立 state、分片 canary、软回收、外部看门狗和 cgroup 硬边界时，才允许在绝对上限 10 内自适应提速。
+- 4.3.0 worker pool 的资源口径固定为“Node RSS + 相对批次启动时浏览器 renderer 基线的新增 RSS”，并同步记录浏览器总 RSS 和宿主 MemAvailable。不能再用 Node RSS 很小推断 Chrome 工作页也很小；达到压力门后停止取新商品，关闭本批工作页后由下一子进程续跑未终态 SPU。
+- 新工作页只允许通过单飞队列依次创建并预热；可拦截 image/media/font，禁止拦截 script/stylesheet/xhr/fetch/H5guard。每个目标 SPU 仍必须取得当前精确编辑页原生 detail 证据后才能写。
 - 新浏览器必须使用 `scripts/start_qnh_browser.sh`。浏览器和批处理会进入 `yuandian-automation.slice`；`systemd-run`、sudo 或 slice 不可用时失败关闭，绝不回退到无上限 `ssh.service`。
 - admission 默认要求 `MemAvailable >= 6 GiB`、automation slice 内存 `< 4.5 GiB`、一秒 swap-in `<= 1 MiB/s`。拒绝只影响新启动；不得为了通过门禁终止、迁移或重启已有 Node、Chrome、Codex 或业务服务。
+- 峰值 4 路出现压力后先粘滞到 2；若 2 路仍在少量商品后触发软回收，则下一次固定用 1 个可复用热 worker 跑完整
+  窗口。外层 admission 仍按共享安全合同以 2 做 cgroup 准入，进入边界后由 Skill 恢复已冻结的 serial 决策；不得
+  修改项目级 runtime guard，也不得把 serial 恢复误报为配置上限失效。
+- admission 的 75/76/77 不代表平台请求失败；连续编排器每 15 秒重新只读准入，复用原 checkpoint。已验证行不重复
+  保存，mutation failed/unknown 仍等待独立回读。
 - 启动批次后先运行 `node scripts/qnh_direct.mjs close-edit-tabs --run-dir "$RUN_DIR"`。
 - 每个 SPU 的 UI 保存与回读完成后，关闭其 `商品主档编辑` 内部标签再进入下一条。
 - dry-run、页面检查或单条失败在截图/日志留证后也关闭对应标签。

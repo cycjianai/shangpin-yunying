@@ -1,4 +1,4 @@
 interface:
   display_name: "牵牛花商品属性治理"
-  short_description: "优先复用空闲隔离会话，100%填满渠道属性并输出标准Excel"
-  default_prompt: "使用 $qnh-fill-channel-unavailable，优先复用本机空闲的隔离牵牛花会话；只有我要求或旧会话忙碌/不可用时才新开。100%补全指定SPU的渠道类目属性，导出标准命名Excel并把新问题更新为可复用策略。"
+  short_description: "连续编排、100%属性验证、长尾计时与标准Excel"
+  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定唯一任务模式与版本指纹，再用连续固定执行器完成指定SPU、机器验收100%填充率并导出Schema一致的Excel。"

@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any
 
 
-MIN_CONCURRENCY = 2
-FIRST_CONCURRENCY = 4
+MIN_CONCURRENCY = 1
+FIRST_CONCURRENCY = 10
 MAX_CONCURRENCY = 10
 STEP = 2
 
@@ -98,12 +98,12 @@ def resource_ceiling(mem_kib: int, slice_bytes: int, swap_kib_s: int) -> tuple[i
     gib = 1024**3
     if mem_kib < 6 * 1024**2 or slice_bytes >= 4 * gib or swap_kib_s > 1024:
         return 2, "resource_critical"
-    if mem_kib < 7 * 1024**2 or slice_bytes >= 3 * gib or swap_kib_s > 512:
-        return 2, "resource_constrained"
-    if mem_kib < 8 * 1024**2 or slice_bytes >= 2500 * 1024**2 or swap_kib_s > 128:
+    if mem_kib < 6500 * 1024 or slice_bytes >= 3 * gib or swap_kib_s > 512:
         return 4, "resource_cautious"
-    if mem_kib < 9 * 1024**2 or slice_bytes >= 1536 * 1024**2:
+    if mem_kib < 7 * 1024**2 or slice_bytes >= 2500 * 1024**2 or swap_kib_s > 128:
         return 6, "resource_moderate"
+    if mem_kib < 7500 * 1024 or slice_bytes >= 2 * gib:
+        return 8, "resource_available"
     return 10, "resource_roomy"
 
 
@@ -117,6 +117,10 @@ def decide(state_path: Path) -> dict[str, Any]:
     validation = state.get("last_validation") or {}
     last_decision = state.get("last_decision") or {}
     prior_concurrency = int(last_decision.get("concurrency") or MIN_CONCURRENCY)
+    pressure_ceiling = max(
+        MIN_CONCURRENCY,
+        min(MAX_CONCURRENCY, int(state.get("pressure_ceiling") or MAX_CONCURRENCY)),
+    )
 
     if not previous:
         proposed = FIRST_CONCURRENCY
@@ -128,8 +132,14 @@ def decide(state_path: Path) -> dict[str, Any]:
         selected = int(previous.get("selected_total") or 0)
         failed = int(previous.get("failed") or 0)
         delivered = int(previous.get("verified") or 0) + int(previous.get("no_change") or 0)
+        if bool(previous.get("dry_run")):
+            delivered += int(previous.get("previewed") or 0)
         p95_ms = int(previous.get("item_p95_ms") or 0)
-        peak_rss_bytes = int(previous.get("runtime_peak_rss_bytes") or 0)
+        peak_rss_bytes = int(
+            previous.get("runtime_peak_combined_rss_bytes")
+            or previous.get("runtime_peak_rss_bytes")
+            or 0
+        )
         runtime_memory_pressure_stop = bool(previous.get("runtime_memory_pressure_stop") or False)
         exit_code = int(previous.get("exit_code") or 0)
         validation_recovered = (
@@ -139,8 +149,9 @@ def decide(state_path: Path) -> dict[str, Any]:
             and int(validation.get("issue_count") or 0) == 0
         )
         if runtime_memory_pressure_stop:
-            proposed = prior_concurrency
-            workload_reason = "soft_recycle_hold"
+            observed_peak = int(previous.get("runtime_peak_concurrency") or prior_concurrency)
+            proposed = max(MIN_CONCURRENCY, min(prior_concurrency, observed_peak) - STEP)
+            workload_reason = "soft_recycle_step_down"
         elif exit_code == 143 and selected == 0:
             # The task-owned RSS watchdog can stop a short process before the
             # final JSON summary is emitted. Full independent readback then
@@ -149,7 +160,7 @@ def decide(state_path: Path) -> dict[str, Any]:
             # next process's memory shape.
             proposed = prior_concurrency
             workload_reason = "watchdog_recycle_hold"
-        elif peak_rss_bytes >= 1800 * 1024**2:
+        elif peak_rss_bytes >= 2400 * 1024**2:
             proposed = max(MIN_CONCURRENCY, prior_concurrency - STEP)
             workload_reason = "process_memory_peak_step_down"
         elif validation_recovered and (failed > 0 or delivered < selected):
@@ -168,7 +179,10 @@ def decide(state_path: Path) -> dict[str, Any]:
             proposed = min(MAX_CONCURRENCY, prior_concurrency + STEP)
             workload_reason = "healthy_step_up"
 
-    concurrency = max(MIN_CONCURRENCY, min(MAX_CONCURRENCY, ceiling, proposed))
+    concurrency = max(
+        MIN_CONCURRENCY,
+        min(MAX_CONCURRENCY, ceiling, pressure_ceiling, proposed),
+    )
     decision_sequence = int(last_decision.get("decision_sequence") or 0) + 1
     decision = {
         "decided_at": now(),
@@ -176,7 +190,8 @@ def decide(state_path: Path) -> dict[str, Any]:
         "concurrency": concurrency,
         "proposed_concurrency": proposed,
         "resource_ceiling": ceiling,
-        "reason": f"{workload_reason}:{resource_reason}",
+        "pressure_ceiling": pressure_ceiling,
+        "reason": f"{workload_reason}:{resource_reason}:pressure_ceiling_{pressure_ceiling}",
         "metrics": {
             "mem_available_mib": mem_kib // 1024,
             "automation_slice_memory_mib": slice_bytes // 1024**2,
@@ -207,17 +222,46 @@ def observe(
         "concurrency": int(summary.get("concurrency") or state.get("last_decision", {}).get("concurrency") or 0),
         "verified": int(summary.get("verified") or 0),
         "no_change": int(summary.get("noChange") or 0),
+        "previewed": int(summary.get("previewed") or 0),
+        "dry_run": bool(summary.get("dryRun") or False),
         "failed": int(summary.get("failed") or 0),
         "elapsed_ms": int(summary.get("elapsedMs") or 0),
         "throughput_ms_per_product": int(summary.get("throughputAverageMsPerProduct") or 0),
         "item_p95_ms": int(summary.get("itemP95Ms") or 0),
         "runtime_peak_rss_bytes": int(summary.get("runtimePeakRssBytes") or 0),
+        "runtime_peak_browser_worker_rss_bytes": int(
+            summary.get("runtimePeakBrowserWorkerRssBytes") or 0
+        ),
+        "runtime_peak_browser_total_rss_bytes": int(
+            summary.get("runtimePeakBrowserTotalRssBytes") or 0
+        ),
+        "runtime_peak_combined_rss_bytes": int(
+            summary.get("runtimePeakCombinedRssBytes")
+            or summary.get("runtimePeakRssBytes")
+            or 0
+        ),
+        "runtime_peak_concurrency": int(summary.get("runtimePeakConcurrency") or 0),
         "runtime_min_mem_available_kib": int(summary.get("runtimeMinMemAvailableKib") or 0),
         "runtime_final_concurrency": int(summary.get("runtimeFinalConcurrency") or 0),
         "runtime_memory_pressure_stop": bool(summary.get("runtimeMemoryPressureStop") or False),
+        "runtime_pressure_observed": bool(summary.get("runtimePressureObserved") or False),
+        "runtime_single_worker_gc_count": int(summary.get("runtimeSingleWorkerGcCount") or 0),
+        "runtime_single_worker_gc_ms": int(summary.get("runtimeSingleWorkerGcMs") or 0),
+        "runtime_single_worker_renderer_gc_count": int(
+            summary.get("runtimeSingleWorkerRendererGcCount") or 0
+        ),
+        "runtime_single_worker_renderer_gc_ms": int(
+            summary.get("runtimeSingleWorkerRendererGcMs") or 0
+        ),
+        "runtime_single_worker_renderer_gc_failures": int(
+            summary.get("runtimeSingleWorkerRendererGcFailures") or 0
+        ),
     }
     history = list(state.get("observation_history") or [])[-99:]
     history.append(observation)
+    if observation["runtime_memory_pressure_stop"] or observation["runtime_pressure_observed"]:
+        observed_peak = int(observation.get("runtime_peak_concurrency") or MIN_CONCURRENCY)
+        state["pressure_ceiling"] = max(MIN_CONCURRENCY, observed_peak - STEP)
     state.update({"schema_version": 1, "last_observation": observation, "observation_history": history})
     atomic_write(state_path, state)
     return observation

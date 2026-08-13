@@ -558,7 +558,15 @@ def main() -> None:
                         source = "same_tenant_channel_snapshot"
                     else:
                         if channel_id == 200:
-                            hit = next(item for item in receipts if int(item.get("channel_id") or 0) == 200 and str(item.get("brand_name")) == "无品牌")
+                            hit = next((
+                                item for item in receipts
+                                if int(item.get("channel_id") or 0) == 200
+                                and str(item.get("brand_name")) == "无品牌"
+                            ), None)
+                            if not hit:
+                                raise RuntimeError(
+                                    f"{spu_id} 渠道 200 缺少本次任务的无品牌精确编码查询回执"
+                                )
                             plan["remote_brand_channel_fields"].append({
                                 **common, "channel_id": 200, "brand_code": str(hit["brand_code"]),
                                 "brand_name": str(hit["brand_name"]), "query_receipt_path": hit["receipt_path"],

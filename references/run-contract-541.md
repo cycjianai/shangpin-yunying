@@ -19,6 +19,9 @@
 反馈闭环。允许复用本 Skill 已启动且确认空闲的浏览器登录窗口，但不得在 profile/CDP 间复制 Cookie，
 也不得复用旧任务的 tenant/store、SPU、provider 任务号、上传回执、checkpoint 或 write intent。
 
+只有任务路由为 `unavailable_one_pass` 时读取和执行本合同。`channel_attributes_only`、
+`qualification_images_only` 和 `plugin_attribute_fill` 不得把本合同的一次过采集、OCR、博查或图片阶段叠加到自身流程。
+
 用户登录后，默认只控制当前隔离 Chrome/CDP；不要求登录原点账号，也不依赖浏览器插件执行。
 允许调用项目现有的博查信息解析和正式专项图 provider，但必须沿用其密钥读取、幂等、轮询和低敏日志合同。
 

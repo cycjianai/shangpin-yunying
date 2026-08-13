@@ -17,10 +17,30 @@ import { chromium } from '/home/ubuntu/e2e-browser-lab/node_modules/playwright-c
 import {
   assertManagedDirectBatchRuntime,
   resolveDirectBatchConcurrency,
+  resolveInitialRuntimeConcurrency,
   resolveProgressiveRuntimeConcurrency,
   resolveRuntimeConcurrencyCeiling,
   shouldRecycleRuntimeProcess,
+  shouldCollectSingleWorkerRenderer,
+  shouldRunSynchronousGc,
 } from './qnh_runtime_limits.mjs';
+import { selectReadyMutationWindow } from './qnh_batch_window.mjs';
+import { createBrowserResourceMonitor } from './qnh_browser_resource_monitor.mjs';
+import { checkpointResumeDisposition } from './qnh_batch_resume.mjs';
+import {
+  bootstrapQnhWorkerPool,
+  prewarmQnhWorkerPage,
+} from './qnh_worker_prewarm.mjs';
+import { createPreparedSaveBarrier } from './qnh_phase_barrier.mjs';
+import {
+  DETAIL_ENDPOINT,
+  LIST_ENDPOINT,
+  LIST_ROUTE,
+  validateDirectSignature,
+  validateNativeEditorEvidence,
+  validateNativeListEvidence,
+  withCsecVersion,
+} from './qnh_protocol_profile.mjs';
 
 const DEFAULT_CDP = 'http://127.0.0.1:9292';
 const DEFAULT_RUN_DIR = '/home/ubuntu/e2e-browser-lab/runs/qnh-channel-unavailable';
@@ -38,6 +58,14 @@ const CHANNEL_CATEGORY_PROPERTY_BATCH_URL = 'https://qnh.meituan.com/qnh-gw5/api
 const STORE_FRONT_CATEGORY_QUERY_URL = 'https://qnh.meituan.com/qnh-gw3/api/product/support/front-category/query?yodaReady=h5&csecplatform=4&csecversion=4.2.4';
 const IMAGE_UPLOAD_URL = 'https://qnh.meituan.com/api/v1/image/uploadImageFullType';
 const LIST_REFERRER = '/unifiedGoods/tenant/spu-list';
+const LIST_PAGE_URL = 'https://qnh.meituan.com/home.html#/unifiedGoods/tenant/spu-list';
+let runtimeProtocolProfile = null;
+
+function effectiveRequestUrl(url) {
+  return runtimeProtocolProfile?.csecversion === '4.3.0'
+    ? withCsecVersion(url, '4.3.0')
+    : url;
+}
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -322,6 +350,7 @@ async function attach(cdpUrl) {
 }
 
 async function signedJson(page, { url, body, qnhReferrer, fetchReferrer = '' }) {
+  const finalUrl = effectiveRequestUrl(url);
   return page.evaluate(async ({ requestUrl, requestBody, referrerHeader, explicitReferrer, appKey }) => {
     if (!window.H5guard || typeof window.H5guard.sign !== 'function') {
       throw new Error('H5guard 未就绪，禁止发送平台请求');
@@ -342,6 +371,31 @@ async function signedJson(page, { url, body, qnhReferrer, fetchReferrer = '' }) 
       ? signature
       : String(mtgsigHeader?.[1] || signature?.mtgsig || signature?.data?.mtgsig || '');
     if (!mtgsig) throw new Error('H5guard 未返回 mtgsig，禁止发送平台请求');
+    const findA9 = (value, depth = 0) => {
+      if (depth > 7 || value === null || value === undefined) return '';
+      if (typeof value === 'object') {
+        if (value.a9 !== undefined) return String(value.a9 || '');
+        for (const child of Object.values(value)) {
+          const found = findA9(child, depth + 1);
+          if (found) return found;
+        }
+        return '';
+      }
+      if (typeof value !== 'string') return '';
+      try {
+        const parsed = JSON.parse(value);
+        const found = findA9(parsed, depth + 1);
+        if (found) return found;
+      } catch { /* opaque signature string */ }
+      return value.match(/(?:^|[,{\s])['"]?a9['"]?\s*[:=]\s*['"]?([^'",}\s]+)/i)?.[1] || '';
+    };
+    const a9 = findA9(mtgsig);
+    if (!a9) throw new Error('H5guard mtgsig 缺少 a9，禁止发送平台请求');
+    const requestedVersion = new URL(requestUrl).searchParams.get('csecversion') || '';
+    const explicitVersion = a9.match(/\b4\.(?:2|3)\.\d+\b/)?.[0] || '';
+    if (explicitVersion && explicitVersion !== requestedVersion) {
+      throw new Error('H5guard a9 版本与精确请求 URL 不一致，禁止发送平台请求');
+    }
     const headers = {
       Accept: 'application/json, text/plain, */*',
       'Content-Type': contentType,
@@ -369,14 +423,40 @@ async function signedJson(page, { url, body, qnhReferrer, fetchReferrer = '' }) 
     return {
       http_status: response.status,
       data,
+      signature_evidence: {
+        a9_present: true,
+        a9_version: explicitVersion,
+        requested_version: requestedVersion,
+        binding_source: 'direct_h5guard_exact_request',
+      },
     };
   }, {
-    requestUrl: url,
+    requestUrl: finalUrl,
     requestBody: body,
     referrerHeader: qnhReferrer,
     explicitReferrer: fetchReferrer,
     appKey: APP_KEY,
   });
+}
+
+async function signedJsonQueryWithSingleRetry(page, options, runDir, context = {}) {
+  try {
+    return await signedJson(page, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/Failed to fetch|NetworkError|ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED/i.test(message)) {
+      throw error;
+    }
+    await appendLog(runDir, 'query_only_same_profile_retry', {
+      ...context,
+      attempt: 2,
+      csecversion: runtimeProtocolProfile?.csecversion || '',
+      reason: message.slice(0, 300),
+      mutation_calls: 0,
+    });
+    await page.waitForTimeout(500);
+    return signedJson(page, options);
+  }
 }
 
 function assertResponse(response, action) {
@@ -493,7 +573,35 @@ async function uploadLocalImage(page, runDir, filePath) {
   return { receiptPath, imageUrl, sourceSha256: digest, sourceBytes: bytes.length };
 }
 
+async function captureNativeListProfile(page) {
+  if (page.url() !== LIST_PAGE_URL) {
+    await page.goto(LIST_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  }
+  const responsePromise = page.waitForResponse((response) => {
+    const request = response.request();
+    try {
+      return request.method() === 'POST'
+        && new URL(request.url()).pathname === LIST_ENDPOINT;
+    } catch { return false; }
+  }, { timeout: 30000 });
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  const response = await responsePromise;
+  const request = response.request();
+  const requestBody = request.postDataJSON();
+  const payload = await response.json();
+  const profile = validateNativeListEvidence({
+    page_url: page.url(),
+    request_url: request.url(),
+    method: request.method(),
+    http_status: response.status(),
+  });
+  if (!businessOk(payload)) throw new Error('当前文档原生列表请求业务失败，禁止自定义请求');
+  return { profile, payload, request_body: requestBody };
+}
+
 async function preflight(page) {
+  const native = await captureNativeListProfile(page);
+  runtimeProtocolProfile = native.profile;
   const result = await signedJson(page, {
     url: LIST_URL,
     body: {
@@ -532,6 +640,9 @@ async function preflight(page) {
     tenant_id: visibleIdentity.tenant_id,
     h5guard_ready: await page.evaluate(() => Boolean(window.H5guard && typeof window.H5guard.sign === 'function')),
     total: findTotal(result.data, findRows(result.data).length),
+    context_profile: native.profile.context_profile,
+    csecversion: native.profile.csecversion,
+    native_profile_source: native.profile.source,
   };
 }
 
@@ -1062,11 +1173,13 @@ async function queryChannelBrand(page, runDir, channelId, searchText) {
   if (!normalizedSearch || !Number.isFinite(normalizedChannelId)) {
     throw new Error('渠道品牌查询缺少渠道或查询词');
   }
-  const response = await signedJson(page, {
+  const response = await signedJsonQueryWithSingleRetry(page, {
     url: CHANNEL_BRAND_QUERY_URL,
     body: { channelId: normalizedChannelId, searchText: normalizedSearch },
-    qnhReferrer: '/unifiedGoods/tenant/edit',
-  });
+    qnhReferrer: runtimeProtocolProfile?.csecversion === '4.3.0'
+      ? LIST_REFERRER
+      : '/unifiedGoods/tenant/edit',
+  }, runDir, { query: 'channel_brand', channel_id: normalizedChannelId });
   assertResponse(response, `查询渠道品牌：${normalizedChannelId}/${normalizedSearch}`);
   const rows = toArray(toObject(response.data?.data).list);
   const candidates = rows.map((row) => ({
@@ -3068,14 +3181,53 @@ function applyDirectPlanToDetail(detail, plan) {
   };
 }
 
-async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'direct') {
+async function applyDirectPlanCore(
+  page,
+  runDir,
+  planPath,
+  dryRun,
+  resultPrefix = 'direct',
+  phaseBarrier = null,
+) {
+  const totalStartedAt = Date.now();
+  const planLoadStartedAt = Date.now();
   const planRaw = await fs.readFile(planPath, 'utf8');
   const planSha256 = sha256(planRaw);
   const plan = JSON.parse(planRaw);
   const spuId = String(plan.spu_id || '');
   if (!spuId) throw new Error('直连计划缺少 spu_id');
-  const mainImageMaterial = await loadVerifiedMainImageMaterial(plan, spuId);
-  const beforeDetail = await fetchDetail(page, spuId);
+  const stageTimings = {
+    plan_load_ms: Date.now() - planLoadStartedAt,
+  };
+  const timedStage = async (stage, operation) => {
+    const startedAt = Date.now();
+    await appendLog(runDir, 'direct_plan_stage_started', {
+      spu_id: spuId,
+      stage,
+      dry_run: dryRun,
+    }).catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      const elapsedMs = Date.now() - startedAt;
+      stageTimings[`${stage}_ms`] = elapsedMs;
+      await appendLog(runDir, 'direct_plan_stage_finished', {
+        spu_id: spuId,
+        stage,
+        dry_run: dryRun,
+        elapsed_ms: elapsedMs,
+      }).catch(() => {});
+    }
+  };
+  const mainImageMaterial = await timedStage(
+    'material_precheck',
+    () => loadVerifiedMainImageMaterial(plan, spuId),
+  );
+  const beforeDetail = await timedStage(
+    'before_detail_read',
+    () => fetchDetail(page, spuId),
+  );
+  const planPreparationStartedAt = Date.now();
   const beforeTenantId = String(beforeDetail.tenantId || '');
   if (
     mainImageMaterial
@@ -3534,12 +3686,15 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
       intentPath,
     };
   }
+  stageTimings.plan_preparation_ms = Date.now() - planPreparationStartedAt;
+  const materializationStartedAt = Date.now();
   const {
     patched,
     requested,
     changedChannelIds,
     changedCoverageFields,
   } = applyDirectPlanToDetail(beforeDetail, executionPlan);
+  stageTimings.plan_materialization_ms = Date.now() - materializationStartedAt;
   if (
     mainImageMaterial
     && (
@@ -3550,7 +3705,17 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     throw new Error('生成主图计划的有效修改必须且只能是 main_images 单字段');
   }
   if (!requested.length) {
-    return { ok: true, dry_run: dryRun, no_change: true, spu_id: spuId };
+    if (phaseBarrier) {
+      throw new Error('prepared_save_barrier_plan_no_longer_requires_change');
+    }
+    stageTimings.total_ms = Date.now() - totalStartedAt;
+    return {
+      ok: true,
+      dry_run: dryRun,
+      no_change: true,
+      spu_id: spuId,
+      stage_timings: stageTimings,
+    };
   }
   const coverageRequest = {
     fieldCoverageInfoList: [
@@ -3570,11 +3735,28 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     requested_changes: requested,
     coverage_request: coverageRequest,
     before: beforeSummary,
+    stage_timings: stageTimings,
   };
   if (dryRun) {
     const previewPath = path.join(runDir, `${resultPrefix}-${spuId}-preview.json`);
+    stageTimings.total_ms = Date.now() - totalStartedAt;
     await writeJson(previewPath, preview);
-    return { ok: true, dry_run: true, previewPath, requested_changes: requested };
+    return {
+      ok: true,
+      dry_run: true,
+      previewPath,
+      requested_changes: requested,
+      stage_timings: stageTimings,
+    };
+  }
+  if (phaseBarrier) {
+    await phaseBarrier.arrivePrepared({
+      spu_id: spuId,
+      tenant_id: beforeTenantId,
+      plan_sha256: planSha256,
+      requested_change_count: requested.length,
+      prepared_at: isoNow(),
+    });
   }
   const updateUrl = plan.update_profile === 'tenant_edit_v424' ? UPDATE_V2_URL : UPDATE_URL;
   if (mainImageIntentContext) {
@@ -3586,13 +3768,32 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
       return applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix);
     }
   }
-  const response = await signedJson(page, {
-    url: updateUrl,
-    body: { tenantSpu: patched, coverageRequest },
-    qnhReferrer: '/unifiedGoods/tenant/edit',
-    fetchReferrer: `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(spuId)}`,
-  });
-  assertResponse(response, `直连保存 SPU ${spuId}`);
+  let response = null;
+  let saveError = null;
+  try {
+    response = await timedStage(
+      'save_request',
+      () => signedJson(page, {
+        url: updateUrl,
+        body: { tenantSpu: patched, coverageRequest },
+        qnhReferrer: '/unifiedGoods/tenant/edit',
+        fetchReferrer: `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(spuId)}`,
+      }),
+    );
+    assertResponse(response, `直连保存 SPU ${spuId}`);
+  } catch (error) {
+    saveError = error;
+  } finally {
+    if (phaseBarrier) {
+      await phaseBarrier.arriveSaveSettled({
+        spu_id: spuId,
+        ok: !saveError,
+        http_status: response?.http_status ?? null,
+        settled_at: isoNow(),
+      });
+    }
+  }
+  if (saveError) throw saveError;
   if (mainImageIntentContext) {
     await updateMainImageWriteIntent(
       mainImageIntentContext.intentPath,
@@ -3606,8 +3807,11 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
       },
     );
   }
-  await page.waitForTimeout(1200);
-  const afterDetail = await fetchDetail(page, spuId);
+  await timedStage('post_save_settle', () => page.waitForTimeout(1200));
+  const afterDetail = await timedStage(
+    'readback_detail',
+    () => fetchDetail(page, spuId),
+  );
   if (
     mainImageIntentContext
     && (
@@ -3628,6 +3832,7 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     throw new Error('生成主图保存后的回读 SPU/tenant 与写意图不一致');
   }
   const afterSummary = summarizeDetail(afterDetail);
+  const verificationStartedAt = Date.now();
   const verification = requested.map((change) => {
     let actual = null;
     let contractVerified = true;
@@ -3751,6 +3956,8 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
       verified,
     };
   });
+  stageTimings.verification_ms = Date.now() - verificationStartedAt;
+  stageTimings.total_ms = Date.now() - totalStartedAt;
   const result = {
     ...preview,
     dry_run: false,
@@ -3764,7 +3971,9 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     verified_at: isoNow(),
   };
   const resultPath = path.join(runDir, `${resultPrefix}-${spuId}-result.json`);
+  const persistStartedAt = Date.now();
   await writeJsonAtomic(resultPath, result);
+  stageTimings.result_persist_ms = Date.now() - persistStartedAt;
   if (mainImageIntentContext) {
     await updateMainImageWriteIntent(
       mainImageIntentContext.intentPath,
@@ -3789,6 +3998,7 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     changed_field_count: result.changed_fields.length,
     result_file: resultPath,
     verified: result.verified,
+    stage_timings: stageTimings,
   });
   if (!result.verified) {
     throw new Error(`直连保存 SPU ${spuId} 后存在回读不一致，结果已保存：${resultPath}`);
@@ -3799,7 +4009,37 @@ async function applyDirectPlan(page, runDir, planPath, dryRun, resultPrefix = 'd
     resultPath,
     requested_changes: requested,
     changed_fields: result.changed_fields,
+    stage_timings: stageTimings,
   };
+}
+
+async function applyDirectPlan(
+  page,
+  runDir,
+  planPath,
+  dryRun,
+  resultPrefix = 'direct',
+  keepWorkerPage = false,
+) {
+  if (runtimeProtocolProfile?.csecversion !== '4.3.0') {
+    return applyDirectPlanCore(page, runDir, planPath, dryRun, resultPrefix);
+  }
+  const plan = JSON.parse(await fs.readFile(planPath, 'utf8'));
+  const spuId = String(plan.spu_id || '');
+  if (!spuId) throw new Error('直连计划缺少 spu_id');
+  try {
+    const native = await readExactNativeEditorDetail(page, spuId);
+    if (native.profile.context_profile !== 'tenant_edit_v430') {
+      throw new Error('未取得当前精确 SPU 的 4.3.0 编辑页证据，禁止写入');
+    }
+    return await applyDirectPlanCore(page, runDir, planPath, dryRun, resultPrefix);
+  } finally {
+    if (keepWorkerPage) {
+      await closeProductEditTabs(page, spuId).catch(() => ({ closed_count: 0 }));
+    } else {
+      await returnToListAndCloseEditor(page, spuId);
+    }
+  }
 }
 
 function verificationActualMatchesExpected(fieldPath, expected, actual) {
@@ -3925,9 +4165,8 @@ async function inspectExistingDirectResult(planPath, resultPaths, expectedSpuId)
     const requestedChanges = toArray(result.requested_changes);
     const resultTenantId = String(result.tenant_id || '').trim();
     const resultJobId = String(result.job_id || '').trim();
-    const hasStrictEvidence = (
-      isMainImagePlan
-      && (
+    const hasStrictEvidence = isMainImagePlan
+      ? (
         requestedChanges.length === 1
         && requestedChanges[0]?.field_path === 'main_images'
         && exactImageUrlListEqual(
@@ -3950,10 +4189,9 @@ async function inspectExistingDirectResult(planPath, resultPaths, expectedSpuId)
           mainImageExpectedNew,
         )
       )
-    );
+      : hasStrictGenericResultEvidence(result);
     const valid = (
-      isMainImagePlan
-      && String(result.spu_id || '') === planSpuId
+      String(result.spu_id || '') === planSpuId
       && String(result.plan_sha256 || '') === planSha256
       && Boolean(resultTenantId)
       && (!expectedTenantId || resultTenantId === expectedTenantId)
@@ -4020,50 +4258,86 @@ async function applyDirectBatch(
   page,
   runDir,
   indexPath,
+  offset,
   limit,
   batchName = 'direct-batch',
   requestedConcurrency = 2,
   dryRun = false,
 ) {
   const index = JSON.parse(await fs.readFile(indexPath, 'utf8'));
-  const readyRows = toArray(index.rows).filter(
-    (row) => row?.status === 'ready' && row?.plan_path,
-  );
-  const selected = readyRows.slice(0, limit > 0 ? limit : undefined);
+  const selected = selectReadyMutationWindow(index.rows, offset, limit);
+  const modernEditorPool = runtimeProtocolProfile?.csecversion === '4.3.0';
   const concurrency = resolveDirectBatchConcurrency(requestedConcurrency);
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(batchName)) {
     throw new Error('batch-name 只能包含字母、数字和连字符');
   }
   const checkpointPath = path.join(runDir, `${batchName}-checkpoint.json`);
-  let checkpoint = { index_path: indexPath, updated_at: isoNow(), rows: [] };
+  const checkpointIdentity = {
+    index_path: indexPath,
+    window_offset: offset,
+    window_limit: limit,
+  };
+  let checkpoint = { ...checkpointIdentity, updated_at: isoNow(), rows: [] };
   try {
     checkpoint = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
-    if (checkpoint.index_path !== indexPath || !Array.isArray(checkpoint.rows)) {
-      checkpoint = { index_path: indexPath, updated_at: isoNow(), rows: [] };
+    if (
+      checkpoint.index_path !== indexPath
+      || Number(checkpoint.window_offset) !== Number(offset)
+      || Number(checkpoint.window_limit) !== Number(limit)
+      || !Array.isArray(checkpoint.rows)
+    ) {
+      checkpoint = { ...checkpointIdentity, updated_at: isoNow(), rows: [] };
     }
   } catch {
     // A missing checkpoint is the normal first-run path.
   }
   const statusBySpu = new Map(toArray(checkpoint.rows).map((row) => [String(row.spu_id), row]));
   const batchStartedAt = Date.now();
+  const editorPoolBootstrap = modernEditorPool && selected.length
+    ? await bootstrapQnhWorkerPool(page.context(), { listPageUrl: LIST_PAGE_URL })
+    : { completed: false, elapsed_ms: 0, settle_ms: 0 };
   let nextIndex = 0;
   let completedCount = 0;
-  let runtimeConcurrency = Math.min(concurrency, 2);
+  let runtimeCompletedCount = 0;
+  let runtimeConcurrency = resolveInitialRuntimeConcurrency(concurrency, {
+    modernEditorPool,
+  });
+  let runtimePeakConcurrency = runtimeConcurrency;
   let runtimePeakRssBytes = process.memoryUsage().rss;
+  const browserResourceMonitor = await createBrowserResourceMonitor(
+    page.context().browser(),
+  );
+  let runtimePeakBrowserWorkerRssBytes = 0;
+  let runtimePeakBrowserTotalRssBytes = Number(
+    browserResourceMonitor.baseline?.browser_total_rss_bytes || 0,
+  );
+  let runtimePeakCombinedRssBytes = runtimePeakRssBytes;
   let runtimeMinMemAvailableKib = Number.POSITIVE_INFINITY;
   let runtimeMemoryPressureStop = false;
   let runtimePressureObserved = false;
+  let runtimeSingleWorkerGcCount = 0;
+  let runtimeSingleWorkerGcMs = 0;
+  let runtimeSingleWorkerRendererGcCount = 0;
+  let runtimeSingleWorkerRendererGcMs = 0;
+  let runtimeSingleWorkerRendererGcFailures = 0;
+  const editorPages = [];
+  const availableEditorPages = [];
+  const waitingEditorPageResolvers = [];
+  let reservedEditorPageSlots = 0;
+  let editorPageCreationQueue = Promise.resolve();
   const runtimeLimitHistory = [{
     completed: 0,
     concurrency: runtimeConcurrency,
-    reason: concurrency > 2 ? 'two_item_memory_canary' : 'configured_limit',
+    reason: modernEditorPool
+      ? 'one_item_editor_warm_canary'
+      : (concurrency > 2 ? 'two_item_memory_canary' : 'configured_limit'),
   }];
   const progressEvery = Math.max(1, Math.min(100, Number(process.env.QNH_PROGRESS_EVERY || 25) || 25));
   let checkpointQueue = Promise.resolve();
   const persistProgress = (spuId) => {
     checkpointQueue = checkpointQueue.then(async () => {
       checkpoint = {
-        index_path: indexPath,
+        ...checkpointIdentity,
         updated_at: isoNow(),
         selected_total: selected.length,
         concurrency,
@@ -4094,6 +4368,42 @@ async function applyDirectBatch(
     });
     return checkpointQueue;
   };
+  const createAndPrewarmEditorPage = async () => {
+    const creation = editorPageCreationQueue.then(async () => {
+      const workerPage = await page.context().newPage();
+      try {
+        await prewarmQnhWorkerPage(workerPage, { listPageUrl: LIST_PAGE_URL });
+      } catch (error) {
+        await workerPage.close().catch(() => {});
+        throw error;
+      }
+      editorPages.push(workerPage);
+      return workerPage;
+    });
+    editorPageCreationQueue = creation.then(() => undefined, () => undefined);
+    return creation;
+  };
+  const acquireEditorPage = async () => {
+    if (!modernEditorPool) return page;
+    const reusable = availableEditorPages.pop();
+    if (reusable) return reusable;
+    if (reservedEditorPageSlots < concurrency) {
+      reservedEditorPageSlots += 1;
+      try {
+        return await createAndPrewarmEditorPage();
+      } catch (error) {
+        reservedEditorPageSlots -= 1;
+        throw error;
+      }
+    }
+    return new Promise((resolve) => waitingEditorPageResolvers.push(resolve));
+  };
+  const releaseEditorPage = (workerPage) => {
+    if (!modernEditorPool || workerPage === page || workerPage.isClosed()) return;
+    const waiter = waitingEditorPageResolvers.shift();
+    if (waiter) waiter(workerPage);
+    else availableEditorPages.push(workerPage);
+  };
   const processRow = async (indexNumber) => {
     const row = selected[indexNumber];
     const spuId = String(row.spu_id || '');
@@ -4105,6 +4415,7 @@ async function applyDirectBatch(
       prior?.result_path ? path.resolve(String(prior.result_path)) : '',
     ];
     let existingInspection = null;
+    let performedPlatformWork = false;
     try {
       existingInspection = await inspectExistingDirectResult(
         planPath,
@@ -4121,83 +4432,134 @@ async function applyDirectBatch(
       });
     }
     if (!statusBySpu.has(spuId) || statusBySpu.get(spuId) === prior) {
-      const hasInvalidCompletionEvidence = (
+      const resumeDisposition = checkpointResumeDisposition({
+        priorStatus: prior?.status,
+        dryRun,
+      });
+      if (resumeDisposition === 'reuse_terminal') {
+        statusBySpu.set(spuId, {
+          ...prior,
+          skipped_existing: true,
+          duration_ms: Number(prior.duration_ms || 0),
+        });
+      } else if (resumeDisposition === 'defer_to_readback') {
+        // A previous failure may have happened after an accepted save whose
+        // response was lost.  Re-entering the same checkpoint must therefore
+        // process only rows that never started; the next independent full
+        // read decides whether this SPU still needs a new plan/save.
+        statusBySpu.set(spuId, {
+          ...prior,
+          prior_failed_deferred_to_readback: true,
+          duration_ms: Number(prior.duration_ms || 0),
+        });
+      } else {
+        const hasInvalidCompletionEvidence = (
         !dryRun
         && (
           existingInspection?.found
           || prior?.status === 'verified'
         )
-      );
-      let allowIntentReadbackRecovery = false;
-      let intentRecoveryError = '';
-      if (
-        hasInvalidCompletionEvidence
-        && !existingInspection?.valid
-        && existingInspection?.plan
-      ) {
-        try {
-          allowIntentReadbackRecovery = Boolean(
-            await loadBoundMainImageIntentForPlan(
-              existingInspection.plan,
-              existingInspection.planSha256,
-              spuId,
-            ),
-          );
-        } catch (error) {
-          intentRecoveryError = error instanceof Error ? error.message : String(error);
+        );
+        let allowIntentReadbackRecovery = false;
+        let intentRecoveryError = '';
+        if (
+          hasInvalidCompletionEvidence
+          && !existingInspection?.valid
+          && existingInspection?.plan
+        ) {
+          try {
+            allowIntentReadbackRecovery = Boolean(
+              await loadBoundMainImageIntentForPlan(
+                existingInspection.plan,
+                existingInspection.planSha256,
+                spuId,
+              ),
+            );
+          } catch (error) {
+            intentRecoveryError = error instanceof Error ? error.message : String(error);
+          }
         }
-      }
-      if (!dryRun && existingInspection?.valid) {
-        statusBySpu.set(spuId, {
-          spu_id: spuId,
-          status: 'verified',
-          result_path: existingInspection.resultPath,
-          skipped_existing: true,
-          duration_ms: Date.now() - itemStartedAt,
-        });
-      } else if (hasInvalidCompletionEvidence && !allowIntentReadbackRecovery) {
-        statusBySpu.set(spuId, {
-          spu_id: spuId,
-          title: String(row.title || ''),
-          status: 'failed',
-          result_path: existingInspection?.resultPath || String(prior?.result_path || ''),
-          error: String(
-            existingInspection?.invalidReason
-            || '检查点标记 verified，但缺少可完整校验的结果文件',
-          ).concat(
-            intentRecoveryError ? `；主图写意图不可用于只读恢复：${intentRecoveryError}` : '',
-          ).slice(0, 1000),
-          skipped_existing: false,
-          blocked_unverified_existing_result: true,
-          duration_ms: Date.now() - itemStartedAt,
-        });
-      } else {
-        try {
-          const result = await applyDirectPlan(
-            page,
-            runDir,
-            planPath,
-            dryRun,
-            batchName,
-          );
+        if (!dryRun && existingInspection?.valid) {
           statusBySpu.set(spuId, {
             spu_id: spuId,
-            title: String(row.title || ''),
-            status: result.no_change ? 'no_change' : (dryRun ? 'previewed' : 'verified'),
-            result_path: result.resultPath || result.previewPath || '',
-            requested_change_count: toArray(result.requested_changes).length,
-            intent_readback_recovery: allowIntentReadbackRecovery,
+            status: 'verified',
+            result_path: existingInspection.resultPath,
+            skipped_existing: true,
             duration_ms: Date.now() - itemStartedAt,
           });
-        } catch (error) {
+        } else if (hasInvalidCompletionEvidence && !allowIntentReadbackRecovery) {
           statusBySpu.set(spuId, {
             spu_id: spuId,
             title: String(row.title || ''),
             status: 'failed',
-            error: (error instanceof Error ? error.message : String(error)).slice(0, 1000),
-            intent_readback_recovery: allowIntentReadbackRecovery,
+            result_path: existingInspection?.resultPath || String(prior?.result_path || ''),
+            error: String(
+              existingInspection?.invalidReason
+              || '检查点标记 verified，但缺少可完整校验的结果文件',
+            ).concat(
+              intentRecoveryError ? `；主图写意图不可用于只读恢复：${intentRecoveryError}` : '',
+            ).slice(0, 1000),
+            skipped_existing: false,
+            blocked_unverified_existing_result: true,
             duration_ms: Date.now() - itemStartedAt,
           });
+        } else {
+          let workerPage = null;
+          try {
+            performedPlatformWork = true;
+            workerPage = await acquireEditorPage();
+            const result = await applyDirectPlan(
+              workerPage,
+              runDir,
+              planPath,
+              dryRun,
+              batchName,
+              modernEditorPool,
+            );
+            statusBySpu.set(spuId, {
+              spu_id: spuId,
+              title: String(row.title || ''),
+              status: result.no_change ? 'no_change' : (dryRun ? 'previewed' : 'verified'),
+              result_path: result.resultPath || result.previewPath || '',
+              requested_change_count: toArray(result.requested_changes).length,
+              intent_readback_recovery: allowIntentReadbackRecovery,
+              stage_timings: toObject(result.stage_timings),
+              duration_ms: Date.now() - itemStartedAt,
+            });
+          } catch (error) {
+            statusBySpu.set(spuId, {
+              spu_id: spuId,
+              title: String(row.title || ''),
+              status: 'failed',
+              error: (error instanceof Error ? error.message : String(error)).slice(0, 1000),
+              intent_readback_recovery: allowIntentReadbackRecovery,
+              duration_ms: Date.now() - itemStartedAt,
+            });
+          } finally {
+            if (
+              workerPage
+              && !workerPage.isClosed()
+              && shouldCollectSingleWorkerRenderer({
+                adaptive_approved: process.env.QNH_DIRECT_ADAPTIVE_APPROVED === '1',
+                runtime_concurrency: runtimeConcurrency,
+                performed_platform_work: performedPlatformWork,
+              })
+            ) {
+              const rendererGcStartedAt = Date.now();
+              let rendererSession = null;
+              try {
+                rendererSession = await workerPage.context().newCDPSession(workerPage);
+                await rendererSession.send('HeapProfiler.collectGarbage');
+                runtimeSingleWorkerRendererGcCount += 1;
+              } catch {
+                runtimeSingleWorkerRendererGcFailures += 1;
+              } finally {
+                runtimeSingleWorkerRendererGcMs += Date.now() - rendererGcStartedAt;
+                await rendererSession?.detach().catch(() => {});
+              }
+            }
+            if (workerPage) releaseEditorPage(workerPage);
+          }
         }
       }
     }
@@ -4214,9 +4576,18 @@ async function applyDirectBatch(
     // reclaim the heap instead of forcing an expensive collection.
     if (
       typeof global.gc === 'function'
-      && process.env.QNH_DIRECT_ADAPTIVE_APPROVED !== '1'
-      && process.memoryUsage().rss < 1800 * 1024 * 1024
-    ) global.gc();
+      && shouldRunSynchronousGc({
+        rss_bytes: process.memoryUsage().rss,
+        adaptive_approved: process.env.QNH_DIRECT_ADAPTIVE_APPROVED === '1',
+        runtime_concurrency: runtimeConcurrency,
+      })
+    ) {
+      const gcStartedAt = Date.now();
+      global.gc();
+      runtimeSingleWorkerGcCount += 1;
+      runtimeSingleWorkerGcMs += Date.now() - gcStartedAt;
+    }
+    return performedPlatformWork;
   };
   const worker = async () => {
     while (true) {
@@ -4226,9 +4597,30 @@ async function applyDirectBatch(
       await processRow(indexNumber);
     }
   };
-  const sampleRuntimeMetrics = async () => {
+  const sampleRuntimeMetrics = async (performedPlatformWork = false) => {
+    if (performedPlatformWork) runtimeCompletedCount += 1;
     const rssBytes = process.memoryUsage().rss;
     runtimePeakRssBytes = Math.max(runtimePeakRssBytes, rssBytes);
+    const browserMetrics = await browserResourceMonitor.sample();
+    const browserWorkerRssBytes = Number(
+      browserMetrics.worker_renderer_rss_bytes || 0,
+    );
+    const browserTotalRssBytes = Number(
+      browserMetrics.browser_total_rss_bytes || 0,
+    );
+    const combinedRssBytes = rssBytes + browserWorkerRssBytes;
+    runtimePeakBrowserWorkerRssBytes = Math.max(
+      runtimePeakBrowserWorkerRssBytes,
+      browserWorkerRssBytes,
+    );
+    runtimePeakBrowserTotalRssBytes = Math.max(
+      runtimePeakBrowserTotalRssBytes,
+      browserTotalRssBytes,
+    );
+    runtimePeakCombinedRssBytes = Math.max(
+      runtimePeakCombinedRssBytes,
+      combinedRssBytes,
+    );
     let memAvailableKib = 0;
     try {
       const meminfo = await fs.readFile('/proc/meminfo', 'utf8');
@@ -4242,6 +4634,7 @@ async function applyDirectBatch(
     }
     if (shouldRecycleRuntimeProcess({
       rss_bytes: rssBytes,
+      browser_worker_rss_bytes: browserWorkerRssBytes,
       mem_available_kib: memAvailableKib,
     })) {
       runtimeMemoryPressureStop = true;
@@ -4250,8 +4643,11 @@ async function applyDirectBatch(
       if (runtimeLimitHistory.at(-1)?.reason !== 'memory_pressure_recycle') {
         runtimeLimitHistory.push({
           completed: completedCount,
+          runtime_completed: runtimeCompletedCount,
           concurrency: 0,
           rss_bytes: rssBytes,
+          browser_worker_rss_bytes: browserWorkerRssBytes,
+          combined_rss_bytes: combinedRssBytes,
           mem_available_kib: memAvailableKib,
           reason: 'memory_pressure_recycle',
         });
@@ -4260,12 +4656,16 @@ async function applyDirectBatch(
     }
     const resourceCeiling = resolveRuntimeConcurrencyCeiling(
       concurrency,
-      { rss_bytes: rssBytes, mem_available_kib: memAvailableKib },
+      {
+        rss_bytes: rssBytes,
+        browser_worker_rss_bytes: browserWorkerRssBytes,
+        mem_available_kib: memAvailableKib,
+      },
       concurrency,
     );
     const progressiveCeiling = resolveProgressiveRuntimeConcurrency(
       concurrency,
-      completedCount,
+      runtimeCompletedCount,
     );
     const nextConcurrency = Math.min(resourceCeiling, progressiveCeiling);
     if (nextConcurrency < runtimeConcurrency) {
@@ -4273,59 +4673,69 @@ async function applyDirectBatch(
       runtimeConcurrency = nextConcurrency;
       runtimeLimitHistory.push({
         completed: completedCount,
+        runtime_completed: runtimeCompletedCount,
         concurrency: runtimeConcurrency,
         rss_bytes: rssBytes,
+        browser_worker_rss_bytes: browserWorkerRssBytes,
+        combined_rss_bytes: combinedRssBytes,
         mem_available_kib: memAvailableKib,
         reason: 'memory_pressure_step_down',
       });
     } else if (!runtimePressureObserved && nextConcurrency > runtimeConcurrency) {
       runtimeConcurrency = nextConcurrency;
+      runtimePeakConcurrency = Math.max(runtimePeakConcurrency, runtimeConcurrency);
       runtimeLimitHistory.push({
         completed: completedCount,
+        runtime_completed: runtimeCompletedCount,
         concurrency: runtimeConcurrency,
         rss_bytes: rssBytes,
+        browser_worker_rss_bytes: browserWorkerRssBytes,
+        combined_rss_bytes: combinedRssBytes,
         mem_available_kib: memAvailableKib,
         reason: 'progressive_step_up',
       });
     }
   };
-  await new Promise((resolve, reject) => {
-    let activeWorkers = 0;
-    let settled = false;
-    const finish = (error = null) => {
-      if (settled) return;
-      settled = true;
-      if (error) reject(error);
-      else resolve();
-    };
-    const pump = () => {
-      if (settled) return;
-      if ((nextIndex >= selected.length || runtimeMemoryPressureStop) && activeWorkers === 0) {
-        finish();
-        return;
-      }
-      if (runtimeMemoryPressureStop) return;
-      const warmupPending = completedCount < Math.min(2, selected.length);
-      while (
-        nextIndex < selected.length
-        && activeWorkers < runtimeConcurrency
-        && !(warmupPending && nextIndex >= Math.min(2, selected.length))
-      ) {
-        const indexNumber = nextIndex;
-        nextIndex += 1;
-        activeWorkers += 1;
-        processRow(indexNumber)
-          .then(sampleRuntimeMetrics)
-          .then(() => {
-            activeWorkers -= 1;
-            pump();
-          })
-          .catch(finish);
-      }
-    };
-    pump();
-  });
-  await checkpointQueue;
+  try {
+    await new Promise((resolve, reject) => {
+      let activeWorkers = 0;
+      let settled = false;
+      const finish = (error = null) => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error);
+        else resolve();
+      };
+      const pump = () => {
+        if (settled) return;
+        if ((nextIndex >= selected.length || runtimeMemoryPressureStop) && activeWorkers === 0) {
+          finish();
+          return;
+        }
+        if (runtimeMemoryPressureStop) return;
+        while (
+          nextIndex < selected.length
+          && activeWorkers < runtimeConcurrency
+        ) {
+          const indexNumber = nextIndex;
+          nextIndex += 1;
+          activeWorkers += 1;
+          processRow(indexNumber)
+            .then(sampleRuntimeMetrics)
+            .then(() => {
+              activeWorkers -= 1;
+              pump();
+            })
+            .catch(finish);
+        }
+      };
+      pump();
+    });
+    await checkpointQueue;
+  } finally {
+    await Promise.allSettled(editorPages.map((workerPage) => workerPage.close()));
+    await browserResourceMonitor.close();
+  }
   const rows = [...statusBySpu.values()];
   const selectedSpus = new Set(selected.map((row) => String(row.spu_id || '')));
   const selectedRows = rows.filter((row) => selectedSpus.has(String(row.spu_id || '')));
@@ -4354,14 +4764,247 @@ async function applyDirectBatch(
       : 0,
     itemP95Ms: durations.length ? durations[p95Index] : 0,
     runtimePeakRssBytes,
+    runtimePeakBrowserWorkerRssBytes,
+    runtimePeakBrowserTotalRssBytes,
+    runtimeBrowserBaselineRendererRssBytes: Number(
+      browserResourceMonitor.baseline?.renderer_rss_bytes || 0,
+    ),
+    runtimePeakCombinedRssBytes,
+    runtimePeakConcurrency,
     runtimeMinMemAvailableKib: Number.isFinite(runtimeMinMemAvailableKib)
       ? runtimeMinMemAvailableKib
       : 0,
     runtimeFinalConcurrency: runtimeConcurrency,
     runtimeMemoryPressureStop,
     runtimePressureObserved,
+    runtimeSingleWorkerGcCount,
+    runtimeSingleWorkerGcMs,
+    runtimeSingleWorkerRendererGcCount,
+    runtimeSingleWorkerRendererGcMs,
+    runtimeSingleWorkerRendererGcFailures,
     runtimeLimitHistory,
+    editorPoolBootstrap,
   };
+}
+
+async function readMemAvailableKib() {
+  const meminfo = await fs.readFile('/proc/meminfo', 'utf8');
+  const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB$/m);
+  return match ? Number(match[1]) : 0;
+}
+
+function preparedBarrierResourceCeiling(memAvailableKib) {
+  if (memAvailableKib < 5 * 1024 * 1024) return 0;
+  if (memAvailableKib < 7 * 1024 * 1024) return 2;
+  if (memAvailableKib < 8 * 1024 * 1024) return 4;
+  if (memAvailableKib < 9 * 1024 * 1024) return 6;
+  return 10;
+}
+
+async function mapWithConcurrency(items, concurrency, operation) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index], index);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
+  ));
+  return results;
+}
+
+async function applyPreparedBarrierBatch(
+  page,
+  runDir,
+  indexPath,
+  offset,
+  limit,
+  batchName,
+  preloadConcurrency,
+) {
+  assertManagedDirectBatchRuntime();
+  if (runtimeProtocolProfile?.csecversion !== '4.3.0') {
+    throw new Error('prepared_save_barrier_requires_csecversion_4_3_0');
+  }
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(batchName)) {
+    throw new Error('batch-name 只能包含字母、数字和连字符');
+  }
+  const index = JSON.parse(await fs.readFile(indexPath, 'utf8'));
+  const selected = selectReadyMutationWindow(index.rows, offset, limit);
+  if (!selected.length) throw new Error('prepared_save_barrier_requires_ready_plans');
+  if (selected.length > 10) throw new Error('prepared_save_barrier_maximum_is_10');
+  const memAvailableBeforeKib = await readMemAvailableKib();
+  const resourceCeiling = preparedBarrierResourceCeiling(memAvailableBeforeKib);
+  if (selected.length > resourceCeiling) {
+    throw new Error(
+      `prepared_save_barrier_resource_gate:requested=${selected.length},ceiling=${resourceCeiling},mem_available_kib=${memAvailableBeforeKib}`,
+    );
+  }
+  const requestedPreloadConcurrency = Math.max(1, Math.min(
+    Number(preloadConcurrency || 2),
+    selected.length,
+    resourceCeiling,
+  ));
+  const checkpointPath = path.join(runDir, `${batchName}-checkpoint.json`);
+  try {
+    await fs.access(checkpointPath);
+    throw new Error('prepared_save_barrier_checkpoint_already_exists');
+  } catch (error) {
+    if (error?.message === 'prepared_save_barrier_checkpoint_already_exists') throw error;
+  }
+  const startedAt = Date.now();
+  const bootstrap = await bootstrapQnhWorkerPool(page.context(), { listPageUrl: LIST_PAGE_URL });
+  const browserMonitor = await createBrowserResourceMonitor(page.context().browser());
+  const preparedPages = [];
+  let checkpoint = {
+    index_path: indexPath,
+    window_offset: offset,
+    window_limit: limit,
+    batch_name: batchName,
+    mode: 'prepared_save_barrier',
+    preload_concurrency: requestedPreloadConcurrency,
+    selected_total: selected.length,
+    started_at: new Date(startedAt).toISOString(),
+    mem_available_before_kib: memAvailableBeforeKib,
+    rows: selected.map((row) => ({ spu_id: String(row.spu_id || ''), status: 'selected' })),
+  };
+  await writeJsonAtomic(checkpointPath, checkpoint);
+  const updateCheckpoint = async (updates = {}) => {
+    checkpoint = { ...checkpoint, ...updates, updated_at: isoNow() };
+    await writeJsonAtomic(checkpointPath, checkpoint);
+  };
+  const preloadStartedAt = Date.now();
+  try {
+    const bindings = await mapWithConcurrency(
+      selected,
+      requestedPreloadConcurrency,
+      async (row) => {
+        const spuId = String(row.spu_id || '');
+        const workerPage = await page.context().newPage();
+        preparedPages.push(workerPage);
+        await prewarmQnhWorkerPage(workerPage, { listPageUrl: LIST_PAGE_URL });
+        const native = await readExactNativeEditorDetail(workerPage, spuId);
+        if (
+          native.profile.context_profile !== 'tenant_edit_v430'
+          || !workerPage.url().includes(`spu=${encodeURIComponent(spuId)}`)
+        ) {
+          throw new Error(`prepared_save_barrier_exact_binding_failed:${spuId}`);
+        }
+        return {
+          row,
+          spuId,
+          planPath: path.resolve(String(row.plan_path)),
+          page: workerPage,
+          native_http_status: Number(native?.response?.http_status || 0),
+        };
+      },
+    );
+    const preloadElapsedMs = Date.now() - preloadStartedAt;
+    const afterPreloadResources = await browserMonitor.sample();
+    await updateCheckpoint({
+      preload_elapsed_ms: preloadElapsedMs,
+      browser_after_preload: afterPreloadResources,
+      rows: bindings.map((binding) => ({
+        spu_id: binding.spuId,
+        status: 'editor_bound',
+        native_http_status: binding.native_http_status,
+      })),
+    });
+    let preparedCheckpointWrittenAt = '';
+    const barrier = createPreparedSaveBarrier(bindings.length, {
+      async onAllPrepared(receipts) {
+        preparedCheckpointWrittenAt = isoNow();
+        await updateCheckpoint({
+          prepared_at: preparedCheckpointWrittenAt,
+          rows: receipts.map((receipt) => ({ ...receipt, status: 'prepared' })),
+        });
+      },
+      async onAllSavesSettled(receipts) {
+        await updateCheckpoint({
+          saves_settled_at: isoNow(),
+          rows: receipts.map((receipt) => ({
+            spu_id: receipt.spu_id,
+            status: receipt.ok ? 'save_accepted' : 'save_failed_or_unknown',
+            http_status: receipt.http_status,
+          })),
+        });
+      },
+    });
+    const settled = await Promise.allSettled(bindings.map(async (binding) => {
+      try {
+        return await applyDirectPlanCore(
+          binding.page,
+          runDir,
+          binding.planPath,
+          false,
+          batchName,
+          barrier,
+        );
+      } catch (error) {
+        if (barrier.metrics().prepared_count < bindings.length) barrier.abort(error);
+        throw error;
+      }
+    }));
+    const rows = settled.map((result, indexNumber) => {
+      const binding = bindings[indexNumber];
+      if (result.status === 'fulfilled') {
+        return {
+          spu_id: binding.spuId,
+          status: result.value.no_change ? 'no_change' : 'verified',
+          result_path: result.value.resultPath || '',
+          stage_timings: toObject(result.value.stage_timings),
+        };
+      }
+      return {
+        spu_id: binding.spuId,
+        status: 'failed',
+        error: String(result.reason?.message || result.reason || '').slice(0, 1000),
+      };
+    });
+    const resourcesAfter = await browserMonitor.sample();
+    const metrics = barrier.metrics();
+    await updateCheckpoint({
+      completed_at: isoNow(),
+      elapsed_ms: Date.now() - startedAt,
+      prepared_checkpoint_written_at: preparedCheckpointWrittenAt,
+      barrier_metrics: metrics,
+      browser_after_completion: resourcesAfter,
+      mem_available_after_kib: await readMemAvailableKib(),
+      rows,
+    });
+    return {
+      checkpointPath,
+      selectedTotal: selected.length,
+      verified: rows.filter((row) => row.status === 'verified').length,
+      noChange: rows.filter((row) => row.status === 'no_change').length,
+      failed: rows.filter((row) => row.status === 'failed').length,
+      preloadElapsedMs,
+      saveBurstMs: metrics.save_burst_ms,
+      totalElapsedMs: Date.now() - startedAt,
+      throughputAverageMsPerProduct: Math.round((Date.now() - startedAt) / selected.length),
+      memAvailableBeforeKib,
+      memAvailableAfterKib: await readMemAvailableKib(),
+      resourceCeiling,
+      preloadConcurrency: requestedPreloadConcurrency,
+      bootstrap,
+    };
+  } catch (error) {
+    await updateCheckpoint({
+      failed_at: isoNow(),
+      elapsed_ms: Date.now() - startedAt,
+      error: String(error?.message || error).slice(0, 1000),
+    }).catch(() => {});
+    throw error;
+  } finally {
+    await Promise.allSettled(preparedPages.map((workerPage) => workerPage.close()));
+    await browserMonitor.close();
+  }
 }
 
 function diffSummaries(before, after) {
@@ -4388,12 +5031,242 @@ function diffSummaries(before, after) {
   return changes.filter((change) => change.field_path !== 'update_time');
 }
 
+async function readExactNativeEditorDetail(page, spuId) {
+  const expectedSpu = String(spuId);
+  const targetUrl = `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(expectedSpu)}`;
+  const responsePromise = page.waitForResponse((response) => {
+    const request = response.request();
+    if (request.method() !== 'POST') return false;
+    try {
+      if (new URL(request.url()).pathname !== DETAIL_ENDPOINT) return false;
+      return String(request.postDataJSON()?.spuId || '') === expectedSpu;
+    } catch { return false; }
+  }, { timeout: 45000 });
+  if (page.url() === targetUrl) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
+  } else {
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  }
+  const response = await responsePromise;
+  const request = response.request();
+  const profile = validateNativeEditorEvidence({
+    page_url: page.url(),
+    request_url: request.url(),
+    method: request.method(),
+    http_status: response.status(),
+    body: request.postDataJSON(),
+  }, expectedSpu);
+  if (runtimeProtocolProfile?.csecversion === '4.3.0' && profile.csecversion !== '4.3.0') {
+    throw new Error('当前冻结 4.3.0 profile 与编辑页原生 profile 不一致，禁止继续');
+  }
+  return { profile };
+}
+
+async function probeExactEditorFrames(
+  page,
+  runDir,
+  manifestPath,
+  requestedLimit = 5,
+  requestedConcurrency = 1,
+) {
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  const limit = Math.max(1, Math.min(10, Math.floor(Number(requestedLimit) || 5)));
+  const targets = toArray(manifest.products)
+    .map((item) => String(item?.spu_id || item?.spuId || '').trim())
+    .filter((spuId) => /^\d+$/.test(spuId))
+    .slice(0, limit);
+  if (targets.length < 5) {
+    throw new Error('精确执行区只读实验至少需要 5 个有效 SPU');
+  }
+  if (!page.url().includes('#/unifiedGoods/tenant/spu-list')) {
+    await page.goto(LIST_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  }
+  await page.waitForFunction(
+    () => Boolean(window.H5guard && typeof window.H5guard.sign === 'function'),
+    null,
+    { timeout: 30000 },
+  );
+  const topUrl = page.url();
+  const pageCountBefore = page.context().pages().length;
+  const monitor = await createBrowserResourceMonitor(page.context().browser());
+  const rows = [];
+  const concurrency = Math.max(
+    1,
+    Math.min(5, targets.length, Math.floor(Number(requestedConcurrency) || 1)),
+  );
+  let nextTargetIndex = 0;
+  const probeWorker = async () => {
+    while (true) {
+      const index = nextTargetIndex;
+      nextTargetIndex += 1;
+      if (index >= targets.length) return;
+      const spuId = targets[index];
+      const startedAt = Date.now();
+      const frameId = `codex-qnh-exact-frame-probe-${index}`;
+      const targetUrl = `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(spuId)}`;
+      const responsePromise = page.waitForResponse((response) => {
+        const request = response.request();
+        if (request.method() !== 'POST') return false;
+        try {
+          return new URL(request.url()).pathname === DETAIL_ENDPOINT
+            && String(request.postDataJSON()?.spuId || '') === spuId;
+        } catch { return false; }
+      }, { timeout: 45000 });
+      await page.evaluate(({ id, src }) => {
+        document.getElementById(id)?.remove();
+        const frame = document.createElement('iframe');
+        frame.id = id;
+        frame.setAttribute('aria-hidden', 'true');
+        frame.tabIndex = -1;
+        frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;opacity:0;pointer-events:none;border:0;';
+        frame.src = src;
+        (document.body || document.documentElement).appendChild(frame);
+      }, { id: frameId, src: targetUrl });
+      try {
+        const response = await responsePromise;
+        const request = response.request();
+        const frame = page.frames().find((candidate) => candidate.url() === targetUrl);
+        if (!frame) throw new Error('精确执行区已发详情请求但 frame 未绑定');
+        const profile = validateNativeEditorEvidence({
+          page_url: frame.url(),
+          request_url: request.url(),
+          method: request.method(),
+          http_status: response.status(),
+          body: request.postDataJSON(),
+        }, spuId);
+        if (profile.context_profile !== 'tenant_edit_v430') {
+          throw new Error('精确执行区未取得 4.3.0 原生详情证据');
+        }
+        const signatureEvidence = await frame.evaluate(async ({ requestUrl, requestBody }) => {
+          if (!window.H5guard || typeof window.H5guard.sign !== 'function') {
+            throw new Error('frame_h5guard_unavailable');
+          }
+          const bodyText = JSON.stringify(requestBody);
+          const signature = await window.H5guard.sign({
+            url: requestUrl,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+            body: bodyText,
+          });
+          const headers = signature && typeof signature === 'object' ? signature.headers || {} : {};
+          const header = Object.entries(headers).find(([key]) => String(key).toLowerCase() === 'mtgsig');
+          const raw = typeof signature === 'string'
+            ? signature
+            : String(header?.[1] || signature?.mtgsig || signature?.data?.mtgsig || '');
+          const findA9 = (value, depth = 0) => {
+            if (depth > 7 || value === null || value === undefined) return '';
+            if (typeof value === 'object') {
+              if (value.a9 !== undefined) return String(value.a9 || '');
+              for (const child of Object.values(value)) {
+                const found = findA9(child, depth + 1);
+                if (found) return found;
+              }
+              return '';
+            }
+            if (typeof value !== 'string') return '';
+            try {
+              const parsed = JSON.parse(value);
+              const found = findA9(parsed, depth + 1);
+              if (found) return found;
+            } catch { /* opaque signature */ }
+            return value.match(/(?:^|[,{\s])['"]?a9['"]?\s*[:=]\s*['"]?([^'",}\s]+)/i)?.[1] || '';
+          };
+          const a9 = findA9(raw);
+          const explicitVersion = a9.match(/\b4\.(?:2|3)\.\d+\b/)?.[0] || '';
+          return {
+            present: Boolean(raw && a9),
+            explicit_version: explicitVersion,
+            opaque: Boolean(raw && a9 && !explicitVersion),
+          };
+        }, {
+          requestUrl: effectiveRequestUrl(DETAIL_URL),
+          requestBody: { spuId },
+        });
+        if (!signatureEvidence.present) throw new Error('精确执行区签名证据为空');
+        if (signatureEvidence.explicit_version && signatureEvidence.explicit_version !== '4.3.0') {
+          throw new Error('精确执行区签名版本与 4.3.0 不一致');
+        }
+        const resources = await monitor.sample();
+        rows.push({
+          ordinal: index + 1,
+          spu_id: spuId,
+          ok: true,
+          http_status: response.status(),
+          context_profile: profile.context_profile,
+          signature_present: true,
+          signature_version: signatureEvidence.explicit_version,
+          signature_opaque: signatureEvidence.opaque,
+          elapsed_ms: Date.now() - startedAt,
+          browser_worker_rss_bytes: Number(resources.worker_renderer_rss_bytes || 0),
+          browser_total_rss_bytes: Number(resources.browser_total_rss_bytes || 0),
+        });
+      } catch (error) {
+        rows.push({
+          ordinal: index + 1,
+          spu_id: spuId,
+          ok: false,
+          error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+          elapsed_ms: Date.now() - startedAt,
+        });
+      } finally {
+        await page.evaluate((id) => document.getElementById(id)?.remove(), frameId).catch(() => {});
+        await page.waitForTimeout(150);
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: concurrency }, () => probeWorker()));
+  } finally {
+    await monitor.close();
+  }
+  rows.sort((left, right) => Number(left.ordinal || 0) - Number(right.ordinal || 0));
+  const receipt = {
+    schema: 'qnh-exact-editor-frame-readonly-probe-v1',
+    created_at: isoNow(),
+    manifest_path: manifestPath,
+    requested: targets.length,
+    concurrency,
+    passed: rows.filter((row) => row.ok).length,
+    failed: rows.filter((row) => !row.ok).length,
+    platform_mutation_count: 0,
+    top_url_unchanged: page.url() === topUrl,
+    page_count_before: pageCountBefore,
+    page_count_after: page.context().pages().length,
+    rows,
+  };
+  const receiptPath = path.join(runDir, 'exact-editor-frame-readonly-probe.json');
+  await writeJsonAtomic(receiptPath, receipt);
+  await appendLog(runDir, 'exact_editor_frame_readonly_probe_completed', {
+    requested: receipt.requested,
+    concurrency: receipt.concurrency,
+    passed: receipt.passed,
+    failed: receipt.failed,
+    platform_mutation_count: 0,
+    top_url_unchanged: receipt.top_url_unchanged,
+    page_count_before: receipt.page_count_before,
+    page_count_after: receipt.page_count_after,
+  });
+  return { ...receipt, receipt_path: receiptPath };
+}
+
+async function returnToListAndCloseEditor(page, spuId) {
+  await closeProductEditTabs(page, String(spuId)).catch(() => ({ closed_count: 0 }));
+  if (!page.url().includes('#/unifiedGoods/tenant/spu-list')) {
+    await page.goto(LIST_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  }
+}
+
 async function fetchDetail(page, spuId) {
+  const modernEditor = runtimeProtocolProfile?.csecversion === '4.3.0';
   const response = await signedJson(page, {
     url: DETAIL_URL,
     body: { spuId: String(spuId) },
-    qnhReferrer: `/unifiedGoods/tenant/spu-edit?spuId=${encodeURIComponent(String(spuId))}`,
-    fetchReferrer: `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/spu-edit?id=${encodeURIComponent(String(spuId))}`,
+    qnhReferrer: modernEditor
+      ? '/unifiedGoods/tenant/edit'
+      : `/unifiedGoods/tenant/spu-edit?spuId=${encodeURIComponent(String(spuId))}`,
+    fetchReferrer: modernEditor
+      ? `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(String(spuId))}`
+      : `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/spu-edit?id=${encodeURIComponent(String(spuId))}`,
   });
   assertResponse(response, `读取 SPU ${spuId} 详情`);
   return detailSpu(response.data);
@@ -5025,7 +5898,9 @@ async function readDetails(page, runDir, manifestPath, limit, label = '', offset
   );
   const details = new Array(products.length);
   const requestedConcurrency = Number(process.env.QNH_DETAIL_CONCURRENCY || 10);
-  const concurrency = Math.max(1, Math.min(10, Math.floor(requestedConcurrency) || 10));
+  const concurrency = runtimeProtocolProfile?.csecversion === '4.3.0'
+    ? Math.max(1, Math.min(5, Math.floor(requestedConcurrency) || 5))
+    : Math.max(1, Math.min(10, Math.floor(requestedConcurrency) || 10));
   let nextIndex = 0;
   const worker = async () => {
     while (true) {
@@ -5034,6 +5909,32 @@ async function readDetails(page, runDir, manifestPath, limit, label = '', offset
       if (index >= products.length) return;
       const product = products[index];
       const spuId = String(product.spu_id);
+      if (runtimeProtocolProfile?.csecversion === '4.3.0') {
+        const response = await signedJsonQueryWithSingleRetry(page, {
+          url: DETAIL_URL,
+          body: { spuId },
+          qnhReferrer: LIST_REFERRER,
+          fetchReferrer: LIST_PAGE_URL,
+        }, runDir, { query: 'tenant_detail', spu_id: spuId });
+        assertResponse(response, `读取 SPU ${spuId} 详情`);
+        const detail = detailSpu(response.data);
+        details[index] = {
+          spu_id: spuId,
+          title: titleOf(detail) || product.title,
+          detail,
+          protocol_profile: runtimeProtocolProfile.context_profile,
+        };
+        await appendLog(runDir, 'detail_read', {
+          index: normalizedOffset + index + 1,
+          total: products.length,
+          spu_id: spuId,
+          title: titleOf(detail) || product.title,
+          concurrency,
+          protocol_profile: runtimeProtocolProfile.context_profile,
+          query_only_shared_list_page: true,
+        });
+        continue;
+      }
       const response = await signedJson(page, {
         url: DETAIL_URL,
         body: { spuId },
@@ -5981,8 +6882,31 @@ async function inspectEditors(page, runDir, manifestPath, limit) {
 async function readOfficialRecommendations(page, runDir, detailsPath, limit, label = '') {
   const snapshot = JSON.parse(await fs.readFile(detailsPath, 'utf8'));
   const products = toArray(snapshot.products).slice(0, limit > 0 ? limit : undefined);
-  const recommendations = [];
-  for (let index = 0; index < products.length; index += 1) {
+  const recommendations = new Array(products.length);
+  const needsChannel200NoBrandReceipt = products.some((product) => (
+    toArray(toObject(product.detail).spuChannelInfoList).some((channel) => (
+      Number(channel.channelId || 0) === 200
+      && toArray(channel.categoryProperties).some((attr) => (
+        String(attr.attrName || '') === '品牌'
+        && String(attr.attrValueType || '') === '4'
+        && propertyDisplayValues(attr).length === 0
+      ))
+    ))
+  ));
+  if (needsChannel200NoBrandReceipt) {
+    const brandReceipt = await queryChannelBrand(page, runDir, 200, '无品牌');
+    if (!brandReceipt.candidates.some((item) => String(item.brand_name || '') === '无品牌')) {
+      throw new Error('渠道 200 未返回可验证的无品牌候选，禁止使用猜测品牌编码');
+    }
+  }
+  const recommendationConcurrency = runtimeProtocolProfile?.csecversion === '4.3.0' ? 5 : 1;
+  let nextRecommendationIndex = 0;
+  let completedRecommendations = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextRecommendationIndex;
+      nextRecommendationIndex += 1;
+      if (index >= products.length) return;
     const product = products[index];
     const detail = toObject(product.detail);
     const channel = toArray(detail.spuChannelInfoList).find(
@@ -5995,7 +6919,7 @@ async function readOfficialRecommendations(page, runDir, detailsPath, limit, lab
     let error = '';
     if (categoryCode) {
       try {
-        const response = await signedJson(page, {
+        const response = await signedJsonQueryWithSingleRetry(page, {
           url: DYNAMIC_RECOMMEND_URL,
           body: {
             spuName: String(detail.spuName || product.title || ''),
@@ -6003,8 +6927,15 @@ async function readOfficialRecommendations(page, runDir, detailsPath, limit, lab
             channelCategoryId: categoryCode,
             upc,
           },
-          qnhReferrer: '/unifiedGoods/tenant/edit',
-          fetchReferrer: `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(String(detail.spuId || product.spu_id || ''))}`,
+          qnhReferrer: runtimeProtocolProfile?.csecversion === '4.3.0'
+            ? LIST_REFERRER
+            : '/unifiedGoods/tenant/edit',
+          fetchReferrer: runtimeProtocolProfile?.csecversion === '4.3.0'
+            ? LIST_PAGE_URL
+            : `https://qnh.meituan.com/home.html#/unifiedGoods/tenant/edit?spu=${encodeURIComponent(String(detail.spuId || product.spu_id || ''))}`,
+        }, runDir, {
+          query: 'official_recommendation',
+          spu_id: String(detail.spuId || product.spu_id || ''),
         });
         assertResponse(response, `读取 SPU ${detail.spuId || product.spu_id} 官方属性推荐`);
         responseData = unwrapData(response.data);
@@ -6014,14 +6945,14 @@ async function readOfficialRecommendations(page, runDir, detailsPath, limit, lab
     } else {
       error = '美团渠道类目为空';
     }
-    recommendations.push({
+    recommendations[index] = {
       spu_id: String(detail.spuId || product.spu_id || ''),
       title: String(detail.spuName || product.title || ''),
       category_code: categoryCode,
       upc,
       recommendation: responseData,
       error,
-    });
+    };
     await appendLog(runDir, 'official_dynamic_recommendation_read', {
       index: index + 1,
       total: products.length,
@@ -6029,14 +6960,20 @@ async function readOfficialRecommendations(page, runDir, detailsPath, limit, lab
       ok: Boolean(responseData),
       error: error.slice(0, 300),
     });
-    if ((index + 1) % 25 === 0) {
+    completedRecommendations += 1;
+    if (completedRecommendations % 25 === 0) {
       process.stderr.write(`${JSON.stringify({
         event: 'official_recommendation_progress',
-        done: index + 1,
+        done: completedRecommendations,
         total: products.length,
       })}\n`);
     }
-  }
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(recommendationConcurrency, products.length) },
+    worker,
+  ));
   if (label && !/^[a-z0-9][a-z0-9-]{0,63}$/i.test(label)) {
     throw new Error('推荐读取 label 只能包含字母、数字和连字符');
   }
@@ -6174,10 +7111,17 @@ async function backfillVerifiedMainImageIntent(runDir, planPath, resultPath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0] || 'preflight';
-  if (command === 'apply-direct-batch') {
+  if (command === 'apply-direct-batch' || command === 'apply-prepared-barrier-batch') {
     // This check intentionally happens before ensureDir/CDP attach so an
     // unmanaged invocation has zero filesystem, page, provider, or platform side effects.
     assertManagedDirectBatchRuntime();
+    // The hard 50-SPU boundary is also checked before run-dir creation and
+    // CDP attach.  An oversized invocation therefore sends zero platform calls.
+    selectReadyMutationWindow(
+      [],
+      Number(args.offset || 0),
+      Number(args.limit || (command === 'apply-prepared-barrier-batch' ? 10 : 50)),
+    );
   }
   const cdpUrl = String(args.cdp || DEFAULT_CDP);
   const runDir = path.resolve(String(args['run-dir'] || DEFAULT_RUN_DIR));
@@ -6198,6 +7142,18 @@ async function main() {
   }
   const { browser, page } = await attach(cdpUrl);
   try {
+    if (command !== 'preflight') {
+      const identityPath = path.join(runDir, 'session_identity.json');
+      const identity = JSON.parse(await fs.readFile(identityPath, 'utf8'));
+      if (identity.csecversion === '4.3.0') {
+        runtimeProtocolProfile = {
+          context_profile: String(identity.context_profile || 'tenant_list_v430'),
+          csecversion: '4.3.0',
+          qnh_referrer: LIST_ROUTE,
+          source: String(identity.native_profile_source || ''),
+        };
+      }
+    }
     if (command === 'preflight') {
       const result = await preflight(page);
       const sessionIdentity = {
@@ -6322,6 +7278,19 @@ async function main() {
         Number(args.offset || 0),
       );
       process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
+      return;
+    }
+    if (command === 'probe-exact-editor-frames') {
+      if (!args.manifest) throw new Error('probe-exact-editor-frames 命令需要 --manifest');
+      const result = await probeExactEditorFrames(
+        page,
+        runDir,
+        path.resolve(String(args.manifest)),
+        Number(args.limit || 5),
+        Number(args.concurrency || 1),
+      );
+      process.stdout.write(`${JSON.stringify({ ok: result.failed === 0, ...result }, null, 2)}\n`);
+      if (result.failed > 0) process.exitCode = 1;
       return;
     }
     if (command === 'build-category-completion-plans') {
@@ -6494,12 +7463,28 @@ async function main() {
         page,
         runDir,
         path.resolve(String(args.index)),
-        Number(args.limit || 0),
+        Number(args.offset || 0),
+        Number(args.limit || 50),
         String(args['batch-name'] || 'direct-batch'),
         Number(args.concurrency || 2),
         args['dry-run'] === true || String(args['dry-run'] || '') === '1',
       );
       process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
+      return;
+    }
+    if (command === 'apply-prepared-barrier-batch') {
+      if (!args.index) throw new Error('apply-prepared-barrier-batch 命令需要 --index');
+      const result = await applyPreparedBarrierBatch(
+        page,
+        runDir,
+        path.resolve(String(args.index)),
+        Number(args.offset || 0),
+        Number(args.limit || 2),
+        String(args['batch-name'] || 'prepared-barrier-batch'),
+        Number(args['preload-concurrency'] || 2),
+      );
+      process.stdout.write(`${JSON.stringify({ ok: result.failed === 0, ...result }, null, 2)}\n`);
+      if (result.failed > 0) process.exitCode = 1;
       return;
     }
     throw new Error(`未知命令：${command}`);
@@ -6523,7 +7508,7 @@ main()
     // Do not leave a Playwright transport/timer alive after the command has
     // finished; this exits the Node client while preserving the attached
     // Chrome process.
-    process.exit(0);
+    process.exit(Number(process.exitCode || 0));
   })
   .catch((error) => {
     process.stderr.write(`${JSON.stringify({

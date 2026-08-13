@@ -125,8 +125,15 @@ def main() -> None:
     if args.spu:
         products = [item for item in products if str(item.get('spu_id') or '') == str(args.spu)]
     issues: list[dict] = []
+    missing_on_platform = 0
+    extant_checked = 0
     for product in products:
-        for channel_index, channel in enumerate(product['detail'].get('spuChannelInfoList') or []):
+        if bool(product.get('missing_on_platform')):
+            missing_on_platform += 1
+            continue
+        extant_checked += 1
+        detail = product.get('detail') or {}
+        for channel_index, channel in enumerate(detail.get('spuChannelInfoList') or []):
             for attr in channel.get('categoryProperties') or []:
                 valid, reason = contract_status(attr)
                 if not valid:
@@ -144,6 +151,8 @@ def main() -> None:
                     })
     result = {
         'products_checked': len(products),
+        'platform_extant_checked': extant_checked,
+        'missing_on_platform_count': missing_on_platform,
         'products_with_issues': len({item['spu_id'] for item in issues}),
         'issue_count': len(issues),
         'issues': issues,

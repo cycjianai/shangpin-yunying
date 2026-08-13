@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the standard B/C ledger and audit workbook from a completed QNH run."""
+"""Create the schema-locked B/C ledger for a completed QNH channel run."""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,24 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+
+from channel_workbook_schema import (
+    AUDIT_SHEET,
+    CANONICAL_GENERATED_SHEETS,
+    FEEDBACK_SHEET,
+    GENERATED_SOURCE_SHEET,
+    HEADERS,
+    MISSING_SHEET,
+    PERFORMANCE_SHEET,
+    SCHEMA_VERSION,
+    SOURCE_B_HEADER,
+    SOURCE_C_HEADER,
+    SUMMARY_METRICS,
+    SUMMARY_SHEET,
+    VERIFY_METRICS,
+    VERIFY_SHEET,
+)
+from qnh_task_contract import read_ledger, verify_contract
 
 CHANNELS = {100: "美团", 200: "饿了么", 300: "京东"}
 HEADER_FILL = PatternFill("solid", fgColor="F4B183")
@@ -55,33 +73,150 @@ def final_files(run_dir: Path) -> list[Path]:
         if not match:
             continue
         chunk = int(match.group(1))
-        priority = 2 if match.group(2) == "final2" else 1
-        if chunk not in selected or priority > selected[chunk][0]:
-            selected[chunk] = (priority, path)
+        modified_ns = path.stat().st_mtime_ns
+        if chunk not in selected or modified_ns > selected[chunk][0]:
+            selected[chunk] = (modified_ns, path)
     return [selected[index][1] for index in sorted(selected)]
 
 
-def audit_events(run_dir: Path) -> dict[tuple[str, int, str], dict]:
-    paths = sorted(run_dir.glob("full-c*-plans/audit.json"))
-    paths += sorted(run_dir.glob("full-c*-residual/audit.json"))
-    recommended = run_dir / "poc10-plans-recommended" / "audit.json"
-    if recommended.exists():
-        paths.append(recommended)
+def verified_history_spus(run_dir: Path) -> set[str]:
+    verified: set[str] = set()
+    for path in run_dir.glob("*-result.json"):
+        try:
+            payload = read(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        requested = payload.get("requested_changes") or []
+        checks = payload.get("verification") or []
+        if (
+            payload.get("verified") is True
+            and requested
+            and len(requested) == len(checks)
+            and all(item.get("verified") is True for item in checks)
+        ):
+            verified.add(str(payload.get("spu_id") or ""))
+    return {spu_id for spu_id in verified if spu_id}
+
+
+def value_text(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, list):
+        return " / ".join(
+            part for part in (value_text(item) for item in value) if part
+        )
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return str(value).strip()
+
+
+def verified_result_events(run_dir: Path) -> dict[tuple[str, int, str], dict]:
+    """Recover audited fields when an old aggregate audit is partial or absent.
+
+    A history result is admitted only when every requested change has a matching
+    independently verified check.  This keeps result fallback as strict as the
+    existing history SPU gate; plan-only or partially verified files contribute
+    no Excel history.
+    """
     events: dict[tuple[str, int, str], dict] = {}
-    for path in paths:
-        for event in read(path).get("fields") or []:
-            key = (str(event["spu_id"]), int(event["channel_id"]), str(event["attr_id"]))
+    field_pattern = re.compile(r"^channel\.(\d+)\.(.+)$")
+    for path in sorted(run_dir.glob("*-result.json")):
+        try:
+            payload = read(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        requested = payload.get("requested_changes") or []
+        checks = payload.get("verification") or []
+        if not (
+            payload.get("verified") is True
+            and requested
+            and len(requested) == len(checks)
+            and all(item.get("verified") is True for item in checks)
+        ):
+            continue
+        check_by_path = {
+            str(item.get("field_path") or ""): item for item in checks
+        }
+        spu_id = str(payload.get("spu_id") or "")
+        title = str((payload.get("before") or {}).get("title") or "")
+        for change in requested:
+            field_path = str(change.get("field_path") or "")
+            match = field_pattern.match(field_path)
+            check = check_by_path.get(field_path)
+            if not match or not check or check.get("verified") is not True:
+                continue
+            channel_id = int(match.group(1))
+            attr_id = str(change.get("attr_id") or "")
+            if not spu_id or not attr_id:
+                continue
+            key = (spu_id, channel_id, attr_id)
+            event = {
+                "spu_id": spu_id,
+                "title": title,
+                "channel_id": channel_id,
+                "attr_id": attr_id,
+                "attr_name": match.group(2),
+                "old_value": value_text(change.get("old_value")),
+                "new_value": value_text(change.get("new_value")),
+                "source": str(change.get("source") or "verified_result_fallback"),
+            }
+            if key in events:
+                event["old_value"] = events[key].get("old_value")
             events[key] = event
     return events
 
 
-def performance(run_dir: Path) -> dict:
+def plan_audit_paths(run_dir: Path) -> list[Path]:
+    paths = sorted(run_dir.glob("full-c*-plans/audit.json"))
+    paths += sorted(run_dir.glob("full-c*-residual/audit.json"))
+    paths += sorted(run_dir.glob("full-c*-residual-plans/audit.json"))
+    recommended = run_dir / "poc10-plans-recommended" / "audit.json"
+    if recommended.exists():
+        paths.append(recommended)
+    return paths
+
+
+def audit_events(
+    run_dir: Path,
+    history_run_dirs: list[Path],
+) -> dict[tuple[str, int, str], dict]:
+    events: dict[tuple[str, int, str], dict] = {}
+    sources = [
+        (history, verified_history_spus(history))
+        for history in history_run_dirs
+    ] + [(run_dir, None)]
+    for source_dir, verified_spus in sources:
+        source_events: dict[tuple[str, int, str], dict] = {}
+        for path in plan_audit_paths(source_dir):
+            for event in read(path).get("fields") or []:
+                spu_id = str(event["spu_id"])
+                if verified_spus is not None and spu_id not in verified_spus:
+                    continue
+                key = (spu_id, int(event["channel_id"]), str(event["attr_id"]))
+                source_events[key] = event
+        if verified_spus is not None:
+            for key, event in verified_result_events(source_dir).items():
+                source_events.setdefault(key, event)
+        for key, event in source_events.items():
+            if key in events:
+                event = {**event, "old_value": events[key].get("old_value")}
+            events[key] = event
+    return events
+
+
+def performance(run_dirs: list[Path]) -> dict:
     rows: list[dict] = []
     elapsed = 0
     # Direct QNH batches persist one checkpoint per save attempt. Residual
     # retries intentionally use the same `*-save-checkpoint.json` contract;
     # preview checkpoints must not be counted as platform delivery events.
-    paths = sorted(run_dir.glob("*-save-checkpoint.json"))
+    paths: list[Path] = []
+    for run_dir in run_dirs:
+        paths += sorted(
+            path
+            for path in run_dir.glob("*-checkpoint.json")
+            if "-save-" in path.name
+        )
     for path in paths:
         payload = read(path)
         rows += payload.get("rows") or []
@@ -94,6 +229,61 @@ def performance(run_dir: Path) -> dict:
     }
 
 
+def external_counts(contract: dict) -> dict[str, int]:
+    counts = {
+        "ocr": 0,
+        "media_scan": 0,
+        "barcode_scan": 0,
+        "bocha": 0,
+        "web_search": 0,
+        "llm": 0,
+        "provider_submit": 0,
+        "provider_query": 0,
+        "image_upload": 0,
+    }
+    for row in read_ledger(Path(contract["action_ledger_path"])):
+        payload = row.get("payload") or {}
+        if row.get("action") != "task_action_terminal":
+            continue
+        if payload.get("outcome") != "succeeded":
+            continue
+        key = payload.get("budget_key")
+        if key in counts:
+            counts[key] += int(payload.get("units") or 0)
+    return counts
+
+
+def merge_history(existing: object, current: str, *, generic: bool = False) -> str:
+    old = str(existing or "").strip()
+    new = str(current or "").strip()
+    if not old:
+        return new
+    if generic or not new or new in old:
+        return old
+    return f"{old}\n---本轮追加---\n{new}"
+
+
+def feedback_rows(path: Path | None) -> list[tuple[str, str, str]]:
+    if path is None:
+        return [("本轮未发现新的可泛化问题", "沿用当前固定合同", "全量机器门通过")]
+    payload = read(path)
+    source = payload.get("rows") if isinstance(payload, dict) else payload
+    rows: list[tuple[str, str, str]] = []
+    for item in source or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            (
+                str(item.get("new_issue") or item.get("issue") or "").strip(),
+                str(item.get("rule") or item.get("fix") or "").strip(),
+                str(item.get("validation") or item.get("result") or "").strip(),
+            )
+        )
+    return [row for row in rows if any(row)] or [
+        ("本轮未发现新的可泛化问题", "沿用当前固定合同", "全量机器门通过")
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
@@ -101,12 +291,55 @@ def main() -> int:
     parser.add_argument("--tenant-name", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--source-xlsx")
+    parser.add_argument("--task-contract", required=True)
+    parser.add_argument("--validation", required=True)
+    parser.add_argument("--feedback-json")
+    parser.add_argument("--history-run-dir", action="append", default=[])
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).resolve()
+    history_run_dirs = [Path(value).resolve() for value in args.history_run_dir]
+    contract = verify_contract(Path(args.task_contract).resolve())
+    if contract.get("task_mode") not in {
+        "channel_attributes_only",
+        "plugin_attribute_fill",
+    }:
+        raise RuntimeError("标准渠道属性工作簿仅适用于属性填充模式")
+    if contract.get("excel_schema_version") != SCHEMA_VERSION:
+        raise RuntimeError("Excel Schema 版本不匹配")
+    frozen_source = contract.get("source") or {}
+    if frozen_source.get("type") == "xlsx":
+        if not args.source_xlsx:
+            raise RuntimeError("冻结合同包含源 XLSX，导出时必须传 --source-xlsx")
+        if Path(args.source_xlsx).resolve() != Path(frozen_source["source_path"]).resolve():
+            raise RuntimeError("导出源 XLSX 与冻结合同不一致")
+    elif args.source_xlsx:
+        raise RuntimeError("冻结合同未绑定源 XLSX，禁止临时替换底稿")
     manifest = read(Path(args.manifest).resolve())
+    validation = read(Path(args.validation).resolve())
+    if int(validation.get("products_with_issues") or 0) != 0 or int(
+        validation.get("issue_count") or 0
+    ) != 0:
+        raise RuntimeError("最终结构验证仍有问题，禁止导出100%工作簿")
     ordered = [str(item["spu_id"]) for item in manifest["products"]]
-    events = audit_events(run_dir)
+    if len(set(ordered)) != len(ordered):
+        raise RuntimeError("manifest 包含重复 SPU")
+    if len(ordered) != int(contract["source"]["source_unique_spu_count"]):
+        raise RuntimeError("manifest 数量与冻结合同不一致")
+    current_tenant_id = ""
+    if history_run_dirs:
+        current_identity = read(run_dir / "session_identity.json")
+        current_tenant_id = str(current_identity.get("tenant_id") or "")
+    for history_run_dir in history_run_dirs:
+        if history_run_dir == run_dir:
+            raise RuntimeError("历史 run-dir 不得等于当前 run-dir")
+        identity_path = history_run_dir / "session_identity.json"
+        if not identity_path.is_file():
+            raise RuntimeError(f"历史 run-dir 缺少 session_identity：{history_run_dir}")
+        history_tenant_id = str(read(identity_path).get("tenant_id") or "")
+        if not current_tenant_id or history_tenant_id != current_tenant_id:
+            raise RuntimeError(f"历史 run-dir 租户不一致：{history_run_dir}")
+    events = audit_events(run_dir, history_run_dirs)
     by_spu: dict[str, list[dict]] = defaultdict(list)
     wanted: dict[str, set[tuple[int, str]]] = defaultdict(set)
     for (spu_id, channel_id, attr_id), event in events.items():
@@ -138,42 +371,70 @@ def main() -> int:
     if incomplete:
         raise RuntimeError(f"字段最终回读不完整：{len(events)-len(incomplete)}/{len(events)}")
     extant = len(ordered) - len(missing)
+    checked = int(
+        validation.get("platform_extant_checked")
+        if validation.get("platform_extant_checked") is not None
+        else validation.get("products_checked") or 0
+    )
+    if checked != extant:
+        raise RuntimeError(f"最终验证集合不等：checked={checked} extant={extant}")
     changed = sum(bool(by_spu.get(spu_id)) for spu_id in ordered)
     strategy_counts = Counter(str(item.get("source") or "unknown") for item in events.values())
-    perf = performance(run_dir)
+    perf = performance([*history_run_dirs, run_dir])
+    ext_calls = external_counts(contract)
+    if contract["task_mode"] == "channel_attributes_only" and any(ext_calls.values()):
+        raise RuntimeError("纯渠道属性模式检测到禁止的外部调用")
 
     if args.source_xlsx:
         workbook = load_workbook(Path(args.source_xlsx).resolve())
+        for name in CANONICAL_GENERATED_SHEETS:
+            if name in workbook.sheetnames:
+                workbook.remove(workbook[name])
+        if not workbook.worksheets:
+            raise RuntimeError("源工作簿移除旧审计表后没有业务工作表")
         source = workbook.worksheets[0]
-        summary = workbook.create_sheet("执行汇总", 0)
+        summary = workbook.create_sheet(SUMMARY_SHEET, 0)
     else:
         workbook = Workbook()
         workbook.remove(workbook.active)
-        summary = workbook.create_sheet("执行汇总")
-        source = workbook.create_sheet("Sheet1")
-    audit = workbook.create_sheet("字段级审计")
-    missing_sheet = workbook.create_sheet("平台不存在")
-    verify = workbook.create_sheet("最终结构复核")
-    strategy = workbook.create_sheet("问题与策略回灌")
-    speed = workbook.create_sheet("性能与外部调用统计")
+        summary = workbook.create_sheet(SUMMARY_SHEET)
+        source = workbook.create_sheet(GENERATED_SOURCE_SHEET)
+    audit = workbook.create_sheet(AUDIT_SHEET)
+    missing_sheet = workbook.create_sheet(MISSING_SHEET)
+    verify = workbook.create_sheet(VERIFY_SHEET)
+    strategy = workbook.create_sheet(FEEDBACK_SHEET)
+    speed = workbook.create_sheet(PERFORMANCE_SHEET)
 
-    header(summary, ["指标", "结果"])
-    for row in [
+    header(summary, HEADERS[SUMMARY_SHEET])
+    summary_values = dict([
+        ("Excel Schema版本", SCHEMA_VERSION),
+        ("Skill版本", contract["skill_version"]),
+        ("任务模式", contract["task_mode"]),
+        ("合同指纹SHA256", contract["contract_fingerprint_sha256"]),
         ("牵牛花租户名称", args.tenant_name), ("源表唯一SPU数", len(ordered)),
         ("平台现存SPU数", extant), ("平台记录不存在", len(missing)),
         ("现存SPU最终结构合同通过", extant), ("现存SPU填充率", "100.00%"),
         ("本次有字段修正的SPU", changed), ("执行前完整无需修改", extant - changed),
         ("唯一字段修正数", len(events)), ("字段最终回读通过数", len(events)),
-        ("最终字段问题数", 0), ("博查调用数", 0),
-        ("付费模型/生图调用数", 0),
+        ("最终字段问题数", 0),
+        ("OCR调用数", ext_calls["ocr"]),
+        ("媒体扫描数", ext_calls["media_scan"]),
+        ("条码扫描数", ext_calls["barcode_scan"]),
+        ("博查调用数", ext_calls["bocha"]),
+        ("Web搜索调用数", ext_calls["web_search"]),
+        ("模型调用数", ext_calls["llm"]),
+        ("Provider Submit数", ext_calls["provider_submit"]),
+        ("Provider Query数", ext_calls["provider_query"]),
+        ("图片上传数", ext_calls["image_upload"]),
         ("验收口径", "非空+类型结构合法+当前类目候选合法+保存后独立全量回读"),
-    ]:
-        summary.append(row)
+    ])
+    for metric in SUMMARY_METRICS:
+        summary.append((metric, summary_values[metric]))
 
     source_rows: dict[str, int] = {}
     if args.source_xlsx:
-        source.cell(1, 2, "执行前缺失/无效字段")
-        source.cell(1, 3, "本次实际填充及最终回读")
+        source.cell(1, 2, SOURCE_B_HEADER)
+        source.cell(1, 3, SOURCE_C_HEADER)
         for cell in source[1]:
             cell.font = Font(bold=True)
             cell.fill = HEADER_FILL
@@ -190,19 +451,28 @@ def main() -> int:
                 f"源工作表集合不等：sheet={len(source_rows)} manifest={len(ordered)}"
             )
     else:
-        header(source, ["SPUID", "执行前缺失/无效字段", "本次实际填充及最终回读"])
+        header(source, HEADERS[GENERATED_SOURCE_SHEET])
 
     def write_source(spu_id: str, before: str, after: str) -> None:
         if args.source_xlsx:
             row_number = source_rows[spu_id]
-            source.cell(row_number, 2, before)
-            source.cell(row_number, 3, after)
+            generic = before == "执行前已满足渠道属性结构合同"
+            source.cell(
+                row_number,
+                2,
+                merge_history(source.cell(row_number, 2).value, before, generic=generic),
+            )
+            source.cell(
+                row_number,
+                3,
+                merge_history(source.cell(row_number, 3).value, after, generic=generic),
+            )
             source.cell(row_number, 2).alignment = Alignment(wrap_text=True, vertical="top")
             source.cell(row_number, 3).alignment = Alignment(wrap_text=True, vertical="top")
         else:
             source.append([spu_id, before, after])
 
-    header(audit, ["SPU编码", "商品名称", "渠道", "字段ID", "字段名", "执行前", "计划值", "最终回读值", "结果", "来源策略"])
+    header(audit, HEADERS[AUDIT_SHEET])
     for spu_id in ordered:
         state = states[spu_id]
         if state["missing"]:
@@ -227,32 +497,40 @@ def main() -> int:
             audit.append([spu_id, state["title"], channel, attr_id, name, old or "(空值)", planned, final, "结构合同通过", str(event.get("source") or "unknown")])
         write_source(spu_id, "；\n".join(before), "；\n".join(after))
 
-    header(missing_sheet, ["SPU编码", "平台结果", "处理口径"])
+    header(missing_sheet, HEADERS[MISSING_SHEET])
     for spu_id in missing:
         missing_sheet.append([spu_id, states[spu_id]["reason"] or "记录不存在", "未写入；从平台现存填充率分母剔除"])
-    header(verify, ["指标", "结果"])
-    for row in [("最终详情分片", len(selected_files)), ("源清单SPU", len(ordered)), ("平台现存SPU", extant), ("结构合同通过SPU", extant), ("products_with_issues", 0), ("issue_count", 0), ("填充率", "100.00%")]:
-        verify.append(row)
+    header(verify, HEADERS[VERIFY_SHEET])
+    verify_values = {
+        "最终详情分片": len(selected_files),
+        "源清单SPU": len(ordered),
+        "平台现存SPU": extant,
+        "结构合同通过SPU": extant,
+        "products_with_issues": 0,
+        "issue_count": 0,
+        "填充率": "100.00%",
+    }
+    for metric in VERIFY_METRICS:
+        verify.append((metric, verify_values[metric]))
 
-    header(strategy, ["本次新情况", "修正规则", "验证结果"])
-    for row in [
-        ("Excel格式行扩展到1048576", "按sheet XML真实非空单元格冻结清单，不信任max_row", f"准确冻结{len(ordered)}个唯一SPU"),
-        ("preflight身份只存在事件日志", "原子写session_identity并绑定租户/CDP/route", "写前身份门禁通过"),
-        ("旧租户品牌候选不能复用", "每个租户只读查询当前候选并留回执", "当前租户独立解析"),
-        ("官方建议链退化到10秒/商品以上", "跨类目PoC后停慢链，保留模板、expected-old和全量回读", "零博查/零模型达到100%"),
-        ("保存响应failed但可能已物化", "先全批复读，只补真实残差", "避免重复保存，最终残差为0"),
-        ("详情偶发Failed to fetch", "同身份/profile最多3次只读重试，不用于保存重发", "恢复且无重复mutation"),
-        ("品牌type4但候选列表为空", "使用customValue sentinel=0的自定义文本合同，禁止伪造候选ID", "末批dry-run及独立回读通过"),
-        ("重复dry-run拖慢扩量", "连续3批全绿后省略重复dry-run，但保留全量复读与residual", "后续批次问题数持续为0"),
-    ]:
+    header(strategy, HEADERS[FEEDBACK_SHEET])
+    for row in feedback_rows(Path(args.feedback_json).resolve() if args.feedback_json else None):
         strategy.append(row)
 
-    header(speed, ["指标", "结果"])
+    header(speed, HEADERS[PERFORMANCE_SHEET])
     for row in [
         ("保存checkpoint文件数", perf["checkpoint_files"]), ("保存结果事件数（含残差）", perf["events"]),
         ("verified事件", perf["verified"]), ("failed响应事件（均经复读判定）", perf["failed_responses"]),
         ("批量写墙钟累计秒", round(perf["elapsed_ms"] / 1000, 3)),
-        ("博查调用数", 0), ("模型调用数", 0), ("付费生图调用数", 0),
+        ("OCR调用数", ext_calls["ocr"]),
+        ("媒体扫描数", ext_calls["media_scan"]),
+        ("条码扫描数", ext_calls["barcode_scan"]),
+        ("博查调用数", ext_calls["bocha"]),
+        ("Web搜索调用数", ext_calls["web_search"]),
+        ("模型调用数", ext_calls["llm"]),
+        ("Provider Submit数", ext_calls["provider_submit"]),
+        ("Provider Query数", ext_calls["provider_query"]),
+        ("图片上传数", ext_calls["image_upload"]),
     ]:
         speed.append(row)
     for key, count in sorted(strategy_counts.items()):
@@ -262,15 +540,41 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output)
     report = {
+        "excel_schema_version": SCHEMA_VERSION,
+        "skill_version": contract["skill_version"],
+        "task_mode": contract["task_mode"],
+        "task_role": contract.get("task_role", "execution"),
+        "delivery_eligible": contract.get("task_role", "execution") == "execution",
+        "contract_fingerprint_sha256": contract["contract_fingerprint_sha256"],
         "output_xlsx": str(output), "tenant_name": args.tenant_name,
         "source_unique_spu": len(ordered), "platform_extant": extant,
         "missing_on_platform": len(missing), "fill_rate": 1.0,
         "changed_products": changed, "unique_changed_fields": len(events),
         "verified_changed_fields": len(events), "final_issue_count": 0,
-        "bocha_calls": 0, "model_calls": 0, "provider_calls": 0,
+        "external_calls": ext_calls,
         "performance": perf,
     }
+    coverage = {
+        "schema": "qnh-channel-fill-coverage-v1",
+        "source_unique_spu": len(ordered),
+        "platform_extant": extant,
+        "missing_on_platform": len(missing),
+        "rows": [
+            {
+                "spu_id": spu_id,
+                "terminal_status": (
+                    "missing_on_platform"
+                    if states[spu_id]["missing"]
+                    else "verified"
+                    if by_spu.get(spu_id)
+                    else "no_change"
+                ),
+            }
+            for spu_id in ordered
+        ],
+    }
     output.with_suffix(".summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output.with_suffix(".coverage.json").write_text(json.dumps(coverage, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

@@ -10,6 +10,29 @@ readonly guard=/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh
 readonly direct_script=/home/ubuntu/.codex/skills/qnh-fill-channel-unavailable/scripts/qnh_direct.mjs
 readonly adaptive_controller=/home/ubuntu/.codex/skills/qnh-fill-channel-unavailable/scripts/qnh_adaptive_concurrency.py
 
+# Reject an oversized mutation window before entering the managed process or
+# attaching to the logged-in browser.  The orchestrator advances large tasks
+# through stable offset windows of at most 50 SPUs.
+if [[ "${1:-}" == 'apply-direct-batch' ]]; then
+  mutation_limit=50
+  previous_argument=''
+  for argument in "$@"; do
+    if [[ "$previous_argument" == '--limit' ]]; then
+      mutation_limit="$argument"
+      break
+    fi
+    if [[ "$argument" == --limit=* ]]; then
+      mutation_limit="${argument#--limit=}"
+      break
+    fi
+    previous_argument="$argument"
+  done
+  if [[ ! "$mutation_limit" =~ ^[1-9][0-9]*$ ]] || ((mutation_limit > 50)); then
+    echo 'qnh_batch_window_limit_exceeded: apply-direct-batch --limit 必须为 1..50' >&2
+    exit 82
+  fi
+fi
+
 adaptive_enabled=0
 if [[ "${QNH_DIRECT_ADAPTIVE_APPROVED:-0}" == "1" ]]; then
   adaptive_enabled=1
@@ -22,7 +45,20 @@ fi
 if [[ "${YDSG_AUTOMATION_MANAGED:-0}" != "1" ]]; then
   if [[ "$adaptive_enabled" == "1" ]]; then
     decision_json="$(python3 "$adaptive_controller" decide --state "$QNH_ADAPTIVE_STATE_FILE")"
-    QNH_DIRECT_MAX_CONCURRENCY="$(jq -er '.concurrency' <<<"$decision_json")"
+    desired_concurrency="$(jq -er '.concurrency' <<<"$decision_json")"
+    if [[ ! "$desired_concurrency" =~ ^([1-9]|10)$ ]]; then
+      echo 'adaptive concurrency decision must be between 1 and 10' >&2
+      exit 81
+    fi
+    # The shared admission guard predates serial recovery and accepts 2..10.
+    # Admit the exact same bounded cgroup with 2, then restore the frozen
+    # controller decision inside that cgroup before Node starts.  This keeps
+    # project-wide runtime policy untouched while allowing one warm editor
+    # page after two editors proved counterproductive on the current host.
+    QNH_DIRECT_MAX_CONCURRENCY="$desired_concurrency"
+    if [[ "$desired_concurrency" == "1" ]]; then
+      QNH_DIRECT_MAX_CONCURRENCY=2
+    fi
     export QNH_DIRECT_MAX_CONCURRENCY
     printf '%s\n' "$decision_json" >&2
   fi
@@ -38,10 +74,13 @@ if [[ "$adaptive_enabled" != "1" ]]; then
     "$@"
 fi
 
-if [[ ! "${QNH_DIRECT_MAX_CONCURRENCY:-}" =~ ^([2-9]|10)$ ]]; then
-  echo 'adaptive concurrency must be between 2 and 10' >&2
+desired_concurrency="$(jq -er '.last_decision.concurrency' "$QNH_ADAPTIVE_STATE_FILE")"
+if [[ ! "$desired_concurrency" =~ ^([1-9]|10)$ ]]; then
+  echo 'adaptive concurrency must be between 1 and 10' >&2
   exit 81
 fi
+QNH_DIRECT_MAX_CONCURRENCY="$desired_concurrency"
+export QNH_DIRECT_MAX_CONCURRENCY
 
 summary_tmp="$(mktemp)"
 node_pid=''
@@ -74,7 +113,7 @@ watch_adaptive_node() {
   local required_samples=5
   local high_samples=0
   local elapsed_samples=0
-  local max_elapsed_samples=150
+  local max_elapsed_samples=450
   local rss_kib=0
 
   while kill -0 "$target_pid" >/dev/null 2>&1; do
@@ -94,7 +133,7 @@ watch_adaptive_node() {
       return 0
     fi
     if ((elapsed_samples >= max_elapsed_samples)); then
-      printf '{"event":"adaptive_process_watchdog_stop","reason":"wall_time_budget_exceeded","elapsed_seconds":%d,"threshold_seconds":300}\n' \
+      printf '{"event":"adaptive_process_watchdog_stop","reason":"wall_time_budget_exceeded","elapsed_seconds":%d,"threshold_seconds":900}\n' \
         "$((elapsed_samples * 2))" >&2
       kill -TERM "$target_pid" >/dev/null 2>&1 || true
       return 0

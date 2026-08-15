@@ -9,7 +9,8 @@ umask 077
 # Only future launches enter the isolated automation slice. A browser session
 # that was already running when this file changed is neither moved nor restarted.
 readonly runtime_guard=/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh
-if [[ "${YDSG_AUTOMATION_MANAGED:-0}" != "1" ]]; then
+readonly host_os="$(uname -s)"
+if [[ "$host_os" == "Linux" && "${YDSG_AUTOMATION_MANAGED:-0}" != "1" ]]; then
   exec "$runtime_guard" --kind browser -- "$0" "$@"
 fi
 
@@ -39,8 +40,13 @@ for value in "$display_number" "$cdp_port" "$vnc_port" "$novnc_port"; do
 done
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
-profile_dir="${profile_dir:-/home/ubuntu/e2e-browser-lab/profiles/qnh-direct-${timestamp}}"
-log_dir="${log_dir:-/home/ubuntu/e2e-browser-lab/logs/qnh-direct-${timestamp}}"
+if [[ "$host_os" == "Darwin" ]]; then
+  profile_dir="${profile_dir:-${TMPDIR:-/tmp}/qnh-direct-${timestamp}-profile}"
+  log_dir="${log_dir:-${TMPDIR:-/tmp}/qnh-direct-${timestamp}-logs}"
+else
+  profile_dir="${profile_dir:-/home/ubuntu/e2e-browser-lab/profiles/qnh-direct-${timestamp}}"
+  log_dir="${log_dir:-/home/ubuntu/e2e-browser-lab/logs/qnh-direct-${timestamp}}"
+fi
 
 if [[ "$profile_dir" == "/" || "$profile_dir" == "/home/ubuntu" || "$log_dir" == "/" || "$log_dir" == "/home/ubuntu" ]]; then
   echo "refusing broad profile/log directory" >&2
@@ -49,6 +55,7 @@ fi
 
 if [[ -z "$chrome_bin" ]]; then
   for candidate in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
     /home/ubuntu/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome \
     /usr/bin/google-chrome \
     /usr/bin/chromium; do
@@ -61,12 +68,16 @@ fi
 [[ -x "$chrome_bin" ]] || { echo "Chrome binary not found; pass --chrome-bin" >&2; exit 2; }
 
 for port in "$cdp_port" "$vnc_port" "$novnc_port"; do
-  if ss -ltn "sport = :$port" | tail -n +2 | grep -q .; then
+  if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :$port" | tail -n +2 | grep -q .; then
+    echo "port already in use: $port" >&2
+    exit 2
+  fi
+  if ! command -v ss >/dev/null 2>&1 && lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | tail -n +2 | grep -q .; then
     echo "port already in use: $port" >&2
     exit 2
   fi
 done
-if [[ -e "/tmp/.X${display_number}-lock" ]]; then
+if [[ "$host_os" == "Linux" && -e "/tmp/.X${display_number}-lock" ]]; then
   echo "X display already in use: :$display_number" >&2
   exit 2
 fi
@@ -85,6 +96,38 @@ cleanup() {
   done
 }
 trap cleanup EXIT INT TERM
+
+if [[ "$host_os" == "Darwin" ]]; then
+  "$chrome_bin" \
+    --user-data-dir="$profile_dir" \
+    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-port="$cdp_port" \
+    --remote-allow-origins='*' \
+    --disable-extensions \
+    --no-first-run \
+    --no-default-browser-check \
+    --window-size=1600,1000 \
+    --start-maximized \
+    https://qnh.meituan.com/ >>"$log_dir/chrome.log" 2>&1 &
+  pids+=("$!")
+
+  ready=0
+  for _ in $(seq 1 60); do
+    if curl -fsS --max-time 1 "http://127.0.0.1:${cdp_port}/json/version" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "$ready" == "1" ]] || { echo "Chrome CDP did not become ready" >&2; exit 1; }
+
+  printf 'NO_VNC_URL=\n'
+  printf 'CDP_URL=http://127.0.0.1:%s\n' "$cdp_port"
+  printf 'PROFILE_DIR=%s\n' "$profile_dir"
+  printf 'LOG_DIR=%s\n' "$log_dir"
+  wait "${pids[0]}"
+  exit 1
+fi
 
 Xvfb ":${display_number}" -screen 0 1600x1000x24 -nolisten tcp >>"$log_dir/xvfb.log" 2>&1 &
 pids+=("$!")

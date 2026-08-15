@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.2
+# 多平台商品渠道治理 v3.6.3
 
 ## 不可跳过的第一步
 
@@ -102,6 +102,7 @@ python3 scripts/qnh_task_contract.py verify \
 provider/upload/save/write-intent/pending-verify、租约、身份未知或进程不健康时不得抢占。只有用户明确要求新开，
 或没有合格空闲会话时，才通过 `scripts/start_qnh_browser.sh` 新建。
 跨平台运行时先从 `QNH_PLAYWRIGHT_CORE_PATH` 加载 Playwright，其次使用当前 Node 可执行文件同级的本地依赖，最后保留 Linux 标准路径兼容。编排器使用 `QNH_NODE_BIN` 或当前 `PATH` 中的 Node，不得假设所有主机都有 `/usr/bin/node`。
+macOS 新建会话时同样必须使用独立 `--user-data-dir` 和 loopback-only CDP，保留当前普通 Chrome 不动；禁止从普通 profile 复制 Cookie 或登录数据。macOS 没有 noVNC，用户直接在新窗口登录。
 
 所有新 Chrome 和 QNH 批处理必须经 `/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh`
 或已接入该入口的 Skill 脚本进入受管 cgroup；禁止在 `ssh.service` 裸跑高并发进程。资源不足只延后新任务，

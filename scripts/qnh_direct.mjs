@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { chromium } from '/home/ubuntu/e2e-browser-lab/node_modules/playwright-core/index.mjs';
+import { loadChromium } from './qnh_playwright_loader.mjs';
 import {
   assertManagedDirectBatchRuntime,
   resolveDirectBatchConcurrency,
@@ -41,6 +41,8 @@ import {
   validateNativeListEvidence,
   withCsecVersion,
 } from './qnh_protocol_profile.mjs';
+
+const chromium = await loadChromium();
 
 const DEFAULT_CDP = 'http://127.0.0.1:9292';
 const DEFAULT_RUN_DIR = '/home/ubuntu/e2e-browser-lab/runs/qnh-channel-unavailable';

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 PYTHON = sys.executable
+NODE = os.environ.get("QNH_NODE_BIN") or shutil.which("node") or "/usr/bin/node"
 MAX_MUTATION_WINDOW = 50
 MAX_RESIDUAL_ROUNDS = 3
 MAX_STAGNANT_ATTEMPTS = 2
@@ -160,7 +162,7 @@ class Orchestrator:
 
     def qnh_command(self, command: str, *extra: str) -> list[str]:
         return [
-            "/usr/bin/node",
+            NODE,
             str(SCRIPTS / "qnh_direct.mjs"),
             command,
             "--cdp",

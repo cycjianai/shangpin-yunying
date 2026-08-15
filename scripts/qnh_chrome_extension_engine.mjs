@@ -234,6 +234,20 @@ async function waitForH5guard(cdp, timeoutMs = 45000) {
   throw new Error('H5guard 未就绪');
 }
 
+async function closeInternalEditTabs(cdp, spuId = '') {
+  const targetSpu = String(spuId || '');
+  const expression = `(() => {
+    const targetSpu = ${JSON.stringify(targetSpu)};
+    const tabs = Array.from(document.querySelectorAll('[data-sort-id^="/unifiedGoods/tenant/edit"]'))
+      .filter((tab) => !targetSpu || String(tab.getAttribute('data-sort-id') || '').includes('spu=' + targetSpu));
+    for (const tab of tabs) tab.querySelector('[class*="remove--"]')?.click();
+    return tabs.length;
+  })()`;
+  const closed = Number(await evaluate(cdp, expression, 5000) || 0);
+  if (closed) await new Promise((resolve) => setTimeout(resolve, 150));
+  return closed;
+}
+
 function signedRequestExpression({ url, body, qnhReferrer, fetchReferrer = '' }) {
   const payload = JSON.stringify({ url, body, qnhReferrer, fetchReferrer, appKey: APP_KEY });
   return `(${async function signedRequest(input) {
@@ -691,6 +705,7 @@ export async function applyPlansChromeExtension({
   const checkpoint = await readJsonOr(checkpointPath, { rows: [], offset, limit, dry_run: dryRun });
   const statuses = new Map(toArray(checkpoint.rows).map((row) => [String(row.spu_id), row]));
   if (!String(await tab.url() || '').includes('/unifiedGoods/tenant/spu-list')) await tab.goto(LIST_PAGE_URL);
+  await closeInternalEditTabs(cdp);
   await waitForH5guard(cdp);
   await new Promise((resolve) => setTimeout(resolve, 10000));
   for (const row of rows) {
@@ -773,6 +788,7 @@ export async function applyPlansChromeExtension({
     } catch (error) {
       statuses.set(spuId, { spu_id: spuId, title: row.title || '', status: 'failed', error: String(error?.message || error).slice(0, 1000), duration_ms: Date.now() - startedAt });
     }
+    await closeInternalEditTabs(cdp, spuId).catch(() => 0);
     await writeJsonAtomic(checkpointPath, {
       updated_at: nowIso(),
       index_path: path.resolve(indexPath),

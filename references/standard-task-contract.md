@@ -1,6 +1,6 @@
 # 标准化任务外壳
 
-本合同由 `qnh-task-contract-v3.3.7` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
+本合同由 `qnh-task-contract-v3.3.8` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
 “同一个 Skill 也支持”而启动。全部 canonical 动作通过 `run_task_action.py`，最终交付必须通过对应机器完成门。
 
 ## 1. 会话启动

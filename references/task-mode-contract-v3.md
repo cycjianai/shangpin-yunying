@@ -1,6 +1,6 @@
 # QNH 任务模式合同 v3
 
-合同 ID：`qnh-task-contract-v3.3.7`。
+合同 ID：`qnh-task-contract-v3.3.8`。
 
 ## 1. 先路由，后读取
 

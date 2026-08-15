@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.3
+# 多平台商品渠道治理 v3.6.4
 
 ## 不可跳过的第一步
 
@@ -97,6 +97,13 @@ python3 scripts/qnh_task_contract.py verify \
 运行中任何 Skill、引用合同或固定脚本哈希变化都停止当前 run；新版本必须新建 run-dir 和合同。
 
 ## 浏览器与身份
+
+用户明确要求复用当前已登录的普通 Chrome 时，优先使用 Codex Chrome 扩展对该精确牵牛花标签页的受限 CDP 能力，
+不得再以原始远程调试连接触发 Chrome 全浏览器授权弹窗。扩展路径固定导入
+`scripts/qnh_chrome_extension_engine.mjs`，只在当前工具调用链中运行；禁止把扩展能力转发成后台通用 CDP 端口。
+扩展动作完成后用同 Skill 的 `qnh_extension_receipt.py` 校验引擎指纹、run-dir 内制品及 SHA256，并通过
+`run_task_action.py` 记入原动作 ID。它仍必须取得列表页原生请求、精确编辑页 detail、页面/SPU/tenant 三方一致、
+一次保存和独立回读；不得因复用现有 Chrome 放宽完成门。该路径不读取 Cookie、localStorage、sessionStorage 或密码。
 
 默认优先复用本 Skill 已启动且只读证明空闲的隔离 Chrome/CDP/noVNC。旧会话有运行中或待续传任务、
 provider/upload/save/write-intent/pending-verify、租约、身份未知或进程不健康时不得抢占。只有用户明确要求新开，

@@ -64,12 +64,23 @@ def main() -> int:
         contract = verify_contract(contract_path)
         executor = (contract.get("canonical_executors") or {}).get(args.action) or {}
         relative_script = executor.get("script")
-        if not relative_script:
+        accepted_scripts = [
+            item
+            for item in [relative_script, *(executor.get("alternate_scripts") or [])]
+            if item
+        ]
+        if not accepted_scripts:
             raise ContractError(f"local_command_not_allowed_for_external_action:{args.action}")
         if not command:
             raise ContractError("canonical_command_required")
-        expected_script = (SKILL_ROOT / relative_script).resolve()
-        resolved_script = command_script(command, expected_script)
+        matched_relative_script = None
+        resolved_script = None
+        for candidate_script in accepted_scripts:
+            expected_script = (SKILL_ROOT / candidate_script).resolve()
+            resolved_script = command_script(command, expected_script)
+            if resolved_script:
+                matched_relative_script = candidate_script
+                break
         guard = guard_action(
             contract,
             args.action,
@@ -118,8 +129,14 @@ def main() -> int:
             "elapsed_ms": elapsed_ms,
             "budget_key": guard.get("budget_key"),
             "units": args.units,
-            "canonical_script": executor["script"],
-            "canonical_script_sha256": executor["script_sha256"],
+            "canonical_script": matched_relative_script,
+            "canonical_script_sha256": (
+                executor["script_sha256"]
+                if matched_relative_script == executor.get("script")
+                else (executor.get("alternate_script_sha256") or {}).get(
+                    matched_relative_script
+                )
+            ),
             "command_sha256": command_digest(command),
         },
     )

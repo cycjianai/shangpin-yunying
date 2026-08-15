@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import { loadChromium } from './qnh_playwright_loader.mjs';
 import {
   assertManagedDirectBatchRuntime,
@@ -42,7 +43,7 @@ import {
   withCsecVersion,
 } from './qnh_protocol_profile.mjs';
 
-const chromium = await loadChromium();
+let chromium = null;
 
 const DEFAULT_CDP = 'http://127.0.0.1:9292';
 const DEFAULT_RUN_DIR = '/home/ubuntu/e2e-browser-lab/runs/qnh-channel-unavailable';
@@ -339,6 +340,7 @@ async function closeProductEditTabs(page, spuId = '') {
 }
 
 async function attach(cdpUrl) {
+  chromium ||= await loadChromium();
   const browser = await chromium.connectOverCDP(cdpUrl);
   const pages = browser.contexts().flatMap((context) => context.pages());
   const qnhPages = pages.filter((candidate) => candidate.url().startsWith('https://qnh.meituan.com/'));
@@ -7505,17 +7507,39 @@ async function main() {
   }
 }
 
-main()
-  .then(() => {
-    // Do not leave a Playwright transport/timer alive after the command has
-    // finished; this exits the Node client while preserving the attached
-    // Chrome process.
-    process.exit(Number(process.exitCode || 0));
-  })
-  .catch((error) => {
-    process.stderr.write(`${JSON.stringify({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    })}\n`);
-    process.exit(Number.isInteger(error?.exitCode) ? error.exitCode : 1);
-  });
+export {
+  applyDirectPlanToDetail,
+  businessEnvelope,
+  businessOk,
+  channelPropertyContractMatches,
+  coverageField,
+  detailSpu,
+  diffSummaries,
+  findTotal,
+  propertyDisplayValues,
+  summarizeDetail,
+  titleOf,
+  unwrapData,
+};
+
+const invokedAsScript = Boolean(
+  process.argv?.[1]
+  && import.meta.url === pathToFileURL(process.argv[1]).href,
+);
+
+if (invokedAsScript) {
+  main()
+    .then(() => {
+      // Do not leave a Playwright transport/timer alive after the command has
+      // finished; this exits the Node client while preserving the attached
+      // Chrome process.
+      process.exit(Number(process.exitCode || 0));
+    })
+    .catch((error) => {
+      process.stderr.write(`${JSON.stringify({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`);
+      process.exit(Number.isInteger(error?.exitCode) ? error.exitCode : 1);
+    });
+}

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -235,6 +236,50 @@ def main() -> int:
         assert contract["canonical_executors"]["orchestrate_channel_task"][
             "script"
         ] == "scripts/run_channel_attributes_task.py"
+        assert "scripts/qnh_extension_receipt.py" in contract["canonical_executors"][
+            "session_preflight"
+        ]["alternate_scripts"]
+        session_path = run_dir / "session_identity.json"
+        extension_receipt = run_dir / "chrome-extension-preflight-test.receipt.json"
+        extension_receipt.write_text(
+            json.dumps(
+                {
+                    "schema": "qnh-chrome-extension-receipt-v1",
+                    "run_dir": str(run_dir),
+                    "command": "preflight",
+                    "dry_run": False,
+                    "outcome": "succeeded",
+                    "engine_sha256": hashlib.sha256(
+                        (SCRIPTS / "qnh_chrome_extension_engine.mjs").read_bytes()
+                    ).hexdigest(),
+                    "artifacts": [
+                        {
+                            "path": str(session_path),
+                            "sha256": hashlib.sha256(session_path.read_bytes()).hexdigest(),
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        run(
+            PYTHON,
+            str(SCRIPTS / "run_task_action.py"),
+            "--contract",
+            str(contract_path),
+            "--action",
+            "session_preflight",
+            "--",
+            PYTHON,
+            str(SCRIPTS / "qnh_extension_receipt.py"),
+            "preflight",
+            "--receipt",
+            str(extension_receipt),
+        )
+        results["chrome_extension_receipt_guard"] = True
         run(
             PYTHON,
             str(SCRIPTS / "qnh_task_contract.py"),

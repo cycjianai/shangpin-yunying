@@ -29,6 +29,10 @@
 
 ## 反馈闭环
 
+Chrome 扩展复用现有登录页时，浏览器传输层可以不同，但写入合同不变：每个 SPU 必须导航到精确编辑 route，捕获
+本页原生 detail POST，逐 endpoint 精确 H5guard 签名，一次保存后独立 detail 回读。扩展引擎与动作制品必须由
+canonical receipt 校验器冻结；不得使用 UI “智能补全”付费能力，也不得读取 Cookie 或浏览器存储。
+
 1. 历史上每批可到 300 SPU，但 4,000+ SPU 新租户实测证明：单进程 300 条响应与 checkpoint 累积可能触发
    2.5GB `MemoryHigh`。未来大任务固定通过 `run_qnh_batch.sh`，每个 Node 进程最多 50 SPU，默认并发 2。用户明确
    授权提速且协议为 4.3.0 时，允许最多 10 个可回收独立编辑页按 2→4→6→8→10 渐进工作；同一 SPU 仍单飞，

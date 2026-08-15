@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.3.5"
+CONTRACT_VERSION = "qnh-task-contract-v3.3.6"
 EXCEL_SCHEMA_VERSION = "qnh-channel-fill-workbook-v1"
 LEDGER_NAME = "task-action-ledger.jsonl"
 
@@ -39,9 +39,11 @@ def _spec(
     *required_tokens: str,
     forbidden_tokens: tuple[str, ...] = (),
     budget_key: str | None = None,
+    alternate_scripts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return {
         "script": script,
+        "alternate_scripts": list(alternate_scripts),
         "required_tokens": list(required_tokens),
         "forbidden_tokens": list(forbidden_tokens),
         "budget_key": budget_key,
@@ -50,30 +52,54 @@ def _spec(
 
 ACTION_SPECS: dict[str, dict[str, Any]] = {
     "start_browser": _spec("scripts/start_qnh_browser.sh"),
-    "session_preflight": _spec("scripts/qnh_direct.mjs", "preflight"),
+    "session_preflight": _spec(
+        "scripts/qnh_direct.mjs",
+        "preflight",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
+    ),
     "close_edit_tabs": _spec("scripts/qnh_direct.mjs", "close-edit-tabs"),
     "build_source_manifest": _spec("scripts/build_spu_manifest_from_xlsx.py"),
     "freeze_unavailable": _spec("scripts/qnh_direct.mjs", "freeze"),
-    "read_details_initial": _spec("scripts/qnh_direct.mjs", "details"),
+    "read_details_initial": _spec(
+        "scripts/qnh_direct.mjs",
+        "details",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
+    ),
     "probe_exact_editor_frames": _spec(
         "scripts/qnh_direct.mjs", "probe-exact-editor-frames"
     ),
-    "read_recommendations": _spec("scripts/qnh_direct.mjs", "recommendations"),
+    "read_recommendations": _spec(
+        "scripts/qnh_direct.mjs",
+        "recommendations",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
+    ),
     "build_channel_plans": _spec("scripts/build_channel_contract_v2_plans.py"),
     "orchestrate_channel_task": _spec("scripts/run_channel_attributes_task.py"),
     "dry_run_plan": _spec(
-        "scripts/qnh_direct.mjs", "apply-direct-plan", "--dry-run"
+        "scripts/qnh_direct.mjs",
+        "apply-direct-plan",
+        "--dry-run",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
     ),
     "apply_plan": _spec(
         "scripts/qnh_direct.mjs",
         "apply-direct-plan",
         forbidden_tokens=("--dry-run",),
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
     ),
-    "apply_batch": _spec("scripts/run_qnh_batch.sh", "apply-direct-batch"),
+    "apply_batch": _spec(
+        "scripts/run_qnh_batch.sh",
+        "apply-direct-batch",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
+    ),
     "apply_prepared_barrier_batch": _spec(
         "scripts/qnh_direct.mjs", "apply-prepared-barrier-batch"
     ),
-    "read_details_final": _spec("scripts/qnh_direct.mjs", "details"),
+    "read_details_final": _spec(
+        "scripts/qnh_direct.mjs",
+        "details",
+        alternate_scripts=("scripts/qnh_extension_receipt.py",),
+    ),
     "validate_channel_contracts": _spec("scripts/validate_channel_contracts.py"),
     "standard_output_name": _spec("scripts/standard_output_name.py"),
     "export_workbook": _spec("scripts/export_standard_channel_fill_workbook.py"),
@@ -512,9 +538,13 @@ def create_contract(args: argparse.Namespace) -> dict[str, Any]:
     for action in allowed:
         spec = ACTION_SPECS[action]
         script = spec.get("script")
+        alternate_scripts = spec.get("alternate_scripts") or []
         executors[action] = {
             **spec,
             "script_sha256": files.get(script) if script else None,
+            "alternate_script_sha256": {
+                item: files.get(item) for item in alternate_scripts
+            },
         }
 
     source_file = source_xlsx or source_manifest
@@ -655,14 +685,28 @@ def guard_action(
     if not executor:
         raise ContractError(f"executor_not_frozen:{action}")
     expected_script = executor.get("script")
-    if expected_script:
+    alternate_scripts = executor.get("alternate_scripts") or []
+    accepted_scripts = [item for item in [expected_script, *alternate_scripts] if item]
+    if accepted_scripts:
         if script is None:
             raise ContractError(f"canonical_script_required:{action}")
-        expected_path = (SKILL_ROOT / expected_script).resolve()
-        if script.resolve() != expected_path:
+        matched_relative = next(
+            (
+                item
+                for item in accepted_scripts
+                if script.resolve() == (SKILL_ROOT / item).resolve()
+            ),
+            None,
+        )
+        if matched_relative is None:
             raise ContractError(f"noncanonical_script:{action}")
-        expected_sha = executor.get("script_sha256")
-        if sha256_file(expected_path) != expected_sha:
+        expected_path = (SKILL_ROOT / matched_relative).resolve()
+        expected_sha = (
+            executor.get("script_sha256")
+            if matched_relative == expected_script
+            else (executor.get("alternate_script_sha256") or {}).get(matched_relative)
+        )
+        if not expected_sha or sha256_file(expected_path) != expected_sha:
             raise ContractError(f"canonical_script_hash_mismatch:{action}")
     elif script is not None:
         raise ContractError(f"external_action_must_not_supply_script:{action}")

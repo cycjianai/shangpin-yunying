@@ -1,6 +1,6 @@
 # QNH 任务模式合同 v3
 
-合同 ID：`qnh-task-contract-v3.3.5`。
+合同 ID：`qnh-task-contract-v3.3.6`。
 
 ## 1. 先路由，后读取
 
@@ -42,6 +42,8 @@ python3 scripts/run_task_action.py \
 纯渠道属性模式固定使用：
 
 - `build_spu_manifest_from_xlsx.py`
+- 用户明确要求现有 Chrome 时，使用 `qnh_chrome_extension_engine.mjs` 的标签页受限传输，并由
+  `qnh_extension_receipt.py` 对每个原动作制品及引擎 SHA256 做 canonical 记账；禁止建立后台通用 CDP 代理。
 - `qnh_direct.mjs` 的预检、详情、建议、单计划 dry-run/保存与最终详情读取子命令
 - `qnh_direct.mjs probe-exact-editor-frames` 的 5–10 条同页精确 frame 只读能力实验；平台 mutation 固定为 0
 - `qnh_direct.mjs apply-prepared-barrier-batch` 的精确编辑页预热屏障、集中保存、统一回读实验；仅限用户明确授权提速、

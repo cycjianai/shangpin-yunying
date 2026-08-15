@@ -1,10 +1,12 @@
 # 标准化任务外壳
 
-本合同由 `qnh-task-contract-v3.3.5` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
+本合同由 `qnh-task-contract-v3.3.6` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
 “同一个 Skill 也支持”而启动。全部 canonical 动作通过 `run_task_action.py`，最终交付必须通过对应机器完成门。
 
 ## 1. 会话启动
 
+- 用户明确要求复用当前普通 Chrome 时，先以 Chrome 扩展精确 claim 已登录的牵牛花标签页；该传输只允许当前标签页
+  范围 CDP，不得要求用户批准原始远程调试，也不得转发为通用后台 CDP。扩展执行结果必须走 canonical receipt 校验。
 - 每次新的用户任务触发本 Skill，默认先发现本机由本 Skill 管理的隔离浏览器。若存在健康且确认空闲的会话，直接复用其 profile、display、CDP、VNC/noVNC 登录窗口并发送原 SSH 隧道命令和登录地址；不要为了“新任务”自动再开浏览器。
 - 空闲必须由只读证据确认：没有运行中/可恢复中的插件或直连任务，没有非终态 batch/checkpoint，没有 provider/upload/save/write-intent/pending-verify 续传责任，没有活跃任务租约或仍在工作的执行进程。查询失败、证据缺失、身份冲突或多个候选无法唯一选择时均不得抢占。
 - 只有用户明确要求新开，或所有旧会话均忙碌、不健康、登录失效、身份不明时，才创建新的 profile、display、CDP、VNC 和 noVNC；全部仅监听 loopback。

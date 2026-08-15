@@ -27,6 +27,7 @@ const DETAIL_URL = `${BASE}${DETAIL_ENDPOINT}?yodaReady=h5&csecplatform=4&csecve
 const UPDATE_URL = `${BASE}/qnh-gw3/api/product/tenant/update?yodaReady=h5&csecplatform=4&csecversion=4.2.0`;
 const UPDATE_V2_URL = `${BASE}/qnh-gw3/api/product/tenant/update/v2?yodaReady=h5&csecplatform=4&csecversion=4.2.4`;
 const RECOMMEND_URL = `${BASE}/qnh-gw5/api/storeSpu/queryRecommendDynamicInfoAndWeight?yodaReady=h5&csecplatform=4&csecversion=4.2.4`;
+const CHANNEL_BRAND_URL = `${BASE}/api/v1/channelBrand/queryByChannel?yodaReady=h5&csecplatform=4&csecversion=4.2.0`;
 
 function nowIso() {
   return new Date().toISOString();
@@ -38,6 +39,10 @@ function toArray(value) {
 
 function toObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function firstNonEmpty(...values) {
+  return values.find((value) => value !== undefined && value !== null && String(value) !== '') ?? '';
 }
 
 function withVersion(url, version) {
@@ -342,6 +347,12 @@ export async function readDetailsChromeExtension({
   });
   const bySpu = new Map(toArray(existing.products).map((item) => [String(item.spu_id), item]));
   const detailUrl = withVersion(DETAIL_URL, identity.csecversion);
+  let dirty = 0;
+  const persist = async () => {
+    const ordered = source.map((row) => bySpu.get(String(row.spu_id || row.spuId || ''))).filter(Boolean);
+    await writeJsonAtomic(outputPath, { ...existing, generated_at: nowIso(), products: ordered });
+    dirty = 0;
+  };
   for (const product of selected) {
     const spuId = String(product.spu_id || product.spuId || '');
     if (!spuId || bySpu.has(spuId)) continue;
@@ -376,9 +387,10 @@ export async function readDetailsChromeExtension({
         protocol_profile: identity.context_profile,
       });
     }
-    const ordered = source.map((row) => bySpu.get(String(row.spu_id || row.spuId || ''))).filter(Boolean);
-    await writeJsonAtomic(outputPath, { ...existing, generated_at: nowIso(), products: ordered });
+    dirty += 1;
+    if (dirty >= 10) await persist();
   }
+  if (dirty) await persist();
   return { output_path: path.resolve(outputPath), completed: bySpu.size, source_total: source.length };
 }
 
@@ -405,12 +417,20 @@ export async function readRecommendationsChromeExtension({
   });
   const bySpu = new Map(toArray(existing.products).map((item) => [String(item.spu_id), item]));
   const url = withVersion(RECOMMEND_URL, identity.csecversion);
+  let dirty = 0;
+  const persist = async () => {
+    const ordered = source.map((row) => bySpu.get(String(row.spu_id || row.detail?.spuId || ''))).filter(Boolean);
+    await writeJsonAtomic(outputPath, { ...existing, generated_at: nowIso(), products: ordered });
+    dirty = 0;
+  };
   for (const product of selected) {
     const detail = toObject(product.detail);
     const spuId = String(product.spu_id || detail.spuId || '');
     if (!spuId || bySpu.has(spuId)) continue;
     if (product.missing_on_platform) {
       bySpu.set(spuId, { spu_id: spuId, title: product.title || '', category_code: '', upc: '', recommendation: null, error: '记录不存在' });
+      dirty += 1;
+      if (dirty >= 10) await persist();
       continue;
     }
     const channel = toArray(detail.spuChannelInfoList).find((candidate) => Number(candidate?.channelId || 0) === 100);
@@ -435,10 +455,53 @@ export async function readRecommendationsChromeExtension({
       error = '美团渠道类目为空';
     }
     bySpu.set(spuId, { spu_id: spuId, title: String(detail.spuName || product.title || ''), category_code: categoryCode, upc, recommendation, error });
-    const ordered = source.map((row) => bySpu.get(String(row.spu_id || row.detail?.spuId || ''))).filter(Boolean);
-    await writeJsonAtomic(outputPath, { ...existing, generated_at: nowIso(), products: ordered });
+    dirty += 1;
+    if (dirty >= 10) await persist();
   }
+  if (dirty) await persist();
   return { output_path: path.resolve(outputPath), completed: bySpu.size, source_total: source.length };
+}
+
+export async function queryChannelBrandChromeExtension({
+  tab,
+  cdp,
+  runDir,
+  channelId,
+  searchText,
+}) {
+  const identity = await readJsonOr(path.join(runDir, 'session_identity.json'), null);
+  if (!identity?.tenant_id) throw new Error('缺少 session_identity.json');
+  const normalizedChannelId = Number(channelId);
+  const normalizedSearch = String(searchText || '').replace(/\s+/g, ' ').trim();
+  if (!Number.isFinite(normalizedChannelId) || !normalizedSearch) throw new Error('渠道品牌查询缺少渠道或查询词');
+  if (!String(await tab.url() || '').includes('/unifiedGoods/tenant/spu-list')) await tab.goto(LIST_PAGE_URL);
+  await waitForH5guard(cdp);
+  const response = await signedRequest(cdp, {
+    url: withVersion(CHANNEL_BRAND_URL, identity.csecversion),
+    body: { channelId: normalizedChannelId, searchText: normalizedSearch },
+    qnhReferrer: '/unifiedGoods/tenant/spu-list',
+    fetchReferrer: LIST_PAGE_URL,
+  });
+  assertBusiness(response, `查询渠道品牌：${normalizedChannelId}/${normalizedSearch}`);
+  const rows = toArray(toObject(response.data?.data).list);
+  const candidates = rows.map((row) => ({
+    channel_id: String(firstNonEmpty(row?.channelId, normalizedChannelId)),
+    brand_code: String(firstNonEmpty(row?.channelBrandId, row?.brandId, row?.id)),
+    brand_name: String(firstNonEmpty(row?.channelBrandName, row?.brandName, row?.name)),
+  })).filter((row) => row.brand_code && row.brand_name);
+  const receipt = {
+    generated_at: nowIso(),
+    channel_id: normalizedChannelId,
+    search_text: normalizedSearch,
+    endpoint: CHANNEL_BRAND_URL.replace(/[?].*$/, ''),
+    candidates,
+    response_data: response.data,
+    browser_transport: 'chrome_extension_current_tab',
+  };
+  const token = crypto.createHash('sha256').update(normalizedSearch).digest('hex').slice(0, 16);
+  const receiptPath = path.join(runDir, `channel-brand-query-${normalizedChannelId}-${token}.json`);
+  await writeJsonAtomic(receiptPath, receipt);
+  return { receipt_path: receiptPath, channel_id: normalizedChannelId, search_text: normalizedSearch, candidates };
 }
 
 function actualForChange(detail, change) {

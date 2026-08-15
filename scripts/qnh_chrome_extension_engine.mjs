@@ -66,6 +66,106 @@ async function readJsonOr(filePath, fallback) {
   }
 }
 
+async function prepareBrandExecutionPlan(plan, beforeDetail, spuId) {
+  let executionPlan = plan;
+  const requestedSnapshotBrands = toArray(plan.snapshot_brand_channel_fields);
+  if (requestedSnapshotBrands.length) {
+    const verifiedSnapshotBrands = [];
+    for (const item of requestedSnapshotBrands) {
+      if (!item?.snapshot_receipt_path) throw new Error('快照品牌渠道字段缺少 snapshot_receipt_path');
+      const receipt = JSON.parse(await fs.readFile(path.resolve(String(item.snapshot_receipt_path)), 'utf8'));
+      const product = toArray(receipt.products).find((candidate) => (
+        String(candidate?.spu_id || candidate?.detail?.spuId || '') === spuId
+      ));
+      const snapshotDetail = toObject(product?.detail);
+      if (
+        String(snapshotDetail.spuId || '') !== spuId
+        || String(snapshotDetail.tenantId || '') !== String(beforeDetail.tenantId || '')
+      ) {
+        throw new Error('快照品牌回执与当前租户/SPU 不一致');
+      }
+      const channel = toArray(snapshotDetail.spuChannelInfoList).find((candidate) => (
+        Number(candidate?.channelId || 0) === Number(item?.channel_id || 0)
+      ));
+      const prop = toArray(channel?.categoryProperties).find((candidate) => (
+        String(candidate?.attrId || '') === String(item?.attr_id || '')
+        && String(candidate?.attrName || '') === '品牌'
+        && String(candidate?.attrValueType || '') === '4'
+      ));
+      const exact = toArray(prop?.customValue).find((candidate) => (
+        String(candidate?.attrValueId || '') === String(item?.brand_code || '')
+        && String(candidate?.attrValue || '') === String(item?.brand_name || '')
+      ));
+      if (!channel || !prop || !exact) throw new Error('快照品牌回执未找到同渠道同属性的精确品牌编码');
+      verifiedSnapshotBrands.push({
+        channel_id: Number(channel.channelId || 0),
+        attr_id: String(prop.attrId || ''),
+        brand_code: String(exact.attrValueId || ''),
+        brand_name: String(exact.attrValue || ''),
+      });
+    }
+    executionPlan = { ...executionPlan, __verified_snapshot_brands: verifiedSnapshotBrands };
+  }
+
+  const requestedTenantSnapshotBrands = toArray(plan.tenant_snapshot_brand_channel_fields);
+  if (requestedTenantSnapshotBrands.length) {
+    const verifiedTenantSnapshotBrands = [];
+    for (const item of requestedTenantSnapshotBrands) {
+      if (!item?.snapshot_receipt_path || !item?.snapshot_source_spu_id) {
+        throw new Error('同租户快照品牌字段缺少 snapshot_receipt_path/snapshot_source_spu_id');
+      }
+      const receipt = JSON.parse(await fs.readFile(path.resolve(String(item.snapshot_receipt_path)), 'utf8'));
+      const sourceProduct = toArray(receipt.products).find((candidate) => (
+        String(candidate?.spu_id || candidate?.detail?.spuId || '') === String(item.snapshot_source_spu_id || '')
+      ));
+      const sourceDetail = toObject(sourceProduct?.detail);
+      if (!sourceProduct || String(sourceDetail.tenantId || '') !== String(beforeDetail.tenantId || '')) {
+        throw new Error('同租户快照品牌回执的来源商品或租户不匹配');
+      }
+      const sourceChannel = toArray(sourceDetail.spuChannelInfoList).find((candidate) => (
+        Number(candidate?.channelId || 0) === Number(item?.channel_id || 0)
+      ));
+      const sourceProp = toArray(sourceChannel?.categoryProperties).find((candidate) => (
+        String(candidate?.attrId || '') === String(item?.attr_id || '')
+        && String(candidate?.attrName || '') === '品牌'
+        && String(candidate?.attrValueType || '') === '4'
+      ));
+      const exact = toArray(sourceProp?.customValue).find((candidate) => (
+        String(candidate?.attrValueId || '') === String(item?.brand_code || '')
+        && String(candidate?.attrValue || '') === String(item?.brand_name || '')
+      ));
+      if (!sourceChannel || !sourceProp || !exact) {
+        throw new Error('同租户快照品牌回执未找到同渠道同属性的精确品牌编码');
+      }
+      verifiedTenantSnapshotBrands.push({
+        channel_id: Number(sourceChannel.channelId || 0),
+        attr_id: String(sourceProp.attrId || ''),
+        brand_code: String(exact.attrValueId || ''),
+        brand_name: String(exact.attrValue || ''),
+      });
+    }
+    executionPlan = { ...executionPlan, __verified_tenant_snapshot_brands: verifiedTenantSnapshotBrands };
+  }
+
+  const requestedChannelBrands = toArray(plan.remote_brand_channel_fields);
+  if (requestedChannelBrands.length) {
+    const verifiedChannelBrands = [];
+    for (const item of requestedChannelBrands) {
+      if (!item?.query_receipt_path) throw new Error('渠道品牌计划缺少 query_receipt_path');
+      const receipt = JSON.parse(await fs.readFile(path.resolve(String(item.query_receipt_path)), 'utf8'));
+      const exact = toArray(receipt.candidates).find((candidate) => (
+        String(candidate?.channel_id || '') === String(item?.channel_id || '')
+        && String(candidate?.brand_code || '') === String(item?.brand_code || '')
+        && String(candidate?.brand_name || '') === String(item?.brand_name || '')
+      ));
+      if (!exact) throw new Error('渠道品牌不在查询回执的精确候选中');
+      verifiedChannelBrands.push(exact);
+    }
+    executionPlan = { ...executionPlan, __verified_channel_brands: verifiedChannelBrands };
+  }
+  return executionPlan;
+}
+
 async function sha256File(filePath) {
   const bytes = await fs.readFile(filePath);
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -604,7 +704,8 @@ export async function applyPlansChromeExtension({
       if (String(plan.spu_id || '') !== spuId) throw new Error('计划 SPU 不一致');
       const { targetUrl, detail: beforeDetail } = await readExactEditor({ tab, cdp, identity, spuId });
       const beforeSummary = summarizeDetail(beforeDetail);
-      const { patched, requested, changedChannelIds, changedCoverageFields } = applyDirectPlanToDetail(beforeDetail, plan);
+      const executionPlan = await prepareBrandExecutionPlan(plan, beforeDetail, spuId);
+      const { patched, requested, changedChannelIds, changedCoverageFields } = applyDirectPlanToDetail(beforeDetail, executionPlan);
       const coverageRequest = {
         fieldCoverageInfoList: [
           ...changedChannelIds.map(coverageField),

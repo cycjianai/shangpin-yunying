@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.3.4"
+CONTRACT_VERSION = "qnh-task-contract-v3.3.5"
 EXCEL_SCHEMA_VERSION = "qnh-channel-fill-workbook-v1"
 LEDGER_NAME = "task-action-ledger.jsonl"
 
@@ -359,6 +359,12 @@ def route_request(request_text: str) -> dict[str, Any]:
         r"渠道类目属性|渠道属性|属性填充|SPU清单|指定SPU|填充率",
         text,
     )
+    spu_table_information_fill = _contains(
+        r"(?:(?:表|表格|Excel|XLSX|CSV).{0,24}SPU|SPU.{0,24}(?:表|表格|Excel|XLSX|CSV))"
+        r".{0,24}(?:信息填充|填充信息|进行填充|补齐信息)",
+        text,
+    ) or _contains(r"SPU.{0,24}(?:信息填充|填充信息|进行填充|补齐信息)", text)
+    attributes = attributes or spu_table_information_fill
     validation_only = _contains(
         r"(?:只读|不写入|不保存|仅复核|只复核|仅验证|只验证|审计不写入)",
         text,
@@ -388,7 +394,11 @@ def route_request(request_text: str) -> dict[str, Any]:
         reason = "qualification_only_goal"
     elif attributes and not qualification:
         mode = "channel_attributes_only"
-        reason = "attribute_list_goal"
+        reason = (
+            "spu_table_information_fill_goal"
+            if spu_table_information_fill
+            else "attribute_list_goal"
+        )
     else:
         mode = "ambiguous_mode"
         reason = "multiple_or_missing_mode_signals"

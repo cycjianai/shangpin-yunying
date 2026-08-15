@@ -163,6 +163,23 @@ def main() -> int:
         assert route_payload["task_mode"] == "channel_attributes_only"
         results["route_channel_only"] = True
 
+        for request in (
+            "使用这个skill，对这个表里的spu进行信息填充，然后给我汇报表",
+            "把Excel中的SPU补齐信息",
+            "对SPU清单进行信息填充",
+        ):
+            routed_fill = run(
+                PYTHON,
+                str(SCRIPTS / "qnh_task_contract.py"),
+                "route",
+                "--request-text",
+                request,
+            )
+            fill_payload = json.loads(routed_fill.stdout)
+            assert fill_payload["task_mode"] == "channel_attributes_only"
+            assert fill_payload["reason"] == "spu_table_information_fill_goal"
+        results["route_spu_table_information_fill"] = True
+
         ambiguous = run(
             PYTHON,
             str(SCRIPTS / "qnh_task_contract.py"),
@@ -175,6 +192,7 @@ def main() -> int:
 
         for request, expected_mode in (
             ("处理当前渠道不可售全部商品并逐条看审核报错", "unavailable_one_pass"),
+            ("对不可售表里的SPU进行信息填充", "unavailable_one_pass"),
             ("只处理这些SPU的配料营养图和背签图", "qualification_images_only"),
             ("直接用插件跑商品属性全平台填充并验收", "plugin_attribute_fill"),
         ):

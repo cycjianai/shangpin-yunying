@@ -1,6 +1,6 @@
 # QNH 任务模式合同 v3
 
-合同 ID：`qnh-task-contract-v3.3.4`。
+合同 ID：`qnh-task-contract-v3.3.5`。
 
 ## 1. 先路由，后读取
 
@@ -8,11 +8,11 @@
 
 路由优先级如下：
 
-1. 用户明确说“只/仅填写渠道类目属性、指定 SPU 属性 100% 填满”时固定为 `channel_attributes_only`。
+1. 用户明确说“只/仅填写渠道类目属性、指定 SPU 属性 100% 填满”时固定为 `channel_attributes_only`。用户提供表格/Excel/CSV 的 SPU 并要求“信息填充、填充信息或补齐信息”，且没有不可售、图片或插件的明确目标时，也固定为 `channel_attributes_only`。
 2. 用户明确要求处理“不可售、下架、审核报错、从不可售列表退出”时固定为 `unavailable_one_pass`。
 3. 用户明确说“只处理资质图/专项图/配料营养图/背签/包装标签/尺寸图/吊牌洗唛”时固定为 `qualification_images_only`。
 4. 用户明确要求运行或修改插件的商品属性功能时固定为 `plugin_attribute_fill`，不得偷换为 CDP 直连批处理。
-5. 同时命中多个模式且没有“只/仅”限定时返回 `ambiguous_mode`，在用户明确范围前零商品读取、零外部调用、零平台写入。
+5. 同时命中多个模式且没有“只/仅”限定，或既没有模式信号也没有“SPU 表格信息填充”上下文时，返回 `ambiguous_mode`，在用户明确范围前零商品读取、零外部调用、零平台写入。
 
 `task_mode` 在同一 run-dir 内不可修改。用户扩大范围时必须新建 run-dir 和新合同；旧 run 的收据、计划、checkpoint 与动作日志不得迁移。
 

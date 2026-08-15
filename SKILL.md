@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.0
+# 多平台商品渠道治理 v3.6.1
 
 ## 不可跳过的第一步
 
@@ -26,6 +26,7 @@ python3 scripts/qnh_task_contract.py route --request-text "$REQUEST_SUMMARY"
 ```
 
 路由结果为 `ambiguous_mode` 时暂停副作用并让用户明确范围。模式只允许以下四种：
+用户提供表格/Excel/CSV 中的 SPU 并要求“信息填充/补齐信息”时，若没有不可售、图片或插件的明确目标，按 `channel_attributes_only` 路由；不要再把这类请求当作模式缺失。
 
 - `channel_attributes_only`：指定 SPU 的渠道类目属性 100% 结构填充。
 - `unavailable_one_pass`：逐 SPU 审核原因治理并追踪是否退出不可售。

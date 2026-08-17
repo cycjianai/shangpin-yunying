@@ -1,4 +1,4 @@
 interface:
   display_name: "多平台商品渠道治理"
-  short_description: "四平台属性与资质图治理、独立回读及统一审计交付"
-  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定牵牛花、美团、翱象或淘宝闪购的平台模块与属性/资质图任务，独立回读并导出统一运营表。"
+  short_description: "四平台属性、资质图与不可售治理，独立回读及统一审计交付"
+  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定牵牛花、美团、翱象或淘宝闪购的平台模块与属性、资质图或不可售任务，独立回读并导出统一运营表。"

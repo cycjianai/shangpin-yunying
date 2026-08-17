@@ -128,6 +128,9 @@ def main() -> int:
     module_map_source = (ROOT / "references" / "platform-module-map.md").read_text(
         encoding="utf-8"
     )
+    meituan_source = (ROOT / "references" / "platform-meituan.md").read_text(
+        encoding="utf-8"
+    )
     operations_schema = json.loads(
         (SCRIPTS / "operations_workbook_schema.json").read_text(encoding="utf-8")
     )
@@ -135,9 +138,31 @@ def main() -> int:
     assert "只有 `origin/main` 包含目标提交且远端仅剩 `main` 才算同步完成" in governance_source
     for adapter in ("qnh", "meituan", "aoxiang", "taobao_flash"):
         assert f"`{adapter}`" in module_map_source
-    for task_mode in ("channel_attributes_only", "qualification_images_only"):
+    for task_mode in (
+        "channel_attributes_only",
+        "qualification_images_only",
+        "unavailable_one_pass",
+    ):
         assert f"`{task_mode}`" in module_map_source
     results["single_main_and_platform_module_contract"] = True
+    for marker in (
+        "planned`（目标合同已冻结，生产 writer 尚未注册）",
+        "optimizedInfoList",
+        "lackQuaInfo",
+        "issueText",
+        "categoryAttrValueMap[].options[].selected",
+        "cpvGuidePicList",
+        "wmPoiId + spuId + quaPicType",
+        "provider_task_id",
+        "needAudit/submitAudit",
+        "saveType=2",
+        "auditSource=1",
+        "product-governance-operations-workbook-v1",
+        "默认 4、上限 6",
+        "只能 dry-run 或小样本",
+    ):
+        assert marker in meituan_source, marker
+    results["meituan_unavailable_contract_frozen"] = True
     assert operations_schema["schema_version"] == "product-governance-operations-workbook-v1"
     assert operations_schema["sheets"] == [
         "执行汇总", "SPU清单", "字段级审计", "平台不存在",

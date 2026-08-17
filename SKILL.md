@@ -1,9 +1,9 @@
 ---
 name: qnh-fill-channel-unavailable
-description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息与资质图任务；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、标准运营审计表、断点续跑或复用跨平台经验时使用。
+description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息、资质图与不可售治理任务；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、不可售一次过、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.7.0
+# 多平台商品渠道治理 v3.8.0
 
 ## 不可跳过的第一步
 
@@ -61,7 +61,9 @@ python3 scripts/qnh_task_contract.py create \
   [excel-schema-v1.md](references/excel-schema-v1.md)。翱象适配器还必须完整阅读
   [aoxiang-channel-contract-v1.md](references/aoxiang-channel-contract-v1.md)。不要读取或执行不可售错误矩阵、媒体、
   OCR、博查和生图流程。
-- `unavailable_one_pass`：完整阅读
+- `unavailable_one_pass`：`platform_adapter=meituan` 时以完整的
+  [platform-meituan.md](references/platform-meituan.md) 为唯一平台合同，并保持其模块状态门；
+  `platform_adapter=qnh` 时完整阅读
   [run-contract-541.md](references/run-contract-541.md)、
   [thread-928-empirical-contract.md](references/thread-928-empirical-contract.md)、
   [error-playbook.md](references/error-playbook.md)、

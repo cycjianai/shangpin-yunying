@@ -4,12 +4,12 @@
 任务合同、审计、统一运营 Excel Schema、完成门和交付门。所有已实现模块必须把不同 checkpoint 映射为同一
 `product-governance-operations-workbook-v1`，不得定义平台专属运营表。
 
-| `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 平台文件 |
-|---|---|---|---|
-| `qnh` | `implemented` | `implemented` | `platform-qnh.md` |
-| `meituan` | `planned` | `planned` | `platform-meituan.md` |
-| `aoxiang` | `implemented` | `planned` | `platform-aoxiang.md` |
-| `taobao_flash` | `planned` | `planned` | `platform-taobao-flash.md` |
+| `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 不可售治理 `unavailable_one_pass` | 平台文件 |
+|---|---|---|---|---|
+| `qnh` | `implemented` | `implemented` | `implemented` | `platform-qnh.md` |
+| `meituan` | `planned` | `planned` | `planned`（目标合同已冻结） | `platform-meituan.md` |
+| `aoxiang` | `implemented` | `planned` | `planned` | `platform-aoxiang.md` |
+| `taobao_flash` | `planned` | `planned` | `planned` | `platform-taobao-flash.md` |
 
 `planned` 固定表示没有生产 writer：只允许做平台识别、只读能力盘点和适配器开发，不允许处理真实商品写入。
 
@@ -19,10 +19,10 @@
 scripts/
   core/                         # manifest、合同、审计、Excel、完成/交付门
   platforms/
-    qnh/{attributes,qualification_images}/
-    meituan/{attributes,qualification_images}/
-    aoxiang/{attributes,qualification_images}/
-    taobao_flash/{attributes,qualification_images}/
+    qnh/{attributes,qualification_images,unavailable_one_pass}/
+    meituan/{attributes,qualification_images,unavailable_one_pass}/
+    aoxiang/{attributes,qualification_images,unavailable_one_pass}/
+    taobao_flash/{attributes,qualification_images,unavailable_one_pass}/
 ```
 
 现有 canonical 脚本先保持路径稳定；迁移时使用兼容入口逐模块搬迁，每次只迁一个平台的一类任务，并先更新合同哈希与

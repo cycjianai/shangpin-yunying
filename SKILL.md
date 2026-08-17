@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.7
+# 多平台商品渠道治理 v3.6.8
 
 ## 不可跳过的第一步
 
@@ -104,6 +104,13 @@ python3 scripts/qnh_task_contract.py verify \
 扩展动作完成后用同 Skill 的 `qnh_extension_receipt.py` 校验引擎指纹、run-dir 内制品及 SHA256，并通过
 `run_task_action.py` 记入原动作 ID。它仍必须取得列表页原生请求、精确编辑页 detail、页面/SPU/tenant 三方一致、
 一次保存和独立回读；不得因复用现有 Chrome 放宽完成门。该路径不读取 Cookie、localStorage、sessionStorage 或密码。
+扩展身份的 `browser_transport` 固定为 `chrome_extension_current_tab`；它没有可复用的原始 CDP 端口，`cdp_url`
+使用 `chrome-extension-current-tab://scoped` 作为受限传输标记，完成门不得因此要求用户再次点击远程调试授权。
+
+扩展写入按宿主工具时限拆成可落盘的小窗口，每个窗口目标控制在 60 秒内；最终详情读取也使用 `offset/limit` 续写
+同一输出文件，不用一次长调用赌全量完成。工具调用超时后禁止猜测并重发该批：先读取 checkpoint，再做独立全量回读。
+若超时把任务标签留在精确编辑 route，且后续捕获报告 paused document response，只关闭这个任务遗留的牵牛花编辑
+标签（不关闭其他业务标签），在同一已登录 Chrome 打开新的牵牛花列表标签并重新 claim，然后按 checkpoint 续跑。
 
 默认优先复用本 Skill 已启动且只读证明空闲的隔离 Chrome/CDP/noVNC。旧会话有运行中或待续传任务、
 provider/upload/save/write-intent/pending-verify、租约、身份未知或进程不健康时不得抢占。只有用户明确要求新开，
@@ -379,6 +386,9 @@ QNH 渠道属性模式必须完整阅读 [excel-schema-v1.md](references/excel-s
 再从同租户 `*-result.json` 中补齐缺失字段；结果回退仍要求顶层 `verified=true`、requested 与 verification 数量相等，
 且每个 verification 都为 `verified=true`。计划文件、preview、部分回读或只有保存响应的结果一律不得进入 B/C。
 旧可信记录必须合并，不得覆盖成“无需修改”。无源 XLSX 时创建固定 `SPU清单`。
+Chrome 扩展的完整最终快照允许命名为 `details-final*.json`，但导出器只有在其唯一 SPU 集合与冻结 manifest 精确
+相等时才接纳；部分续写文件不得导出。扩展审计目录固定为 `channel-plans/audit.json` 与
+`residual-round*-plans/audit.json`，保存 checkpoint 固定接纳 `save-*` 与 `residual-rN-*`，dry-run 永不计入交付性能。
 
 固定导出：
 
@@ -389,7 +399,7 @@ python3 scripts/run_task_action.py \
   --run-dir "$RUN_DIR" --manifest "$MANIFEST" \
   --task-contract "$RUN_DIR/task-contract.json" \
   --validation "$RUN_DIR/channel-contract-validation.json" \
-  --tenant-name "$TENANT_NAME" --output "$OUTPUT_XLSX" \
+  --tenant-name "$TENANT_NAME" --output "$RUN_DIR/$(basename "$OUTPUT_XLSX")" \
   ${SOURCE_XLSX:+--source-xlsx "$SOURCE_XLSX"}
 ```
 
@@ -411,6 +421,8 @@ python3 scripts/run_task_action.py \
 工作簿路径与本 run 的 summary/validator 完全一致、文件名 canonical、字段审计对账且 `ready=true` 的工作簿
 才可向用户发链接。`validation_only`、PoC、抽样复核或另一个 run 的工作簿一律不得冒充本次执行结果；禁止人工
 在目录里挑“最新 xlsx”。
+权威工作簿必须先生成在当前 run-dir 并通过交付门；如桌面应用需要在输出目录展示，只能在 `ready=true` 后复制或
+创建指向该权威文件的链接，并核对 SHA256 相同，不能把 run-dir 外文件反向送入交付门。
 
 只有 `task-completion-gate.json` 的 `complete=true` 且 `workbook-handoff.json` 的 `ready=true` 才能报告完成。分别汇报：源 SPU、平台现存、平台不存在、
 保存回读、最终结构问题、外部调用、Excel Schema 和合同指纹；不能把保存成功写成填充率 100%。

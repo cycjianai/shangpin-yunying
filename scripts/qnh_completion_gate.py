@@ -58,7 +58,11 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
             errors.append("session_identity_tenant_missing")
         if not str(identity.get("tenant_name") or "").strip():
             errors.append("session_identity_tenant_name_missing")
-        if not str(identity.get("cdp_url") or "").strip():
+        browser_transport = str(identity.get("browser_transport") or "").strip()
+        cdp_url = str(identity.get("cdp_url") or "").strip()
+        # Exact current-tab extension sessions intentionally expose no reusable
+        # raw CDP URL. Their transport marker is sufficient identity evidence.
+        if not cdp_url and browser_transport != "chrome_extension_current_tab":
             errors.append("session_identity_cdp_missing")
         if not str(identity.get("profile_dir") or "").strip():
             errors.append("session_identity_profile_missing")

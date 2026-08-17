@@ -32,6 +32,10 @@
 Chrome 扩展复用现有登录页时，浏览器传输层可以不同，但写入合同不变：每个 SPU 必须导航到精确编辑 route，捕获
 本页原生 detail POST，逐 endpoint 精确 H5guard 签名，一次保存后独立 detail 回读。扩展引擎与动作制品必须由
 canonical receipt 校验器冻结；不得使用 UI “智能补全”付费能力，也不得读取 Cookie 或浏览器存储。
+扩展 transport 本身就是会话边界，不要求原始 CDP 地址；身份收据以
+`browser_transport=chrome_extension_current_tab` 和 `cdp_url=chrome-extension-current-tab://scoped` 表示。
+扩展调用按宿主时限使用可续写小窗口。调用超时后先检查 checkpoint 与独立回读，不重发未知保存；遗留编辑标签导致
+paused document response 时，仅关闭该任务标签，在同一登录 profile 新开列表标签并重新 claim 后续跑。
 
 1. 历史上每批可到 300 SPU，但 4,000+ SPU 新租户实测证明：单进程 300 条响应与 checkpoint 累积可能触发
    2.5GB `MemoryHigh`。未来大任务固定通过 `run_qnh_batch.sh`，每个 Node 进程最多 50 SPU，默认并发 2。用户明确
@@ -43,6 +47,9 @@ canonical receipt 校验器冻结；不得使用 UI “智能补全”付费能�
 4. 平台业务码明确“记录不存在”时标记 `missing_on_platform`，不写入，并从“平台现存商品填充率”分母中剔除；仍在源表 B/C 列列明。
 5. 每批保存后重新读取该批全部商品，运行全字段合同校验。只在 `products_with_issues=0` 且 `issue_count=0` 时完成；否则按新详情生成 residual 并再次全量读取。
 6. 全任务最后合并所有批次最终快照，核对源表集合完全覆盖、SPU 唯一、平台现存与不存在数量相加等于源表数量。禁止以“写请求成功率”宣称 100%。
+7. 扩展完整快照 `details-final*.json` 只有在 SPU 唯一集合与冻结 manifest 精确相等时才能进入导出；
+   `channel-plans`、`residual-roundN-plans` 审计与 `save-*`、`residual-rN-*` 保存 checkpoint 属于 canonical 扩展制品，
+   dry-run checkpoint 不计入交付性能。
 
 使用随 Skill 提供的验证器，不要临时改成只检查非空：
 

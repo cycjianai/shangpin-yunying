@@ -426,7 +426,9 @@ export async function preflightChromeExtension({ tab, cdp, runDir }) {
     csecversion: native.csecversion,
     native_profile_source: 'chrome_extension_current_tab_native_list_post',
     browser_transport: 'chrome_extension_current_tab',
-    cdp_url: '',
+    // This transport is scoped to the claimed tab and deliberately exposes no
+    // reusable raw CDP endpoint. Persist an explicit downstream identity URI.
+    cdp_url: 'chrome-extension-current-tab://scoped',
     profile_dir: 'existing_chrome_extension',
     run_dir: path.resolve(runDir),
   };

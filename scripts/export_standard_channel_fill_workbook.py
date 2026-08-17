@@ -65,7 +65,16 @@ def displayed(attr: dict) -> str:
     return " / ".join(values)
 
 
-def final_files(run_dir: Path) -> list[Path]:
+def product_ids(path: Path) -> list[str]:
+    return [
+        str(item.get("spu_id") or "")
+        for item in read(path).get("products") or []
+        if isinstance(item, dict) and str(item.get("spu_id") or "")
+    ]
+
+
+def final_files(run_dir: Path, expected_spus: set[str] | None = None) -> list[Path]:
+    """Select direct-CDP chunks or one manifest-complete extension snapshot."""
     pattern = re.compile(r"details-full-c(\d+)-(final2|final)-(\d+)\.json$")
     selected: dict[int, tuple[int, Path]] = {}
     for path in run_dir.glob("details-full-c*-final*.json"):
@@ -76,7 +85,24 @@ def final_files(run_dir: Path) -> list[Path]:
         modified_ns = path.stat().st_mtime_ns
         if chunk not in selected or modified_ns > selected[chunk][0]:
             selected[chunk] = (modified_ns, path)
-    return [selected[index][1] for index in sorted(selected)]
+    chunk_files = [selected[index][1] for index in sorted(selected)]
+    if expected_spus is None:
+        return chunk_files
+    chunk_ids = [spu_id for path in chunk_files for spu_id in product_ids(path)]
+    if len(chunk_ids) == len(set(chunk_ids)) and set(chunk_ids) == expected_spus:
+        return chunk_files
+
+    # The extension writes a resumable singleton. Only an exact frozen-manifest
+    # set is eligible, so an interrupted/partial file can never feed Excel.
+    candidates: list[tuple[int, Path]] = []
+    for path in run_dir.glob("details-final*.json"):
+        try:
+            ids = product_ids(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if len(ids) == len(set(ids)) and set(ids) == expected_spus:
+            candidates.append((path.stat().st_mtime_ns, path))
+    return [max(candidates, key=lambda item: item[0])[1]] if candidates else []
 
 
 def verified_history_spus(run_dir: Path) -> set[str]:
@@ -170,10 +196,12 @@ def plan_audit_paths(run_dir: Path) -> list[Path]:
     paths = sorted(run_dir.glob("full-c*-plans/audit.json"))
     paths += sorted(run_dir.glob("full-c*-residual/audit.json"))
     paths += sorted(run_dir.glob("full-c*-residual-plans/audit.json"))
+    paths += sorted(run_dir.glob("channel-plans/audit.json"))
+    paths += sorted(run_dir.glob("residual-round*-plans/audit.json"))
     recommended = run_dir / "poc10-plans-recommended" / "audit.json"
     if recommended.exists():
         paths.append(recommended)
-    return paths
+    return list(dict.fromkeys(paths))
 
 
 def audit_events(
@@ -207,23 +235,33 @@ def audit_events(
 def performance(run_dirs: list[Path]) -> dict:
     rows: list[dict] = []
     elapsed = 0
-    # Direct QNH batches persist one checkpoint per save attempt. Residual
-    # retries intentionally use the same `*-save-checkpoint.json` contract;
+    # Direct QNH and extension batches persist one checkpoint per save attempt;
     # preview checkpoints must not be counted as platform delivery events.
     paths: list[Path] = []
     for run_dir in run_dirs:
-        paths += sorted(
-            path
-            for path in run_dir.glob("*-checkpoint.json")
-            if "-save-" in path.name
-        )
+        for path in sorted(run_dir.glob("*-checkpoint.json")):
+            name = path.name
+            if (
+                "-save-" in name
+                or name.startswith("save-")
+                or re.match(r"residual-r\d+-.*-checkpoint\.json$", name)
+            ):
+                paths.append(path)
+    counted_paths = 0
     for path in paths:
         payload = read(path)
-        rows += payload.get("rows") or []
-        elapsed += int(payload.get("elapsed_ms") or 0)
+        if payload.get("dry_run") is True:
+            continue
+        counted_paths += 1
+        checkpoint_rows = payload.get("rows") or []
+        rows += checkpoint_rows
+        elapsed += int(
+            payload.get("elapsed_ms")
+            or sum(int(row.get("duration_ms") or 0) for row in checkpoint_rows)
+        )
     counts = Counter(str(row.get("status") or "unknown") for row in rows)
     return {
-        "checkpoint_files": len(paths), "events": len(rows),
+        "checkpoint_files": counted_paths, "events": len(rows),
         "verified": counts["verified"], "failed_responses": counts["failed"],
         "elapsed_ms": elapsed,
     }
@@ -348,7 +386,7 @@ def main() -> int:
 
     states: dict[str, dict] = {}
     final_values: dict[tuple[str, int, str], str] = {}
-    selected_files = final_files(run_dir)
+    selected_files = final_files(run_dir, set(ordered))
     for path in selected_files:
         for product in read(path).get("products") or []:
             spu_id = str(product.get("spu_id") or "")

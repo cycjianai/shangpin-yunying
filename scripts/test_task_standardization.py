@@ -140,7 +140,8 @@ def main() -> int:
                     "ok": True,
                     "tenant_id": "golden-tenant",
                     "tenant_name": "黄金测试租户",
-                    "cdp_url": "http://127.0.0.1:9999",
+                    "browser_transport": "chrome_extension_current_tab",
+                    "cdp_url": "",
                     "profile_dir": str(run_dir / "profile"),
                     "page_url": "https://qnh.meituan.com/",
                     "page_route": "/unifiedGoods/tenant/spu-list",
@@ -295,6 +296,11 @@ def main() -> int:
         orchestrator_source = (SCRIPTS / "run_channel_attributes_task.py").read_text(
             encoding="utf-8"
         )
+        extension_source = (SCRIPTS / "qnh_chrome_extension_engine.mjs").read_text(
+            encoding="utf-8"
+        )
+        assert "chrome-extension-current-tab://scoped" in extension_source
+        results["chrome_extension_scoped_identity"] = True
         direct_source = (SCRIPTS / "qnh_direct.mjs").read_text(encoding="utf-8")
         for required in (
             '"--dry-run-count", type=int, default=5',
@@ -352,10 +358,14 @@ def main() -> int:
             '"--history-run-dir"',
             "verified_history_spus",
             'glob("full-c*-residual-plans/audit.json")',
-            'if "-save-" in path.name',
+            'name.startswith("save-")',
+            'glob("channel-plans/audit.json")',
+            'glob("details-final*.json")',
             "历史 run-dir 租户不一致",
         ):
             assert required in exporter_source
+        run(PYTHON, str(SCRIPTS / "test_chrome_extension_artifacts.py"))
+        results["chrome_extension_artifact_conventions"] = True
         planner_source = (
             SCRIPTS / "build_channel_contract_v2_plans.py"
         ).read_text(encoding="utf-8")

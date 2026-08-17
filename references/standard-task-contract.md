@@ -1,6 +1,6 @@
 # 标准化任务外壳
 
-本合同由 `qnh-task-contract-v3.3.8` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
+本合同由 `qnh-task-contract-v3.3.9` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
 “同一个 Skill 也支持”而启动。全部 canonical 动作通过 `run_task_action.py`，最终交付必须通过对应机器完成门。
 
 ## 1. 会话启动
@@ -65,11 +65,12 @@
 - 最终文件名固定为 `MMDD{牵牛花租户名称}{源清单唯一SPU数}.xlsx`，例如 `0808懒宝宝8454.xlsx`。
 - 日期使用任务交付日的 Asia/Shanghai 月日；租户名称来自本次 `session_identity.json` 的当前租户可见名称，移除文件名非法字符和空白；数量使用源表去重后的 SPU 数，不使用平台现存数、修改数或成功数。
 - 使用 `scripts/standard_output_name.py` 生成路径，避免人工拼错口径。
-- 保留源工作簿全部原有工作表。B 列逐 SPU 写执行前缺失或旧结构无效字段及旧值；C 列逐 SPU 写本任务实际新增/修正的具体字段与最终独立回读值。历史已执行记录若有可信审计，应合并而不是覆写成“无需修改”。
-- 渠道属性模式严格使用 `qnh-channel-fill-workbook-v1`，工作表名称、顺序和表头见
+- 运营交付只包含统一 7 张工作表；不复制来源各异的其他业务工作表。B 列逐 SPU 写执行前问题，C 列写本任务实际处理内容与最终独立回读值。历史已执行记录若有可信审计，应合并而不是覆写成“无需修改”。
+- 四个平台的属性信息与资质图任务严格使用 `product-governance-operations-workbook-v1`，工作表名称、顺序和表头见
   [excel-schema-v1.md](excel-schema-v1.md)；“至少包含”不再允许用近义工作表替代。
-- 只允许 `export_standard_channel_fill_workbook.py` 导出，并必须通过
-  `validate_standard_channel_fill_workbook.py`。执行汇总必须由最终工作表事实重新计算，不能保留旧批次数字。
+- 只允许平台模块注册的 canonical 导出器导出；牵牛花使用 `export_standard_channel_fill_workbook.py`，翱象使用
+  `export_multiplatform_channel_workbook.mjs`，两者及未来模块必须读取同一个 `operations_workbook_schema.json`，并通过
+  对应 validator。执行汇总必须由最终工作表事实重新计算，不能保留旧批次数字。
 - 合同同时冻结 `task_role=execution|validation_only`。普通填写任务默认 `execution`；只有用户明确要求只读复核、
   不写入或审计时才是 `validation_only`。
 - 用户下载链接只能取自 `qnh_workbook_handoff_gate.py` 输出中 `ready=true` 的精确路径。完成门通过但交付门未过，

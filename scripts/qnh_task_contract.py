@@ -17,8 +17,10 @@ from zoneinfo import ZoneInfo
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.3.8"
-EXCEL_SCHEMA_VERSION = "qnh-channel-fill-workbook-v1"
+CONTRACT_VERSION = "qnh-task-contract-v3.3.9"
+EXCEL_SCHEMA_VERSION = json.loads(
+    (SKILL_ROOT / "scripts" / "operations_workbook_schema.json").read_text(encoding="utf-8")
+)["schema_version"]
 LEDGER_NAME = "task-action-ledger.jsonl"
 
 EXTERNAL_BUDGET_KEYS = (

@@ -1,9 +1,15 @@
-"""Canonical workbook topology and headers for QNH channel-attribute runs."""
+"""Shared operator workbook schema for every platform and task module."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 
-SCHEMA_VERSION = "qnh-channel-fill-workbook-v1"
+
+_SCHEMA = json.loads(
+    Path(__file__).with_name("operations_workbook_schema.json").read_text(encoding="utf-8")
+)
+SCHEMA_VERSION = _SCHEMA["schema_version"]
 
 SUMMARY_SHEET = "执行汇总"
 GENERATED_SOURCE_SHEET = "SPU清单"
@@ -22,68 +28,12 @@ CANONICAL_GENERATED_SHEETS = (
     PERFORMANCE_SHEET,
 )
 
-HEADERS: dict[str, list[str]] = {
-    SUMMARY_SHEET: ["指标", "结果"],
-    GENERATED_SOURCE_SHEET: [
-        "SPUID",
-        "执行前缺失/无效字段",
-        "本次实际填充及最终回读",
-    ],
-    AUDIT_SHEET: [
-        "SPU编码",
-        "商品名称",
-        "渠道",
-        "字段ID",
-        "字段名",
-        "执行前",
-        "计划值",
-        "最终回读值",
-        "结果",
-        "来源策略",
-    ],
-    MISSING_SHEET: ["SPU编码", "平台结果", "处理口径"],
-    VERIFY_SHEET: ["指标", "结果"],
-    FEEDBACK_SHEET: ["本次新情况", "修正规则", "验证结果"],
-    PERFORMANCE_SHEET: ["指标", "结果"],
-}
+HEADERS: dict[str, list[str]] = _SCHEMA["headers"]
 
 SOURCE_B_HEADER = "执行前缺失/无效字段"
 SOURCE_C_HEADER = "本次实际填充及最终回读"
 
-SUMMARY_METRICS = (
-    "Excel Schema版本",
-    "Skill版本",
-    "任务模式",
-    "合同指纹SHA256",
-    "牵牛花租户名称",
-    "源表唯一SPU数",
-    "平台现存SPU数",
-    "平台记录不存在",
-    "现存SPU最终结构合同通过",
-    "现存SPU填充率",
-    "本次有字段修正的SPU",
-    "执行前完整无需修改",
-    "唯一字段修正数",
-    "字段最终回读通过数",
-    "最终字段问题数",
-    "OCR调用数",
-    "媒体扫描数",
-    "条码扫描数",
-    "博查调用数",
-    "Web搜索调用数",
-    "模型调用数",
-    "Provider Submit数",
-    "Provider Query数",
-    "图片上传数",
-    "验收口径",
-)
+SUMMARY_METRICS = tuple(_SCHEMA["summary_metrics"])
 
-VERIFY_METRICS = (
-    "最终详情分片",
-    "源清单SPU",
-    "平台现存SPU",
-    "结构合同通过SPU",
-    "products_with_issues",
-    "issue_count",
-    "填充率",
-)
+VERIFY_METRICS = tuple(_SCHEMA["verify_metrics"])
+PERFORMANCE_METRICS = tuple(_SCHEMA["performance_metrics"])

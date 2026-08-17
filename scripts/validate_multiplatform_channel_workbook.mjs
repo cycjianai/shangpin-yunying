@@ -5,15 +5,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FileBlob, SpreadsheetFile } from "@oai/artifact-tool";
 
-const EXPECTED_SHEETS = [
-  "执行汇总",
-  "SPU清单",
-  "字段级审计",
-  "平台不存在",
-  "最终结构复核",
-  "问题与策略回灌",
-  "性能与外部调用统计",
-];
+const OPERATIONS_SCHEMA = JSON.parse(
+  await fs.readFile(new URL("./operations_workbook_schema.json", import.meta.url), "utf8"),
+);
+const EXPECTED_SHEETS = OPERATIONS_SCHEMA.sheets;
+const HEADERS = OPERATIONS_SCHEMA.headers;
 
 function parseArgs(argv) {
   const result = {};
@@ -62,23 +58,52 @@ const productSheet = workbook.worksheets.getItem("SPU清单");
 const auditSheet = workbook.worksheets.getItem("字段级审计");
 const verifySheet = workbook.worksheets.getItem("最终结构复核");
 const summarySheet = workbook.worksheets.getItem("执行汇总");
+const missingSheet = workbook.worksheets.getItem("平台不存在");
+const feedbackSheet = workbook.worksheets.getItem("问题与策略回灌");
+const performanceSheet = workbook.worksheets.getItem("性能与外部调用统计");
 const productValues = productSheet.getUsedRange().values;
 const auditValues = auditSheet.getUsedRange().values;
 const verifyValues = verifySheet.getUsedRange().values;
 const summaryValues = summarySheet.getUsedRange().values;
+for (const [sheetName, values] of [
+  [EXPECTED_SHEETS[0], summaryValues],
+  [EXPECTED_SHEETS[1], productValues],
+  [EXPECTED_SHEETS[2], auditValues],
+  [EXPECTED_SHEETS[3], missingSheet.getUsedRange().values],
+  [EXPECTED_SHEETS[4], verifyValues],
+  [EXPECTED_SHEETS[5], feedbackSheet.getUsedRange().values],
+  [EXPECTED_SHEETS[6], performanceSheet.getUsedRange().values],
+]) {
+  if (JSON.stringify(values[0] || []) !== JSON.stringify(HEADERS[sheetName])) {
+    errors.push(`header_mismatch:${sheetName}`);
+  }
+}
 if (productValues.length - 1 !== rows.length) errors.push(`product_row_count:${productValues.length - 1}`);
+if (productValues.slice(1).some((row) => !String(row[0] || "") || !String(row[1] || "") || !String(row[2] || ""))) {
+  errors.push("product_spu_or_bc_empty");
+}
 if (auditValues.length - 1 !== expectedAuditRows) errors.push(`audit_row_count:${auditValues.length - 1}`);
-const statuses = productValues.slice(1).map((row) => String(row[5] || ""));
-if (statuses.some((status) => !status.startsWith("已验证"))) errors.push("product_status_not_verified");
 const verifyMap = Object.fromEntries(verifyValues.slice(1).map((row) => [String(row[0] || ""), row[1]]));
-if (Number(verifyMap["阻断商品数"] || 0) !== 0) errors.push("verify_blocked_nonzero");
-if (Number(verifyMap["失败商品数"] || 0) !== 0) errors.push("verify_failed_nonzero");
-if (Number(verifyMap["最终字段问题数"] || 0) !== 0) errors.push("verify_issue_nonzero");
+if (Number(verifyMap["最终问题数"] || 0) !== 0) errors.push("verify_issue_nonzero");
 const summaryMap = Object.fromEntries(summaryValues.slice(1).map((row) => [String(row[0] || ""), row[1]]));
+if (JSON.stringify(summaryValues.slice(1).map((row) => String(row[0] || ""))) !== JSON.stringify(OPERATIONS_SCHEMA.summary_metrics)) {
+  errors.push("summary_metric_order_mismatch");
+}
+if (JSON.stringify(verifyValues.slice(1).map((row) => String(row[0] || ""))) !== JSON.stringify(OPERATIONS_SCHEMA.verify_metrics)) {
+  errors.push("verify_metric_order_mismatch");
+}
+const performanceValues = performanceSheet.getUsedRange().values;
+if (JSON.stringify(performanceValues.slice(1).map((row) => String(row[0] || ""))) !== JSON.stringify(OPERATIONS_SCHEMA.performance_metrics)) {
+  errors.push("performance_metric_order_mismatch");
+}
 if (Number(summaryMap["源清单商品数"] || 0) !== rows.length) errors.push("summary_source_count_mismatch");
-if (Number(summaryMap["最终验证商品数"] || 0) !== rows.length) errors.push("summary_verified_count_mismatch");
-if (Number(summaryMap["唯一字段修正数"] || 0) !== expectedAuditRows) errors.push("summary_audit_count_mismatch");
-if (Number(summaryMap["渠道属性填充率"] || 0) < 0.999999) errors.push("summary_fill_rate_mismatch");
+for (const metric of ["Excel Schema版本", "Skill版本", "执行平台", "任务类型", "合同指纹SHA256", "门店/租户名称"]) {
+  if (!String(summaryMap[metric] || "").trim()) errors.push(`summary_identity_empty:${metric}`);
+}
+if (String(summaryMap["Excel Schema版本"] || "") !== OPERATIONS_SCHEMA.schema_version) errors.push("summary_schema_mismatch");
+if (Number(summaryMap["最终合同通过商品数"] || 0) !== rows.length) errors.push("summary_verified_count_mismatch");
+if (Number(summaryMap["唯一操作项数"] || 0) !== expectedAuditRows) errors.push("summary_audit_count_mismatch");
+if (String(summaryMap["完成率"] || "") !== "100.00%") errors.push("summary_fill_rate_mismatch");
 
 const formulaErrors = await workbook.inspect({
   kind: "match",

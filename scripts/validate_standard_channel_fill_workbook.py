@@ -13,15 +13,13 @@ from openpyxl import load_workbook
 
 from channel_workbook_schema import (
     AUDIT_SHEET,
-    CANONICAL_GENERATED_SHEETS,
     FEEDBACK_SHEET,
     GENERATED_SOURCE_SHEET,
     HEADERS,
     MISSING_SHEET,
+    PERFORMANCE_METRICS,
     PERFORMANCE_SHEET,
     SCHEMA_VERSION,
-    SOURCE_B_HEADER,
-    SOURCE_C_HEADER,
     SUMMARY_METRICS,
     SUMMARY_SHEET,
     VERIFY_METRICS,
@@ -93,21 +91,15 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
     elif args.source_xlsx:
         errors.append("unexpected_source_xlsx_argument")
 
-    if args.source_xlsx:
-        source_workbook = load_workbook(Path(args.source_xlsx).resolve(), read_only=True)
-        business_names = [
-            name
-            for name in source_workbook.sheetnames
-            if name not in CANONICAL_GENERATED_SHEETS
-        ]
-        source_workbook.close()
-        if not business_names:
-            errors.append("source_workbook_has_no_business_sheet")
-            business_names = []
-    else:
-        business_names = [GENERATED_SOURCE_SHEET]
-
-    expected_sheets = [SUMMARY_SHEET, *business_names, AUDIT_SHEET, MISSING_SHEET, VERIFY_SHEET, FEEDBACK_SHEET, PERFORMANCE_SHEET]
+    expected_sheets = [
+        SUMMARY_SHEET,
+        GENERATED_SOURCE_SHEET,
+        AUDIT_SHEET,
+        MISSING_SHEET,
+        VERIFY_SHEET,
+        FEEDBACK_SHEET,
+        PERFORMANCE_SHEET,
+    ]
     if workbook.sheetnames != expected_sheets:
         errors.append(
             "sheet_order_mismatch:expected="
@@ -123,17 +115,12 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         if actual != HEADERS[name]:
             errors.append(f"header_mismatch:{name}")
 
-    if not business_names or business_names[0] not in workbook.sheetnames:
+    if GENERATED_SOURCE_SHEET not in workbook.sheetnames:
         errors.append("source_sheet_missing")
         source = None
     else:
-        source = workbook[business_names[0]]
-        if args.source_xlsx:
-            if str(source.cell(1, 2).value or "").strip() != SOURCE_B_HEADER:
-                errors.append("source_b_header_mismatch")
-            if str(source.cell(1, 3).value or "").strip() != SOURCE_C_HEADER:
-                errors.append("source_c_header_mismatch")
-        elif row_values(source, 1, 3) != HEADERS[GENERATED_SOURCE_SHEET]:
+        source = workbook[GENERATED_SOURCE_SHEET]
+        if row_values(source, 1, 3) != HEADERS[GENERATED_SOURCE_SHEET]:
             errors.append("generated_source_header_mismatch")
 
     if source is not None:
@@ -158,16 +145,17 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         expected_pairs = {
             "Excel Schema版本": SCHEMA_VERSION,
             "Skill版本": contract["skill_version"],
-            "任务模式": contract["task_mode"],
+            "执行平台": "牵牛花",
+            "任务类型": contract["task_mode"],
             "合同指纹SHA256": contract["contract_fingerprint_sha256"],
-            "源表唯一SPU数": len(expected_spus),
-            "平台现存SPU数": int(summary_payload.get("platform_extant") or 0),
-            "平台记录不存在": int(summary_payload.get("missing_on_platform") or 0),
-            "现存SPU最终结构合同通过": int(summary_payload.get("platform_extant") or 0),
-            "现存SPU填充率": "100.00%",
-            "唯一字段修正数": int(summary_payload.get("unique_changed_fields") or 0),
-            "字段最终回读通过数": int(summary_payload.get("verified_changed_fields") or 0),
-            "最终字段问题数": 0,
+            "源清单商品数": len(expected_spus),
+            "平台现存商品数": int(summary_payload.get("platform_extant") or 0),
+            "平台不存在商品数": int(summary_payload.get("missing_on_platform") or 0),
+            "最终合同通过商品数": int(summary_payload.get("platform_extant") or 0),
+            "完成率": "100.00%",
+            "唯一操作项数": int(summary_payload.get("unique_changed_fields") or 0),
+            "最终回读通过项数": int(summary_payload.get("verified_changed_fields") or 0),
+            "最终问题数": 0,
         }
         for metric, expected in expected_pairs.items():
             if summary_metrics.get(metric) != expected:
@@ -196,12 +184,19 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         if actual_metrics != list(VERIFY_METRICS):
             errors.append("verify_metric_order_mismatch")
         values = metric_map(verify_sheet)
-        if int(values.get("products_with_issues") or 0) != 0:
-            errors.append("verify_products_with_issues_nonzero")
-        if int(values.get("issue_count") or 0) != 0:
+        if int(values.get("最终问题数") or 0) != 0:
             errors.append("verify_issue_count_nonzero")
-        if values.get("填充率") != "100.00%":
+        if values.get("完成率") != "100.00%":
             errors.append("verify_fill_rate_not_100")
+
+    if PERFORMANCE_SHEET in workbook.sheetnames:
+        performance_sheet = workbook[PERFORMANCE_SHEET]
+        actual_metrics = [
+            str(performance_sheet.cell(row, 1).value or "").strip()
+            for row in range(2, performance_sheet.max_row + 1)
+        ]
+        if actual_metrics != list(PERFORMANCE_METRICS):
+            errors.append("performance_metric_order_mismatch")
 
     if AUDIT_SHEET in workbook.sheetnames:
         audit_count = max(workbook[AUDIT_SHEET].max_row - 1, 0)

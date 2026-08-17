@@ -13,15 +13,13 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from channel_workbook_schema import (
     AUDIT_SHEET,
-    CANONICAL_GENERATED_SHEETS,
     FEEDBACK_SHEET,
     GENERATED_SOURCE_SHEET,
     HEADERS,
     MISSING_SHEET,
+    PERFORMANCE_METRICS,
     PERFORMANCE_SHEET,
     SCHEMA_VERSION,
-    SOURCE_B_HEADER,
-    SOURCE_C_HEADER,
     SUMMARY_METRICS,
     SUMMARY_SHEET,
     VERIFY_METRICS,
@@ -417,26 +415,35 @@ def main() -> int:
     if checked != extant:
         raise RuntimeError(f"最终验证集合不等：checked={checked} extant={extant}")
     changed = sum(bool(by_spu.get(spu_id)) for spu_id in ordered)
-    strategy_counts = Counter(str(item.get("source") or "unknown") for item in events.values())
     perf = performance([*history_run_dirs, run_dir])
     ext_calls = external_counts(contract)
     if contract["task_mode"] == "channel_attributes_only" and any(ext_calls.values()):
         raise RuntimeError("纯渠道属性模式检测到禁止的外部调用")
 
+    source_history: dict[str, tuple[object, object]] = {}
     if args.source_xlsx:
-        workbook = load_workbook(Path(args.source_xlsx).resolve())
-        for name in CANONICAL_GENERATED_SHEETS:
-            if name in workbook.sheetnames:
-                workbook.remove(workbook[name])
-        if not workbook.worksheets:
-            raise RuntimeError("源工作簿移除旧审计表后没有业务工作表")
-        source = workbook.worksheets[0]
-        summary = workbook.create_sheet(SUMMARY_SHEET, 0)
-    else:
-        workbook = Workbook()
-        workbook.remove(workbook.active)
-        summary = workbook.create_sheet(SUMMARY_SHEET)
-        source = workbook.create_sheet(GENERATED_SOURCE_SHEET)
+        source_book = load_workbook(Path(args.source_xlsx).resolve(), read_only=True)
+        source_sheet = source_book.worksheets[0]
+        for row_number in range(2, source_sheet.max_row + 1):
+            raw = source_sheet.cell(row_number, 1).value
+            if raw is None:
+                continue
+            spu_id = re.sub(r"\.0$", "", str(raw).strip())
+            if spu_id:
+                source_history[spu_id] = (
+                    source_sheet.cell(row_number, 2).value,
+                    source_sheet.cell(row_number, 3).value,
+                )
+        source_book.close()
+        if set(source_history) != set(ordered):
+            raise RuntimeError(
+                f"源工作表集合不等：sheet={len(source_history)} manifest={len(ordered)}"
+            )
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    summary = workbook.create_sheet(SUMMARY_SHEET)
+    source = workbook.create_sheet(GENERATED_SOURCE_SHEET)
     audit = workbook.create_sheet(AUDIT_SHEET)
     missing_sheet = workbook.create_sheet(MISSING_SHEET)
     verify = workbook.create_sheet(VERIFY_SHEET)
@@ -447,14 +454,15 @@ def main() -> int:
     summary_values = dict([
         ("Excel Schema版本", SCHEMA_VERSION),
         ("Skill版本", contract["skill_version"]),
-        ("任务模式", contract["task_mode"]),
+        ("执行平台", "牵牛花"),
+        ("任务类型", contract["task_mode"]),
         ("合同指纹SHA256", contract["contract_fingerprint_sha256"]),
-        ("牵牛花租户名称", args.tenant_name), ("源表唯一SPU数", len(ordered)),
-        ("平台现存SPU数", extant), ("平台记录不存在", len(missing)),
-        ("现存SPU最终结构合同通过", extant), ("现存SPU填充率", "100.00%"),
-        ("本次有字段修正的SPU", changed), ("执行前完整无需修改", extant - changed),
-        ("唯一字段修正数", len(events)), ("字段最终回读通过数", len(events)),
-        ("最终字段问题数", 0),
+        ("门店/租户名称", args.tenant_name), ("源清单商品数", len(ordered)),
+        ("平台现存商品数", extant), ("平台不存在商品数", len(missing)),
+        ("最终合同通过商品数", extant), ("完成率", "100.00%"),
+        ("本次有操作商品数", changed), ("无需修改商品数", extant - changed),
+        ("唯一操作项数", len(events)), ("最终回读通过项数", len(events)),
+        ("最终问题数", 0),
         ("OCR调用数", ext_calls["ocr"]),
         ("媒体扫描数", ext_calls["media_scan"]),
         ("条码扫描数", ext_calls["barcode_scan"]),
@@ -469,46 +477,18 @@ def main() -> int:
     for metric in SUMMARY_METRICS:
         summary.append((metric, summary_values[metric]))
 
-    source_rows: dict[str, int] = {}
-    if args.source_xlsx:
-        source.cell(1, 2, SOURCE_B_HEADER)
-        source.cell(1, 3, SOURCE_C_HEADER)
-        for cell in source[1]:
-            cell.font = Font(bold=True)
-            cell.fill = HEADER_FILL
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-        for row_number in range(2, source.max_row + 1):
-            raw = source.cell(row_number, 1).value
-            if raw is None:
-                continue
-            spu_id = re.sub(r"\.0$", "", str(raw).strip())
-            if spu_id:
-                source_rows[spu_id] = row_number
-        if set(source_rows) != set(ordered):
-            raise RuntimeError(
-                f"源工作表集合不等：sheet={len(source_rows)} manifest={len(ordered)}"
-            )
-    else:
-        header(source, HEADERS[GENERATED_SOURCE_SHEET])
+    header(source, HEADERS[GENERATED_SOURCE_SHEET])
 
     def write_source(spu_id: str, before: str, after: str) -> None:
-        if args.source_xlsx:
-            row_number = source_rows[spu_id]
-            generic = before == "执行前已满足渠道属性结构合同"
-            source.cell(
-                row_number,
-                2,
-                merge_history(source.cell(row_number, 2).value, before, generic=generic),
-            )
-            source.cell(
-                row_number,
-                3,
-                merge_history(source.cell(row_number, 3).value, after, generic=generic),
-            )
-            source.cell(row_number, 2).alignment = Alignment(wrap_text=True, vertical="top")
-            source.cell(row_number, 3).alignment = Alignment(wrap_text=True, vertical="top")
-        else:
-            source.append([spu_id, before, after])
+        old_before, old_after = source_history.get(spu_id, (None, None))
+        generic = before == "执行前已满足渠道属性结构合同"
+        source.append([
+            spu_id,
+            merge_history(old_before, before, generic=generic),
+            merge_history(old_after, after, generic=generic),
+        ])
+        source.cell(source.max_row, 2).alignment = Alignment(wrap_text=True, vertical="top")
+        source.cell(source.max_row, 3).alignment = Alignment(wrap_text=True, vertical="top")
 
     header(audit, HEADERS[AUDIT_SHEET])
     for spu_id in ordered:
@@ -541,12 +521,13 @@ def main() -> int:
     header(verify, HEADERS[VERIFY_SHEET])
     verify_values = {
         "最终详情分片": len(selected_files),
-        "源清单SPU": len(ordered),
-        "平台现存SPU": extant,
-        "结构合同通过SPU": extant,
-        "products_with_issues": 0,
-        "issue_count": 0,
-        "填充率": "100.00%",
+        "源清单商品数": len(ordered),
+        "平台现存商品数": extant,
+        "平台不存在商品数": len(missing),
+        "最终合同通过商品数": extant,
+        "最终回读通过项数": len(events),
+        "最终问题数": 0,
+        "完成率": "100.00%",
     }
     for metric in VERIFY_METRICS:
         verify.append((metric, verify_values[metric]))
@@ -556,23 +537,33 @@ def main() -> int:
         strategy.append(row)
 
     header(speed, HEADERS[PERFORMANCE_SHEET])
-    for row in [
-        ("保存checkpoint文件数", perf["checkpoint_files"]), ("保存结果事件数（含残差）", perf["events"]),
-        ("verified事件", perf["verified"]), ("failed响应事件（均经复读判定）", perf["failed_responses"]),
-        ("批量写墙钟累计秒", round(perf["elapsed_ms"] / 1000, 3)),
-        ("OCR调用数", ext_calls["ocr"]),
-        ("媒体扫描数", ext_calls["media_scan"]),
-        ("条码扫描数", ext_calls["barcode_scan"]),
-        ("博查调用数", ext_calls["bocha"]),
-        ("Web搜索调用数", ext_calls["web_search"]),
-        ("模型调用数", ext_calls["llm"]),
-        ("Provider Submit数", ext_calls["provider_submit"]),
-        ("Provider Query数", ext_calls["provider_query"]),
-        ("图片上传数", ext_calls["image_upload"]),
-    ]:
-        speed.append(row)
-    for key, count in sorted(strategy_counts.items()):
-        speed.append((f"策略字段数：{key}", count))
+    wall_seconds = round(perf["elapsed_ms"] / 1000, 3)
+    performance_values = {
+        "处理商品数": len(ordered),
+        "唯一操作项数": len(events),
+        "总墙钟秒": wall_seconds,
+        "平均秒/商品": round(wall_seconds / len(ordered), 3) if ordered else 0,
+        "实际峰值并发": 0,
+        "配置并发上限": 0,
+        "请求数": 0,
+        "请求错误数": 0,
+        "限流次数": 0,
+        "保存checkpoint文件数": perf["checkpoint_files"],
+        "保存结果事件数（含残差）": perf["events"],
+        "verified事件": perf["verified"],
+        "failed响应事件（均经复读判定）": perf["failed_responses"],
+        "OCR调用数": ext_calls["ocr"],
+        "媒体扫描数": ext_calls["media_scan"],
+        "条码扫描数": ext_calls["barcode_scan"],
+        "博查调用数": ext_calls["bocha"],
+        "Web搜索调用数": ext_calls["web_search"],
+        "模型调用数": ext_calls["llm"],
+        "Provider Submit数": ext_calls["provider_submit"],
+        "Provider Query数": ext_calls["provider_query"],
+        "图片上传数": ext_calls["image_upload"],
+    }
+    for metric in PERFORMANCE_METRICS:
+        speed.append((metric, performance_values[metric]))
 
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)

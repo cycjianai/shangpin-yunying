@@ -128,6 +128,9 @@ def main() -> int:
     module_map_source = (ROOT / "references" / "platform-module-map.md").read_text(
         encoding="utf-8"
     )
+    operations_schema = json.loads(
+        (SCRIPTS / "operations_workbook_schema.json").read_text(encoding="utf-8")
+    )
     assert "远端只允许保留\n`main`" in skill_source
     assert "只有 `origin/main` 包含目标提交且远端仅剩 `main` 才算同步完成" in governance_source
     for adapter in ("qnh", "meituan", "aoxiang", "taobao_flash"):
@@ -135,6 +138,22 @@ def main() -> int:
     for task_mode in ("channel_attributes_only", "qualification_images_only"):
         assert f"`{task_mode}`" in module_map_source
     results["single_main_and_platform_module_contract"] = True
+    assert operations_schema["schema_version"] == "product-governance-operations-workbook-v1"
+    assert operations_schema["sheets"] == [
+        "执行汇总", "SPU清单", "字段级审计", "平台不存在",
+        "最终结构复核", "问题与策略回灌", "性能与外部调用统计",
+    ]
+    assert operations_schema["headers"]["SPU清单"] == [
+        "SPUID", "执行前缺失/无效字段", "本次实际填充及最终回读",
+    ]
+    for script_name in (
+        "export_multiplatform_channel_workbook.mjs",
+        "validate_multiplatform_channel_workbook.mjs",
+    ):
+        assert "operations_workbook_schema.json" in (
+            SCRIPTS / script_name
+        ).read_text(encoding="utf-8")
+    results["unified_operations_workbook_schema"] = True
     with tempfile.TemporaryDirectory(prefix="qnh-skill-golden-") as tmp:
         run_dir = Path(tmp)
         manifest = manifest_payload()
@@ -866,17 +885,20 @@ def main() -> int:
             str(source_schema),
         )
         source_result = load_workbook(source_output)
-        assert source_result.sheetnames[:3] == ["执行汇总", "商品清单", "销售规格信息"]
-        assert source_result["销售规格信息"]["B2"].value == "不得丢失"
-        assert "历史执行前记录" in source_result["商品清单"]["B2"].value
-        assert "字段名=包装方式" in source_result["商品清单"]["B2"].value
-        assert "历史已填字段记录" in source_result["商品清单"]["C2"].value
-        assert "最终值=独立装" in source_result["商品清单"]["C2"].value
-        assert "字段名=包装方式" in source_result["商品清单"]["B3"].value
-        assert "最终值=独立装" in source_result["商品清单"]["C3"].value
+        assert source_result.sheetnames == [
+            "执行汇总", "SPU清单", "字段级审计", "平台不存在",
+            "最终结构复核", "问题与策略回灌", "性能与外部调用统计",
+        ]
+        assert "销售规格信息" not in source_result.sheetnames
+        assert "历史执行前记录" in source_result["SPU清单"]["B2"].value
+        assert "字段名=包装方式" in source_result["SPU清单"]["B2"].value
+        assert "历史已填字段记录" in source_result["SPU清单"]["C2"].value
+        assert "最终值=独立装" in source_result["SPU清单"]["C2"].value
+        assert "字段名=包装方式" in source_result["SPU清单"]["B3"].value
+        assert "最终值=独立装" in source_result["SPU清单"]["C3"].value
         assert source_result["字段级审计"].max_row == 3
         results["verified_result_history_fallback"] = True
-        results["source_workbook_topology_and_history_preserved"] = True
+        results["unified_workbook_topology_and_history_preserved"] = True
 
     output = {"passed": all(results.values()), "checks": results}
     print(json.dumps(output, ensure_ascii=False, indent=2))

@@ -1,7 +1,8 @@
 # 平台 × 任务模块总表
 
 平台和任务类型是两个正交维度。平台适配器负责登录会话、原生接口、payload、保存和回读；共享核心负责 manifest、
-任务合同、审计、Excel Schema、完成门和交付门。
+任务合同、审计、统一运营 Excel Schema、完成门和交付门。所有已实现模块必须把不同 checkpoint 映射为同一
+`product-governance-operations-workbook-v1`，不得定义平台专属运营表。
 
 | `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 平台文件 |
 |---|---|---|---|
@@ -28,4 +29,4 @@ scripts/
 回归测试。新平台专属代码必须直接进入目标模块，不再增加新的顶层混合 writer。
 
 每个已实现模块必须独立注册：平台识别规则、允许的任务模式、只读器、计划器、writer、独立回读器、validator、
-checkpoint schema、完成门扩展和平台回归。模块之间禁止直接复用 writer；只能调用 `core` 的中立接口。
+checkpoint schema、统一运营行映射、完成门扩展和平台回归。模块之间禁止直接复用 writer；只能调用 `core` 的中立接口。

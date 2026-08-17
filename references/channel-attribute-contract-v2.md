@@ -65,7 +65,7 @@ python3 scripts/validate_channel_contracts.py \
 - 字段级表至少包含 SPU、标题、渠道、字段 ID/名、执行前、计划值、最终回读、来源策略和状态。
 - 汇总表分别给出：源表数、平台现存数、记录不存在数、现存合同通过数、最终问题数、唯一修正字段数、博查/模型调用数。
 - 已验证大样本基准：单页并发 10、Chrome 约 1.6–2.0GB；8454 源 SPU 中 8450 个平台现存，最终全字段问题 0。该数字只是验收样例，绝不能复用到新账号。
-- 工作簿必须严格符合 `qnh-channel-fill-workbook-v1`，并经 Schema validator 与 `qnh_completion_gate.py`
+- 工作簿必须严格符合 `product-governance-operations-workbook-v1`，并经 Schema validator 与 `qnh_completion_gate.py`
   双门通过；禁止 run-local 导出器和近义工作表。
 
 ## 已验证的新坑

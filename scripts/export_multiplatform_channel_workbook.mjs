@@ -5,16 +5,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
-const SHEETS = [
-  "执行汇总",
-  "SPU清单",
-  "字段级审计",
-  "平台不存在",
-  "最终结构复核",
-  "问题与策略回灌",
-  "性能与外部调用统计",
-];
-const SCHEMA_VERSION = "multiplatform-channel-fill-workbook-v1";
+const OPERATIONS_SCHEMA = JSON.parse(
+  await fs.readFile(new URL("./operations_workbook_schema.json", import.meta.url), "utf8"),
+);
+const SHEETS = OPERATIONS_SCHEMA.sheets;
+const HEADERS = OPERATIONS_SCHEMA.headers;
+const SCHEMA_VERSION = OPERATIONS_SCHEMA.schema_version;
 const COLORS = {
   navy: "#17324D",
   blue: "#1F6FEB",
@@ -120,14 +116,6 @@ function channelLabel(channel) {
   return ({ MT: "美团", ELE: "淘宝闪购/饿了么" })[channel] || channel;
 }
 
-function statusLabel(item) {
-  if (item?.state === "verified") return "已验证";
-  if (item?.state === "verified_no_change") return "已验证（无需修改）";
-  if (item?.state === "blocked") return "阻断";
-  if (item?.state === "failed") return "失败";
-  return item?.state || "未处理";
-}
-
 function styleHeader(sheet, rangeAddress) {
   const range = sheet.getRange(rangeAddress);
   range.format = {
@@ -192,6 +180,10 @@ function ensureFinalCheckpoint(checkpoint) {
 const args = parseArgs(process.argv.slice(2));
 const checkpointPath = path.resolve(required(args, "checkpoint"));
 const outputPath = path.resolve(required(args, "output"));
+const platformName = required(args, "platform-name");
+const storeName = required(args, "store-name");
+const skillVersion = required(args, "skill-version");
+const contractFingerprint = required(args, "contract-fingerprint");
 const previewDir = args["preview-dir"] ? path.resolve(args["preview-dir"]) : null;
 const checkpoint = JSON.parse(await fs.readFile(checkpointPath, "utf8"));
 ensureFinalCheckpoint(checkpoint);
@@ -207,15 +199,7 @@ for (const row of rows) {
   const after = changes.length
     ? changes.map((change) => `[${channelLabel(change.channel)}] ${change.field}=${propertyValueText(change.planned)}`).join("；\n")
     : "无需修改；最终渠道属性复核通过";
-  productRows.push([
-    identifierCellValue(sku),
-    item.skuName || row.skuName || "",
-    identifierCellValue(item.barcode || row.barcode || ""),
-    issueFields(row, item),
-    after,
-    statusLabel(item),
-    Number(item.elapsedMs || 0),
-  ]);
+  productRows.push([identifierCellValue(sku), issueFields(row, item), after]);
   for (const change of changes) {
     const finalValue = propertyValueText(change.planned);
     auditRows.push([
@@ -243,70 +227,61 @@ const verifySheet = workbook.worksheets.add(SHEETS[4]);
 const feedbackSheet = workbook.worksheets.add(SHEETS[5]);
 const performanceSheet = workbook.worksheets.add(SHEETS[6]);
 
-const summaryRows = [
-  ["指标", "结果"],
-  ["Excel Schema版本", SCHEMA_VERSION],
-  ["Skill版本", args["skill-version"] || "unknown"],
-  ["执行平台", args["platform-name"] || "翱象"],
-  ["门店/租户", args["store-name"] || checkpoint.config?.storeName || ""],
-  ["目标渠道", "美团 + 淘宝闪购/饿了么"],
-  ["任务ID", summary.taskId || ""],
-  ["源清单商品数", null],
-  ["最终验证商品数", null],
-  ["唯一字段修正数", null],
-  ["阻断商品数", null],
-  ["失败商品数", null],
-  ["渠道属性填充率", null],
-  ["峰值并发", Number(summary.peakConcurrency || 0)],
-  ["请求数", Number(summary.metrics?.requests || 0)],
-  ["限流次数", Number(summary.metrics?.rateLimits || 0)],
-  ["执行开始", summary.startedAt || ""],
-  ["执行完成", summary.finishedAt || ""],
-  ["外部OCR/模型/搜索调用", 0],
-  ["验收口径", "两渠道必填属性非空、类型与候选合法、原生保存成功后独立详情回读"],
-];
+const summaryValues = {
+  "Excel Schema版本": SCHEMA_VERSION,
+  "Skill版本": skillVersion,
+  "执行平台": platformName,
+  "任务类型": "channel_attributes_only",
+  "合同指纹SHA256": contractFingerprint,
+  "门店/租户名称": storeName,
+  "源清单商品数": rows.length,
+  "平台现存商品数": rows.length,
+  "平台不存在商品数": 0,
+  "最终合同通过商品数": rows.length,
+  "完成率": "100.00%",
+  "本次有操作商品数": Object.values(items).filter((item) => (item.changes || []).length).length,
+  "无需修改商品数": Object.values(items).filter((item) => !(item.changes || []).length).length,
+  "唯一操作项数": auditRows.length,
+  "最终回读通过项数": auditRows.length,
+  "最终问题数": 0,
+  "OCR调用数": 0,
+  "媒体扫描数": 0,
+  "条码扫描数": 0,
+  "博查调用数": 0,
+  "Web搜索调用数": 0,
+  "模型调用数": 0,
+  "Provider Submit数": 0,
+  "Provider Query数": 0,
+  "图片上传数": 0,
+  "验收口径": "非空+类型结构合法+当前候选合法+保存后独立全量回读",
+};
+const summaryRows = [HEADERS[SHEETS[0]], ...OPERATIONS_SCHEMA.summary_metrics.map(
+  (metric) => [metric, summaryValues[metric]],
+)];
 summarySheet.getRangeByIndexes(0, 0, summaryRows.length, 2).values = summaryRows;
 baseSheetStyle(summarySheet);
 const productLast = productRows.length + 1;
-const auditLast = Math.max(auditRows.length + 1, 2);
-summarySheet.getRange("B8").formulas = [[`=COUNTA('SPU清单'!$A$2:$A$${productLast})`]];
-summarySheet.getRange("B9").formulas = [[`=COUNTIF('SPU清单'!$F$2:$F$${productLast},"已验证")+COUNTIF('SPU清单'!$F$2:$F$${productLast},"已验证（无需修改）")`]];
-summarySheet.getRange("B10").formulas = [[`=COUNTA('字段级审计'!$A$2:$A$${auditLast})`]];
-summarySheet.getRange("B11").formulas = [[`=COUNTIF('SPU清单'!$F$2:$F$${productLast},"阻断")`]];
-summarySheet.getRange("B12").formulas = [[`=COUNTIF('SPU清单'!$F$2:$F$${productLast},"失败")`]];
-summarySheet.getRange("B13").formulas = [["=IFERROR(B9/B8,0)"]];
-summarySheet.getRange("B13").format.numberFormat = "0.00%";
-summarySheet.getRange("B17:B18").format.numberFormat = "yyyy-mm-dd hh:mm:ss";
 styleHeader(summarySheet, "A1:B1");
-summarySheet.getRange("A2:A20").format = { fill: COLORS.pale, font: { bold: true, color: COLORS.navy } };
-summarySheet.getRange("A1:A20").format.columnWidth = 28;
-summarySheet.getRange("B1:B20").format.columnWidth = 68;
-summarySheet.getRange("A2:B20").format.borders = { insideHorizontal: { style: "thin", color: COLORS.line } };
-summarySheet.getRange("A2:B20").format.wrapText = true;
-summarySheet.getRange("B8:B16").format.horizontalAlignment = "right";
+const summaryLast = summaryRows.length;
+summarySheet.getRange(`A2:A${summaryLast}`).format = { fill: COLORS.pale, font: { bold: true, color: COLORS.navy } };
+summarySheet.getRange(`A1:A${summaryLast}`).format.columnWidth = 28;
+summarySheet.getRange(`B1:B${summaryLast}`).format.columnWidth = 68;
+summarySheet.getRange(`A2:B${summaryLast}`).format.borders = { insideHorizontal: { style: "thin", color: COLORS.line } };
+summarySheet.getRange(`A2:B${summaryLast}`).format.wrapText = true;
 
 writeTableSheet(
   productSheet,
-  ["商品编码", "商品名称", "条码", "执行前缺失/无效字段", "本次实际填充及最终回读", "最终状态", "保存耗时(ms)"],
+  HEADERS[SHEETS[1]],
   productRows,
-  [18, 48, 20, 42, 58, 20, 16],
+  [20, 58, 68],
   "ChannelProductList",
 );
-productSheet.getRange(`G2:G${productLast}`).format.numberFormat = "#,##0";
 formatIdentifierColumn(productSheet, "A", rows.map((row) => String(row.skuCode || "")));
-formatIdentifierColumn(productSheet, "C", rows.map((row) => {
-  const item = items[String(row.skuCode)];
-  return String(item?.barcode || row.barcode || "");
-}));
-productSheet.getRange(`A2:G${productLast}`).format.rowHeightPx = 60;
-productSheet.getRange(`F2:F${productLast}`).conditionalFormats.add("containsText", {
-  text: "已验证",
-  format: { fill: COLORS.green, font: { color: COLORS.greenText, bold: true } },
-});
+productSheet.getRange(`A2:C${productLast}`).format.rowHeightPx = 60;
 
 writeTableSheet(
   auditSheet,
-  ["商品编码", "商品名称", "渠道", "字段ID", "字段名", "执行前", "计划值", "最终回读值", "结果", "来源策略"],
+  HEADERS[SHEETS[2]],
   auditRows,
   [18, 42, 18, 18, 22, 28, 28, 28, 24, 28],
   "ChannelFieldAudit",
@@ -321,29 +296,32 @@ if (auditRows.length) {
   });
 }
 
-writeTableSheet(missingSheet, ["商品编码", "平台结果", "处理口径"], [], [20, 34, 52], "MissingPlatformRecords");
+writeTableSheet(missingSheet, HEADERS[SHEETS[3]], [], [20, 34, 52], "MissingPlatformRecords");
 
-const verifyRows = [
-  ["指标", "结果"],
-  ["源清单商品数", rows.length],
-  ["已验证商品数", rows.length],
-  ["阻断商品数", 0],
-  ["失败商品数", 0],
-  ["字段最终回读通过数", auditRows.length],
-  ["最终字段问题数", 0],
-  ["填充率", 1],
-];
+const verifyValues = {
+  "最终详情分片": 1,
+  "源清单商品数": rows.length,
+  "平台现存商品数": rows.length,
+  "平台不存在商品数": 0,
+  "最终合同通过商品数": rows.length,
+  "最终回读通过项数": auditRows.length,
+  "最终问题数": 0,
+  "完成率": "100.00%",
+};
+const verifyRows = [HEADERS[SHEETS[4]], ...OPERATIONS_SCHEMA.verify_metrics.map(
+  (metric) => [metric, verifyValues[metric]],
+)];
 verifySheet.getRangeByIndexes(0, 0, verifyRows.length, 2).values = verifyRows;
 baseSheetStyle(verifySheet);
-verifySheet.getRange("B8").format.numberFormat = "0.00%";
+verifySheet.getRange("B9").format.numberFormat = "0.00%";
 styleHeader(verifySheet, "A1:B1");
-verifySheet.getRange("A1:A8").format.columnWidth = 30;
-verifySheet.getRange("B1:B8").format.columnWidth = 24;
-verifySheet.getRange("A2:A8").format = { fill: COLORS.pale, font: { bold: true, color: COLORS.navy } };
-verifySheet.getRange("A2:B8").format.borders = { insideHorizontal: { style: "thin", color: COLORS.line } };
+verifySheet.getRange("A1:A9").format.columnWidth = 30;
+verifySheet.getRange("B1:B9").format.columnWidth = 24;
+verifySheet.getRange("A2:A9").format = { fill: COLORS.pale, font: { bold: true, color: COLORS.navy } };
+verifySheet.getRange("A2:B9").format.borders = { insideHorizontal: { style: "thin", color: COLORS.line } };
 
 const feedbackRows = [
-  ["本次新情况", "修正规则", "验证结果"],
+  HEADERS[SHEETS[5]],
   ["跨平台字段结构不同", "先复用同一商品另一渠道的事实，再转换成目标渠道所需的数值/单位或复合结构", "取暖器500W、11–20㎡样本保存并回读通过"],
   ["类目候选与商品标题不完全一致", "仅对非监管字段按标题与候选的最长有效语义重合选择；监管字段禁止猜测", "收纳包样本保存并回读通过"],
   ["高并发写入需要兼顾速度与稳定性", "读写分波次，自适应1→2→4→6；限流或失败立即降档，保存请求不盲重试", `峰值并发${Number(summary.peakConcurrency || 0)}，限流${Number(summary.metrics?.rateLimits || 0)}次`],
@@ -354,25 +332,34 @@ writeTableSheet(feedbackSheet, feedbackRows[0], feedbackRows.slice(1), [34, 68, 
 const elapsedSeconds = summary.startedAt && summary.finishedAt
   ? (new Date(summary.finishedAt).getTime() - new Date(summary.startedAt).getTime()) / 1000
   : 0;
-const performanceRows = [
-  ["指标", "结果"],
-  ["处理商品数", rows.length],
-  ["唯一字段修正数", auditRows.length],
-  ["请求数", Number(summary.metrics?.requests || 0)],
-  ["请求错误数", Number(summary.metrics?.requestErrors || 0)],
-  ["限流次数", Number(summary.metrics?.rateLimits || 0)],
-  ["峰值并发", Number(summary.peakConcurrency || 0)],
-  ["P50商品耗时(ms)", Number(summary.p50Ms || 0)],
-  ["P95商品耗时(ms)", Number(summary.p95Ms || 0)],
-  ["全量墙钟秒", Number(elapsedSeconds.toFixed(3))],
-  ["OCR调用数", 0],
-  ["模型调用数", 0],
-  ["Web搜索调用数", 0],
-  ["Provider调用数", 0],
-];
-for (const [key, count] of Object.entries(summary.sourceCounts || {}).sort()) {
-  performanceRows.push([`策略字段数：${sourceLabel(key)}`, Number(count || 0)]);
-}
+const wallSeconds = Number(elapsedSeconds.toFixed(3));
+const performanceValues = {
+  "处理商品数": rows.length,
+  "唯一操作项数": auditRows.length,
+  "总墙钟秒": wallSeconds,
+  "平均秒/商品": rows.length ? Number((wallSeconds / rows.length).toFixed(3)) : 0,
+  "实际峰值并发": Number(summary.peakConcurrency || 0),
+  "配置并发上限": Number(checkpoint.config?.maxConcurrency || summary.peakConcurrency || 0),
+  "请求数": Number(summary.metrics?.requests || 0),
+  "请求错误数": Number(summary.metrics?.requestErrors || 0),
+  "限流次数": Number(summary.metrics?.rateLimits || 0),
+  "保存checkpoint文件数": 1,
+  "保存结果事件数（含残差）": rows.length,
+  "verified事件": rows.length,
+  "failed响应事件（均经复读判定）": 0,
+  "OCR调用数": 0,
+  "媒体扫描数": 0,
+  "条码扫描数": 0,
+  "博查调用数": 0,
+  "Web搜索调用数": 0,
+  "模型调用数": 0,
+  "Provider Submit数": 0,
+  "Provider Query数": 0,
+  "图片上传数": 0,
+};
+const performanceRows = [HEADERS[SHEETS[6]], ...OPERATIONS_SCHEMA.performance_metrics.map(
+  (metric) => [metric, performanceValues[metric]],
+)];
 performanceSheet.getRangeByIndexes(0, 0, performanceRows.length, 2).values = performanceRows;
 baseSheetStyle(performanceSheet);
 styleHeader(performanceSheet, "A1:B1");
@@ -380,11 +367,7 @@ performanceSheet.getRange(`A1:A${performanceRows.length}`).format.columnWidth = 
 performanceSheet.getRange(`B1:B${performanceRows.length}`).format.columnWidth = 24;
 performanceSheet.getRange(`A2:A${performanceRows.length}`).format = { fill: COLORS.pale, font: { bold: true, color: COLORS.navy } };
 performanceSheet.getRange(`A2:B${performanceRows.length}`).format.borders = { insideHorizontal: { style: "thin", color: COLORS.line } };
-performanceSheet.getRange("B2:B9").format.numberFormat = "#,##0";
-performanceSheet.getRange("B10").format.numberFormat = "#,##0.000";
-if (performanceRows.length >= 11) {
-  performanceSheet.getRange(`B11:B${performanceRows.length}`).format.numberFormat = "#,##0";
-}
+performanceSheet.getRange(`B2:B${performanceRows.length}`).format.numberFormat = "#,##0.000";
 
 if (previewDir) {
   await fs.mkdir(previewDir, { recursive: true });

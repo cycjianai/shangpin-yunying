@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息与资质图任务；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.9
+# 多平台商品渠道治理 v3.7.0
 
 ## 不可跳过的第一步
 
@@ -256,6 +256,7 @@ node scripts/export_multiplatform_channel_workbook.mjs \
   --checkpoint "$RUN_DIR/checkpoint-final.json" \
   --platform-name 翱象 --store-name "$STORE_NAME" \
   --skill-version "$(cat VERSION)" \
+  --contract-fingerprint "$CONTRACT_FINGERPRINT" \
   --preview-dir "$RUN_DIR/workbook-previews" \
   --output "$OUTPUT_XLSX"
 
@@ -384,15 +385,22 @@ python3 scripts/run_task_action.py \
 
 ## 精确 Excel 与完成门
 
-QNH 渠道属性模式必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)。固定文件名为
-`MMDD{实时租户名称}{源清单唯一SPU数}.xlsx`。保留源工作簿业务工作表和顺序，只更新第一工作表 B/C；
+所有平台与任务模式必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)，并使用唯一机器 Schema
+`scripts/operations_workbook_schema.json`。牵牛花、美团、翱象、淘宝闪购的属性信息与资质图任务必须交付完全相同的
+7 张工作表、表头、汇总指标及字段顺序；每轮只允许商品、执行前值、处理值、回读值、数量、耗时和策略等数据变化。
+平台模块不得增加专属工作表或改字段名，不适用指标填 0。资质图将图片槽位映射为字段 ID/名，仍进入同一字段级审计。
+
+固定文件名为
+`MMDD{实时租户名称}{源清单唯一SPU数}.xlsx`。源工作簿只读；统一回传表只生成 canonical 7 张工作表，并按 SPU
+把可信历史合并进 `SPU清单` B/C；
 同一逻辑任务因 Skill 字节升级而必须新建 run-dir 时，只能由导出器显式 `--history-run-dir` 合并历史。
 历史目录必须与当前 `session_identity` 的 tenant ID 完全一致，且只接纳带完整
 `requested_changes + verification` 的 verified 结果 SPU；禁止扫描“最新目录”或把已计划但未保存的字段写进 B/C。
 旧分片的聚合 `audit.json` 可能只保留部分 SPU，或早期 PoC 使用非 canonical 审计目录。导出器必须先使用聚合审计，
 再从同租户 `*-result.json` 中补齐缺失字段；结果回退仍要求顶层 `verified=true`、requested 与 verification 数量相等，
 且每个 verification 都为 `verified=true`。计划文件、preview、部分回读或只有保存响应的结果一律不得进入 B/C。
-旧可信记录必须合并，不得覆盖成“无需修改”。无源 XLSX 时创建固定 `SPU清单`。
+旧可信记录必须合并，不得覆盖成“无需修改”。源文件只作为输入；运营交付统一生成固定 `SPU清单`，不复制其他业务
+工作表，确保每个平台、每种任务的输出结构一模一样。
 Chrome 扩展的完整最终快照允许命名为 `details-final*.json`，但导出器只有在其唯一 SPU 集合与冻结 manifest 精确
 相等时才接纳；部分续写文件不得导出。扩展审计目录固定为 `channel-plans/audit.json` 与
 `residual-round*-plans/audit.json`，保存 checkpoint 固定接纳 `save-*` 与 `residual-rN-*`，dry-run 永不计入交付性能。

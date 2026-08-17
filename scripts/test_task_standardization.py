@@ -241,6 +241,47 @@ def main() -> int:
             assert json.loads(routed_mode.stdout)["task_mode"] == expected_mode
         results["route_all_modes"] = True
 
+        qualification_case = run_dir / "qualification-unified-workbook"
+        qualification_case.mkdir()
+        fixture_documents = {
+            "initial-manifest.json": {
+                "products": [{"spu_id": "fixture-qualification-spu", "title": "资质图样例", "issue_text": ["缺少背签图"]}]
+            },
+            "initial-details.json": {"products": [{"spu_id": "fixture-qualification-spu", "detail": {}}]},
+            "final-manifest.json": {"products": []},
+            "final-details.json": {"products": [{"spu_id": "fixture-qualification-spu", "detail": {}}]},
+            "planning-index.json": {"rows": [{"spu_id": "fixture-qualification-spu", "status": "ready"}]},
+        }
+        for filename, document in fixture_documents.items():
+            qualification_case.joinpath(filename).write_text(
+                json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        qualification_output = qualification_case / "qualification-report"
+        run(
+            PYTHON,
+            str(SCRIPTS / "export_ledger.py"),
+            "--run-dir", str(qualification_case),
+            "--initial-manifest", str(qualification_case / "initial-manifest.json"),
+            "--initial-details", str(qualification_case / "initial-details.json"),
+            "--final-manifest", str(qualification_case / "final-manifest.json"),
+            "--final-details", str(qualification_case / "final-details.json"),
+            "--planning-index", str(qualification_case / "planning-index.json"),
+            "--output-prefix", str(qualification_output),
+            "--task-mode", "qualification_images_only",
+            "--tenant-name", "统一模板测试租户",
+        )
+        qualification_book = load_workbook(qualification_output.with_suffix(".xlsx"))
+        assert qualification_book.sheetnames == operations_schema["sheets"]
+        for sheet_name in operations_schema["sheets"]:
+            assert [cell.value for cell in qualification_book[sheet_name][1]] == operations_schema["headers"][sheet_name]
+        qualification_summary = {
+            qualification_book["执行汇总"].cell(row, 1).value: qualification_book["执行汇总"].cell(row, 2).value
+            for row in range(2, qualification_book["执行汇总"].max_row + 1)
+        }
+        assert qualification_summary["任务类型"] == "qualification_images_only"
+        results["qualification_workbook_uses_unified_schema"] = True
+
         run(
             PYTHON,
             str(SCRIPTS / "qnh_task_contract.py"),

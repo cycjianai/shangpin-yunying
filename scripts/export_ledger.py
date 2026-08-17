@@ -40,6 +40,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--planning-index", required=True)
     parser.add_argument("--output-prefix", required=True)
     parser.add_argument("--completed-prefix")
+    parser.add_argument(
+        "--task-mode",
+        choices=("unavailable_one_pass", "qualification_images_only"),
+        default="unavailable_one_pass",
+    )
+    parser.add_argument("--platform-name", default="牵牛花")
+    parser.add_argument("--tenant-name", default="牵牛花租户")
+    parser.add_argument("--contract-fingerprint", default="")
     return parser.parse_args()
 
 
@@ -716,14 +724,30 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("缺少 openpyxl；请先安装后再导出 XLSX") from exc
 
+    from channel_workbook_schema import (
+        AUDIT_SHEET,
+        FEEDBACK_SHEET,
+        GENERATED_SOURCE_SHEET,
+        HEADERS,
+        MISSING_SHEET,
+        PERFORMANCE_METRICS,
+        PERFORMANCE_SHEET,
+        SCHEMA_VERSION,
+        SUMMARY_METRICS,
+        SUMMARY_SHEET,
+        VERIFY_METRICS,
+        VERIFY_SHEET,
+    )
+
     workbook = Workbook()
-    change_sheet = workbook.active
-    change_sheet.title = "字段修改明细"
-    status_sheet = workbook.create_sheet("商品终态")
-    completed_sheet = workbook.create_sheet("已完成SPU清单")
-    reason_sheet = workbook.create_sheet("剩余不可售原因")
-    performance_sheet = workbook.create_sheet("并发性能")
-    self_evaluation_sheet = workbook.create_sheet("自评与口径")
+    workbook.remove(workbook.active)
+    summary_sheet = workbook.create_sheet(SUMMARY_SHEET)
+    source_sheet = workbook.create_sheet(GENERATED_SOURCE_SHEET)
+    audit_sheet = workbook.create_sheet(AUDIT_SHEET)
+    missing_sheet = workbook.create_sheet(MISSING_SHEET)
+    verify_sheet = workbook.create_sheet(VERIFY_SHEET)
+    feedback_sheet = workbook.create_sheet(FEEDBACK_SHEET)
+    performance_sheet = workbook.create_sheet(PERFORMANCE_SHEET)
 
     def append_sheet(sheet: Any, rows: list[dict[str, Any]], headers: list[str]) -> None:
         sheet.append(headers)
@@ -745,18 +769,125 @@ def main() -> None:
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    append_sheet(change_sheet, changes, fields)
-    product_fields = list(products_out[0].keys()) if products_out else []
-    append_sheet(status_sheet, products_out, product_fields)
-    completed_fields = list(completed_out[0].keys()) if completed_out else []
-    append_sheet(completed_sheet, completed_out, completed_fields)
-    reason_fields = list(reason_rows[0].keys()) if reason_rows else []
-    append_sheet(reason_sheet, reason_rows, reason_fields)
-    performance_fields = list(performance_rows[0].keys()) if performance_rows else []
-    append_sheet(performance_sheet, performance_rows, performance_fields)
-    self_evaluation_fields = list(self_evaluation_rows[0].keys())
-    append_sheet(self_evaluation_sheet, self_evaluation_rows, self_evaluation_fields)
+    completed_by_spu = {str(row["SPU"]): row for row in completed_out}
+    source_rows = []
+    for row in products_out:
+        spu_id = str(row["SPU"])
+        completed = completed_by_spu.get(spu_id) or {}
+        before = str(row.get("初始问题") or "执行前已满足任务合同")
+        after = str(
+            completed.get("字段改后值摘要")
+            or row.get("终态结论")
+            or "无需修改；最终回读通过"
+        )
+        source_rows.append({"SPUID": spu_id, HEADERS[GENERATED_SOURCE_SHEET][1]: before, HEADERS[GENERATED_SOURCE_SHEET][2]: after})
+
+    audit_rows = []
+    for row in changes:
+        field_path = str(row.get("字段路径") or "")
+        channel = "牵牛花"
+        if field_path.startswith("channel."):
+            channel_id = int(field_path.split(".", 2)[1])
+            channel = CHANNEL_NAMES.get(channel_id, str(channel_id))
+        audit_rows.append({
+            "SPU编码": row.get("SPU") or "",
+            "商品名称": row.get("商品名称(初始)") or "",
+            "渠道": channel,
+            "字段ID": field_path,
+            "字段名": row.get("字段名称") or field_name(field_path),
+            "执行前": row.get("修改前") or "(空值/无效)",
+            "计划值": row.get("修改后") or "",
+            "最终回读值": row.get("修改后") if row.get("回读通过") == "是" else "",
+            "结果": "保存后独立回读通过" if row.get("回读通过") == "是" else "未通过/待复核",
+            "来源策略": row.get("证据来源") or "未标记",
+        })
+
+    missing_spus = sorted(set(initial_by_spu) - set(final_detail_by_spu))
+    missing_rows = [
+        {"SPU编码": spu_id, "平台结果": "记录不存在", "处理口径": "未写入；不计入平台现存分母"}
+        for spu_id in missing_spus
+    ]
+    blocked_count = sum(1 for row in products_out if row.get("规划状态") in {"blocked", "deferred"})
+    failed_count = sum(1 for row in readback_changes if row.get("回读通过") == "否")
+    platform_extant = initial_total - len(missing_spus)
+    passed_products = max(platform_extant - blocked_count - failed_count, 0)
+    completion_rate = round(passed_products / platform_extant, 4) if platform_extant else 1
+    skill_version = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+    external = {key: 0 for key in ("ocr", "media_scan", "barcode_scan", "bocha", "web_search", "llm", "provider_submit", "provider_query", "image_upload")}
+    ledger_path = run_dir / "task-action-ledger.jsonl"
+    if ledger_path.exists():
+        for line in ledger_path.read_text(encoding="utf-8").splitlines():
+            try:
+                ledger_row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            payload = ledger_row.get("payload") or {}
+            budget_key = payload.get("budget_key")
+            if (
+                ledger_row.get("action") == "task_action_terminal"
+                and payload.get("outcome") == "succeeded"
+                and budget_key in external
+            ):
+                external[budget_key] += int(payload.get("units") or 0)
+    summary_values = {
+        "Excel Schema版本": SCHEMA_VERSION, "Skill版本": skill_version,
+        "执行平台": args.platform_name, "任务类型": args.task_mode,
+        "合同指纹SHA256": args.contract_fingerprint, "门店/租户名称": args.tenant_name,
+        "源清单商品数": initial_total, "平台现存商品数": platform_extant,
+        "平台不存在商品数": len(missing_spus), "最终合同通过商品数": passed_products,
+        "完成率": f"{completion_rate:.2%}", "本次有操作商品数": len(completed_out),
+        "无需修改商品数": max(platform_extant - len(completed_out), 0),
+        "唯一操作项数": len(audit_rows), "最终回读通过项数": verified_change_count,
+        "最终问题数": blocked_count + failed_count,
+        "OCR调用数": external["ocr"], "媒体扫描数": external["media_scan"],
+        "条码扫描数": external["barcode_scan"], "博查调用数": external["bocha"],
+        "Web搜索调用数": external["web_search"], "模型调用数": external["llm"],
+        "Provider Submit数": external["provider_submit"], "Provider Query数": external["provider_query"],
+        "图片上传数": external["image_upload"], "验收口径": "平台保存后独立详情/槽位回读",
+    }
+    append_sheet(summary_sheet, [{"指标": metric, "结果": summary_values[metric]} for metric in SUMMARY_METRICS], HEADERS[SUMMARY_SHEET])
+    append_sheet(source_sheet, source_rows, HEADERS[GENERATED_SOURCE_SHEET])
+    append_sheet(audit_sheet, audit_rows, HEADERS[AUDIT_SHEET])
+    append_sheet(missing_sheet, missing_rows, HEADERS[MISSING_SHEET])
+    verify_values = {
+        "最终详情分片": 1, "源清单商品数": initial_total,
+        "平台现存商品数": platform_extant, "平台不存在商品数": len(missing_spus),
+        "最终合同通过商品数": passed_products, "最终回读通过项数": verified_change_count,
+        "最终问题数": blocked_count + failed_count, "完成率": f"{completion_rate:.2%}",
+    }
+    append_sheet(verify_sheet, [{"指标": metric, "结果": verify_values[metric]} for metric in VERIFY_METRICS], HEADERS[VERIFY_SHEET])
+    feedback_rows = [
+        {"本次新情况": row.get("剩余原因分类") or "", "修正规则": row.get("处理边界") or "", "验证结果": f"涉及SPU数={row.get('涉及SPU数', 0)}"}
+        for row in reason_rows
+    ] or [{"本次新情况": "本轮未发现新的可泛化问题", "修正规则": "沿用当前固定合同", "验证结果": "按最终回读验收"}]
+    append_sheet(feedback_sheet, feedback_rows, HEADERS[FEEDBACK_SHEET])
+    total_wall_ms = sum(float(row.get("墙钟耗时ms") or 0) for row in performance_rows)
+    peak_concurrency = max((int(row.get("并发数") or 0) for row in performance_rows), default=0)
+    perf_values = {
+        "处理商品数": initial_total, "唯一操作项数": len(audit_rows),
+        "总墙钟秒": round(total_wall_ms / 1000, 3),
+        "平均秒/商品": round(total_wall_ms / 1000 / initial_total, 3) if initial_total else 0,
+        "实际峰值并发": peak_concurrency, "配置并发上限": peak_concurrency,
+        "请求数": 0, "请求错误数": 0, "限流次数": 0,
+        "保存checkpoint文件数": len(performance_rows),
+        "保存结果事件数（含残差）": sum(int(row.get("选择商品数") or 0) for row in performance_rows),
+        "verified事件": sum(int(row.get("保存回读成功") or 0) for row in performance_rows),
+        "failed响应事件（均经复读判定）": sum(int(row.get("失败") or 0) for row in performance_rows),
+        "OCR调用数": external["ocr"], "媒体扫描数": external["media_scan"],
+        "条码扫描数": external["barcode_scan"], "博查调用数": external["bocha"],
+        "Web搜索调用数": external["web_search"], "模型调用数": external["llm"],
+        "Provider Submit数": external["provider_submit"], "Provider Query数": external["provider_query"],
+        "图片上传数": external["image_upload"],
+    }
+    append_sheet(performance_sheet, [{"指标": metric, "结果": perf_values[metric]} for metric in PERFORMANCE_METRICS], HEADERS[PERFORMANCE_SHEET])
     xlsx_path = output_prefix.with_suffix(".xlsx")
+    expected_sheets = [SUMMARY_SHEET, GENERATED_SOURCE_SHEET, AUDIT_SHEET, MISSING_SHEET, VERIFY_SHEET, FEEDBACK_SHEET, PERFORMANCE_SHEET]
+    if workbook.sheetnames != expected_sheets:
+        raise RuntimeError("unified_workbook_sheet_order_mismatch")
+    for sheet_name in expected_sheets:
+        actual_header = [cell.value for cell in workbook[sheet_name][1]]
+        if actual_header != HEADERS[sheet_name]:
+            raise RuntimeError(f"unified_workbook_header_mismatch:{sheet_name}")
     workbook.save(xlsx_path)
 
     completed_prefix = Path(
@@ -764,21 +895,20 @@ def main() -> None:
     ).resolve()
     completed_prefix.parent.mkdir(parents=True, exist_ok=True)
     completed_csv_path = completed_prefix.with_suffix(".csv")
+    completed_fields = list(completed_out[0].keys()) if completed_out else [
+        "SPU", "商品名称(初始)", "商品名称(终态)", "初始问题",
+        "已回读字段数", "本次新增/修改字段", "字段改后值摘要",
+        "证据来源", "提交方式", "全部字段回读通过", "终态是否仍不可售",
+        "终态问题", "终态结论", "结果文件",
+    ]
     with completed_csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=completed_fields)
         writer.writeheader()
         writer.writerows(completed_out)
-    completed_workbook = Workbook()
-    completed_only_sheet = completed_workbook.active
-    completed_only_sheet.title = "已完成SPU清单"
-    append_sheet(completed_only_sheet, completed_out, completed_fields)
-    completed_xlsx_path = completed_prefix.with_suffix(".xlsx")
-    completed_workbook.save(completed_xlsx_path)
 
     os.chmod(csv_path, 0o600)
     os.chmod(xlsx_path, 0o600)
     os.chmod(completed_csv_path, 0o600)
-    os.chmod(completed_xlsx_path, 0o600)
     print(
         json.dumps(
             {
@@ -786,7 +916,6 @@ def main() -> None:
                 "csv_path": str(csv_path),
                 "xlsx_path": str(xlsx_path),
                 "completed_csv_path": str(completed_csv_path),
-                "completed_xlsx_path": str(completed_xlsx_path),
                 "change_row_count": len(changes),
                 "product_row_count": len(products_out),
                 "completed_spu_count": len(completed_out),

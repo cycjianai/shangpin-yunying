@@ -3,11 +3,12 @@
 - `platform_adapter=meituan`
 - 属性信息 `channel_attributes_only`：`planned`
 - 资质图 `qualification_images_only`：`planned`
-- 不可售治理 `unavailable_one_pass`：`planned`（目标合同已冻结，生产 writer 尚未注册）
+- 不可售治理 `unavailable_one_pass`：`implemented`（Chrome 插件/受管 CDP transport、官方 reader/writer/readback、
+  DeepSeek 保守字段计划、原图 OCR 证据门、checkpoint 与统一运营 Excel 已注册）
 
-这里的“美团”指直接登录美团商家平台，不是牵牛花中的美团渠道。本文件冻结已实测的一次过策略，但不等于
-允许真实写入。reader、planner、writer、readback、validator、checkpoint 和低敏回归未全部注册前固定零写入；
-不得调用 QNH writer，也不得把 QNH 的 `channelId=100` 当成美团直连适配器。
+这里的“美团”指直接登录美团商家平台，不是牵牛花中的美团渠道。`unavailable_one_pass` 只能调用本模块注册的
+reader、planner、writer、readback、validator、checkpoint 和统一 Excel 导出器；不得调用 QNH writer，也不得把
+QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 的模式继续固定零写入。
 
 ## 目录
 
@@ -60,6 +61,24 @@
 
 ## 3. 页面官方接口合同
 
+### 3.0 浏览器接管与页面识别
+
+按以下顺序选择 transport，选择结果写入 `session-identity.json`，运行中不得静默换轨：
+
+1. `chrome_extension_current_tab`：优先。通过 Codex Chrome 插件接管用户当前已登录 Chrome；只在已授权的当前标签页
+   或任务标签页内取得 scoped CDP，不启动新浏览器、不重复弹远程调试授权。
+2. `managed_cdp`：仅当插件不可用时使用。端点必须是本机 loopback、浏览器处于任务专用/空闲状态，并完成门店、
+   域名、登录态和目标集合身份校验；禁止把未知 9222/9272 端口当成用户当前浏览器。
+3. 两者都不可用时失败关闭；UI 视觉控制只用于登录、验证码或没有正式接口的人工确认，不作为批量 reader/writer。
+
+页面识别不能只看顶层标题。美团商品管家通常是顶层商家页 + `hashframe`，审核编辑又会打开 `iframe-modal`。
+必须同时验证：顶层域名、商品管家 frame 域名/路由、`wmPoiId`、可见门店以及页面官方模块。审核编辑正式内容为
+`/reuse/sc/product/page/detail/audit`；同会话初始化一个 worker 后，可用当前原生
+`originProductDetail.params.options` 对 cohort SPU 调用 `vP`，无需为每个商品新开标签页。
+
+导航后必须等待 `DOMContentLoaded` 和静默窗口，再确认 lazy chunk 已注册后只初始化一次。过早 require 模块会把空导出
+写入 webpack cache；该 worker 必须回收重建，不能在同一被污染页面反复轮询。
+
 ### 3.1 身份与读取
 
 - 当前页面必须是美团商家域，冻结 `wmPoiId + spuId + tab_id + document_epoch + fence`。
@@ -88,6 +107,8 @@ jn（新鲜完整商品）
 
 - 默认不删除、不覆盖、不重排原 `pictureList`、详情图和 `cpvGuidePicMap/cpvGuidePicList`。
 - 一个 SPU 的字段、详情图和 CPV 先合并为最终快照，只执行一次 final save。
+- 无论本次是否修改专项图，每次保存都必须把完整 `cpvGuidePicMap` 重新序列化为 `cpvGuidePicList`；只在
+  `cpv_updates` 非空时序列化会把既有专项图清空。
 - 保存前比较完整字段和图片摘要；非目标字段减少、主图顺序变化或 CPV 类型丢失时整条零保存。
 - final save 前持久化 write intent；请求已发送、已受理或结果未知后只回读，不自动再次保存。
 
@@ -193,6 +214,7 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
 - 只看 save code=0：详情变化但未触发复审，审核列表不下降。
 - 普通正则截断 `额定功率（W）` 和 `生产者（制造商）名称`。
 - 详情图复制裸 URL，平台仍报格式不合法。
+- 详情图从主图复用时必须逐 URL 去除旧查询参数并追加 `?w=1080&h=1080`，再做正式表单校验。
 - CPV 数组未 JSON stringify，官方 `$P` 丢弃专项图字段。
 - 包装标签与背签共用 key，provider job 或 CPV 类型串槽。
 - 普通主图冒充 3C、配料、纺织或包装材料，二审重新退回。

@@ -7,7 +7,7 @@
 | `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 不可售治理 `unavailable_one_pass` | 平台文件 |
 |---|---|---|---|---|
 | `qnh` | `implemented` | `implemented` | `implemented` | `platform-qnh.md` |
-| `meituan` | `planned` | `planned` | `planned`（目标合同已冻结） | `platform-meituan.md` |
+| `meituan` | `planned` | `planned` | `implemented` | `platform-meituan.md` |
 | `aoxiang` | `implemented` | `planned` | `planned` | `platform-aoxiang.md` |
 | `taobao_flash` | `planned` | `planned` | `planned` | `platform-taobao-flash.md` |
 

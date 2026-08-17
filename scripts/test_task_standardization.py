@@ -121,6 +121,20 @@ def record_fixture_actions(contract: dict) -> None:
 
 def main() -> int:
     results: dict[str, object] = {}
+    skill_source = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    governance_source = (ROOT / "references" / "repository-governance.md").read_text(
+        encoding="utf-8"
+    )
+    module_map_source = (ROOT / "references" / "platform-module-map.md").read_text(
+        encoding="utf-8"
+    )
+    assert "远端只允许保留\n`main`" in skill_source
+    assert "只有 `origin/main` 包含目标提交且远端仅剩 `main` 才算同步完成" in governance_source
+    for adapter in ("qnh", "meituan", "aoxiang", "taobao_flash"):
+        assert f"`{adapter}`" in module_map_source
+    for task_mode in ("channel_attributes_only", "qualification_images_only"):
+        assert f"`{task_mode}`" in module_map_source
+    results["single_main_and_platform_module_contract"] = True
     with tempfile.TemporaryDirectory(prefix="qnh-skill-golden-") as tmp:
         run_dir = Path(tmp)
         manifest = manifest_payload()

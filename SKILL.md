@@ -1,23 +1,30 @@
 ---
 name: qnh-fill-channel-unavailable
-description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，批量处理牵牛花或翱象平台的美团、淘宝闪购/饿了么渠道属性，也支持牵牛花渠道不可售与专项资质图治理。用户要求当前已登录平台做渠道属性 100% 填充、快速并发、标准运营审计表、断点续跑或复用跨平台经验时使用。
+description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息与资质图任务；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、标准运营审计表、断点续跑或复用跨平台经验时使用。
 ---
 
-# 多平台商品渠道治理 v3.6.8
+# 多平台商品渠道治理 v3.6.9
 
 ## 不可跳过的第一步
 
+仓库更新或同步 GitHub 前，完整阅读 [repository-governance.md](references/repository-governance.md)。远端只允许保留
+`main`；平台差异通过文件模块管理，不通过长期 Git 分支管理。
+
+先阅读 [platform-module-map.md](references/platform-module-map.md)，再只加载当前平台对应的一个模块文件。
 先冻结唯一 `platform_adapter` 与任务模式。不要把本 Skill 当作可以任意组合的能力清单：
 
-- 当前页面/请求主机为牵牛花时，`platform_adapter=qnh`；完整阅读
+- 当前页面/请求主机为牵牛花时，`platform_adapter=qnh`；完整阅读 [platform-qnh.md](references/platform-qnh.md) 和
   [task-mode-contract-v3.md](references/task-mode-contract-v3.md) 和
   [standard-task-contract.md](references/standard-task-contract.md)，再走下述 QNH 合同与固定动作入口。
-- 当前页面为翱象（`saas-retail.ele.me`）且接口为 `tc-supply-chain-portal.ele.me` 时，
-  `platform_adapter=aoxiang`、任务模式固定为 `channel_attributes_only`；完整阅读
-  [aoxiang-channel-contract-v1.md](references/aoxiang-channel-contract-v1.md)，不要调用 QNH 的 H5guard、租户合同或编辑页 writer。
+- 当前页面为美团商家平台时，`platform_adapter=meituan`；完整阅读 [platform-meituan.md](references/platform-meituan.md)。
+- 当前页面为翱象时，`platform_adapter=aoxiang`；完整阅读 [platform-aoxiang.md](references/platform-aoxiang.md)。
+- 当前页面为淘宝闪购商家平台时，`platform_adapter=taobao_flash`；完整阅读
+  [platform-taobao-flash.md](references/platform-taobao-flash.md)。
+
+模块状态不是完成能力：标记为 `planned` 的平台/任务必须零写入并报告缺少适配器，禁止借用其他平台 writer 冒充实现。
 
 在任何商品详情读取、外部调用或平台写入前完成该冻结。以下 `qnh_task_contract.py` 路由与合同命令只适用于
-`platform_adapter=qnh`。
+`platform_adapter=qnh`。其他平台必须使用各自模块注册的路由器与 writer。
 
 使用确定性路由器：
 

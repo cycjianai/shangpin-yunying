@@ -15,7 +15,10 @@ EVIDENCE_DISCOVERY = Path(__file__).with_name("evidence_discovery.py")
 FIELD_PLANNER = Path(__file__).with_name("deepseek_field_planner.py")
 CHECKPOINT_BUILDER = Path(__file__).with_name("build_operations_checkpoint.py")
 WORKBOOK_EXPORTER = Path(__file__).with_name("export_operations_workbook.mjs")
+QUALIFICATION_PREPARER = Path(__file__).parents[1] / "qualification_images" / "prepare_manifest.py"
+QUALIFICATION_IMPORTER = Path(__file__).parents[1] / "qualification_images" / "import_batch.mjs"
 PLATFORM_REFERENCE = ROOT / "references" / "platform-meituan.md"
+QUALIFICATION_REFERENCE = ROOT / "references" / "meituan-qualification-import.md"
 SKILL = ROOT / "SKILL.md"
 VERSION = ROOT / "VERSION"
 ALLOWED_ACTIONS = (
@@ -23,6 +26,8 @@ ALLOWED_ACTIONS = (
     "freeze_cohort",
     "read_audit_details",
     "plan_one_pass",
+    "prepare_qualification_manifest",
+    "qualification_batch",
     "save_canary",
     "save_batch",
     "independent_readback",
@@ -52,12 +57,15 @@ def contract_sources() -> dict[str, str]:
             SKILL,
             VERSION,
             PLATFORM_REFERENCE,
+            QUALIFICATION_REFERENCE,
             ENGINE,
             TRANSPORT,
             EVIDENCE_DISCOVERY,
             FIELD_PLANNER,
             CHECKPOINT_BUILDER,
             WORKBOOK_EXPORTER,
+            QUALIFICATION_PREPARER,
+            QUALIFICATION_IMPORTER,
             Path(__file__),
         )
     }

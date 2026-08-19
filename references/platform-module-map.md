@@ -12,6 +12,8 @@
 | `taobao_flash` | `planned` | `planned` | `planned` | `platform-taobao-flash.md` |
 
 `planned` 固定表示没有生产 writer：只允许做平台识别、只读能力盘点和适配器开发，不允许处理真实商品写入。
+美团 `unavailable_one_pass` 内部可以调用其已注册的本地资质图整理/导入动作；这不等于独立
+`qualification_images_only` writer 已实现。
 
 目标代码布局：
 

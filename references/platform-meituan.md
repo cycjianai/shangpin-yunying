@@ -146,6 +146,10 @@ jn（新鲜完整商品）
 
 ## 6. 资质图与 CPV 合同
 
+用户已经整理本地真实资料并要求批量导入当前不可售 cohort 时，完整阅读
+[meituan-qualification-import.md](meituan-qualification-import.md)，先生成资料表和失败关闭 manifest，再按 canary
+与独立回读门执行。该入口仍属于 `unavailable_one_pass`，不能借此绕过能力表启用独立 `qualification_images_only`。
+
 - 缺图类型以实时 `lackQuaInfo.quaPicType + quaPicTitle` 为准，不能只靠历史中文映射。
 - `cpvGuidePicMap` 与 `cpvGuidePicList` 必须合并；后者按官方合同以 JSON 字符串进入完整表单。
 - 即使已有 CPV，只要审核仍要求该类型且规范化后的 CPV 字符串不同，也进入一次完整保存，防止“页面有图但
@@ -154,7 +158,6 @@ jn（新鲜完整商品）
 - 缺专项图不得拿普通主图冒充。配料营养、包装标签、背签、尺寸和纺织图走项目正式提示词与 provider 状态机。
 - 同一业务键 submit 前先查 claim；取得 `provider_task_id` 后只 query 原任务。提示词变化、超时、重启、审核未退出
   或制品拒绝都不能自动创建第二个付费任务。
-- 3C 证书、化妆品/医疗备案、注册证、许可证、检验报告和公章材料禁止生成；没有真实材料时阻塞。
 
 ## 7. 保存、复审与强回读
 

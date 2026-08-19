@@ -4,6 +4,41 @@
 写入当前不可售治理 cohort。它不把独立 `qualification_images_only` 模块升级为已实现，也不能脱离当前审核原因处理
 任意商品。
 
+## 运营自助 Python 工具
+
+不需要 Codex 介入时，直接运行：
+
+```bash
+python3 scripts/platforms/meituan/qualification_images/meituan_qualification_tool.py
+```
+
+默认打开中文菜单，任务数据和回执写入 `~/Documents/美团资质图导入/`：
+
+1. `启动专用浏览器`：以只监听 `127.0.0.1:9333` 的独立 Chrome 用户目录启动，不读取或关闭日常 Chrome；运营自行登录。
+2. `扫描哪些商品需要资质图`：只读冻结美团“审核失败”列表，生成 `待补资质清单.csv`，逐行列出 SPU、商品名、图片类型、资料名称和平台说明。
+3. `按图片目录生成资料核验表`：按下述文件名规则生成 `qualification-evidence.csv`，由资料核验人补齐真实来源。
+4. `校验资料并生成导入清单`：输出 `qualification-import-review.csv`；存在阻塞项时整批零写入。
+5. `导入 1 个商品测试`：上传、官方保存并独立回读一个 SPU。只有同一 manifest 的 canary 状态为 `readback_verified` 才开放全量。
+6. `批量导入 / 断点续跑`：实时显示 SPU 和图片进度；已回读成功的 SPU 自动跳过。
+7. `查看进度和状态回执`：生成 `qualification-status.csv`。`图片上传完成` 不是成功，只有“保存并回读验证成功”才算成功。
+
+命令行模式也可单独调用：
+
+```bash
+TOOL=scripts/platforms/meituan/qualification_images/meituan_qualification_tool.py
+python3 "$TOOL" browser-start
+python3 "$TOOL" scan
+python3 "$TOOL" template --input-dir "/path/to/images"
+python3 "$TOOL" build
+python3 "$TOOL" canary
+python3 "$TOOL" import
+python3 "$TOOL" status
+```
+
+如需改变任务目录或端口，把全局参数放在子命令前，例如
+`python3 "$TOOL" --run-dir "/path/to/run" --cdp-url http://127.0.0.1:9444 scan`。
+工具保留 `operator-events.jsonl`、逐图上传回执、write intent、checkpoint、summary、失败原因和逐 SPU CSV，支持审计与续跑。
+
 ## 文件名与资料表
 
 图片固定命名：

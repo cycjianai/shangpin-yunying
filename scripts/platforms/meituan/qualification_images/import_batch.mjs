@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import {
   buildAuditUrl,
-  freezeCohort,
   prepareAuditWorker,
   readAuditDetail,
   saveQualificationPlan,
@@ -107,7 +106,6 @@ export async function runQualificationImport({
   runDir,
   readyOnly = false,
   canaryOnly = false,
-  onProgress = () => {},
 } = {}) {
   const absoluteManifest = path.resolve(String(manifestPath || ''));
   const absoluteRunDir = path.resolve(String(runDir || ''));
@@ -115,7 +113,6 @@ export async function runQualificationImport({
   const wmPoiId = String(manifest.wm_poi_id || '');
   if (!/^\d{5,20}$/.test(wmPoiId)) throw new Error('qualification_manifest_wm_poi_id_invalid');
   const { groups, blockedCount } = groupReadyItems(manifest, readyOnly);
-  onProgress({ event: 'import_started', target_spu: groups.size, ready_files: Number(manifest.ready_count || 0) });
   const manifestSha = sha256(await fs.readFile(absoluteManifest));
   const checkpointPath = path.join(absoluteRunDir, 'qualification-import-checkpoint.json');
   let checkpoint = { schema: 'meituan-qualification-import-checkpoint-v1', manifest_sha256: manifestSha, items: {} };
@@ -126,14 +123,10 @@ export async function runQualificationImport({
     if (error?.code !== 'ENOENT') throw error;
   }
   await fs.mkdir(absoluteRunDir, { recursive: true });
-  let processed = [...groups.keys()].filter((spuId) => checkpoint.items?.[spuId]?.status === 'readback_verified').length;
+  let processed = 0;
   for (const [spuId, items] of groups) {
-    if (checkpoint.items?.[spuId]?.status === 'readback_verified') {
-      onProgress({ event: 'spu_skipped_verified', spu_id: spuId, completed: processed, total: groups.size });
-      continue;
-    }
+    if (checkpoint.items?.[spuId]?.status === 'readback_verified') continue;
     if (canaryOnly && processed >= 1) break;
-    onProgress({ event: 'spu_started', spu_id: spuId, completed: processed, total: groups.size, files: items.length });
     const auditUrl = buildAuditUrl('https://shangoue.meituan.com/reuse/sc/product/page/detail/audit', spuId, wmPoiId);
     await prepareAuditWorker({ tab, cdp, auditUrl, expectedSpuId: spuId, expectedWmPoiId: wmPoiId });
     const before = await readAuditDetail({ cdp });
@@ -144,13 +137,7 @@ export async function runQualificationImport({
       if (!configured.has(pictureType) && ![3, 4, 5, 6, 7, 8, 10, 11, 13, 14].includes(pictureType)) throw new Error(`qualification_picture_type_not_supported:${pictureType}`);
     }
     const receipts = [];
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      onProgress({ event: 'upload_started', spu_id: spuId, file_name: item.file_name, file_index: index + 1, file_total: items.length });
-      const receipt = await uploadReceipt({ cdp, runDir: absoluteRunDir, item, wmPoiId });
-      receipts.push({ item, receipt });
-      onProgress({ event: 'upload_completed', spu_id: spuId, file_name: item.file_name, file_index: index + 1, file_total: items.length });
-    }
+    for (const item of items) receipts.push({ item, receipt: await uploadReceipt({ cdp, runDir: absoluteRunDir, item, wmPoiId }) });
     const byType = new Map();
     for (const { item, receipt } of receipts) {
       const key = Number(item.picture_type);
@@ -173,8 +160,6 @@ export async function runQualificationImport({
       checkpoint.items[spuId] = { status: verification.ok ? 'readback_verified' : 'unknown_previous_write_requires_review', verification };
       await writeJson(checkpointPath, checkpoint);
       if (!verification.ok) throw new Error(`qualification_previous_write_unknown:${spuId}`);
-      processed += 1;
-      onProgress({ event: 'spu_verified', spu_id: spuId, completed: processed, total: groups.size, resumed: true });
       continue;
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
@@ -187,7 +172,6 @@ export async function runQualificationImport({
       qua_pic_title: update.title,
       comment: update.reason,
     }));
-    onProgress({ event: 'save_started', spu_id: spuId });
     const save = await saveQualificationPlan({ cdp, plan, issues, writeIntentPath: existingIntent });
     const after = await readAuditDetail({ cdp });
     const verification = verifyReadback(after, updates);
@@ -207,11 +191,7 @@ export async function runQualificationImport({
     };
     await writeJson(checkpointPath, checkpoint);
     processed += 1;
-    if (!ok) {
-      onProgress({ event: 'spu_failed', spu_id: spuId, completed: processed, total: groups.size, status: checkpoint.items[spuId].status });
-      throw new Error(`qualification_readback_failed:${spuId}`);
-    }
-    onProgress({ event: 'spu_verified', spu_id: spuId, completed: processed, total: groups.size, resumed: false });
+    if (!ok) throw new Error(`qualification_readback_failed:${spuId}`);
   }
   const values = Object.values(checkpoint.items || {});
   const summary = {
@@ -225,7 +205,6 @@ export async function runQualificationImport({
     checkpoint: checkpointPath,
   };
   await writeJson(path.join(absoluteRunDir, 'qualification-import-summary.json'), summary);
-  onProgress({ event: 'import_completed', ...summary });
   return summary;
 }
 
@@ -245,7 +224,7 @@ function argsOf(argv) {
     const token = argv[index];
     if (!token.startsWith('--')) continue;
     const key = token.slice(2);
-    if (['ready-only', 'canary-only', 'scan-only'].includes(key)) out[key] = true;
+    if (['ready-only', 'canary-only'].includes(key)) out[key] = true;
     else out[key] = argv[++index];
   }
   return out;
@@ -253,28 +232,11 @@ function argsOf(argv) {
 
 async function cli() {
   const args = argsOf(process.argv.slice(2));
-  if (!args['run-dir'] || !args['cdp-url'] || (!args['scan-only'] && !args.manifest)) throw new Error('usage:--run-dir DIR --cdp-url http://127.0.0.1:PORT [--scan-only | --manifest FILE]');
+  if (!args.manifest || !args['run-dir'] || !args['cdp-url']) throw new Error('usage:--manifest FILE --run-dir DIR --cdp-url http://127.0.0.1:PORT');
   if (!/^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(args['cdp-url'])) throw new Error('cdp_url_must_be_loopback');
   const { chromium } = await loadPlaywright();
   const browser = await chromium.connectOverCDP(args['cdp-url']);
   const pages = browser.contexts().flatMap((context) => context.pages()).filter((page) => page.url().includes('shangoue.meituan.com'));
-  if (!pages.length) throw new Error('logged_in_meituan_page_not_found');
-  const emit = (event) => console.log(JSON.stringify(event));
-  if (args['scan-only']) {
-    const managerPages = [];
-    for (const candidate of pages) {
-      try {
-        if (await candidate.evaluate(() => Boolean(document.getElementById('hashframe')))) managerPages.push(candidate);
-      } catch {}
-    }
-    if (managerPages.length !== 1) throw new Error('meituan_manager_page_ambiguous_or_missing');
-    emit({ event: 'scan_started' });
-    const managerPage = managerPages[0];
-    const managerSession = await managerPage.context().newCDPSession(managerPage);
-    const manifest = await freezeCohort({ cdp: { send: (method, params) => managerSession.send(method, params) }, runDir: path.resolve(args['run-dir']) });
-    emit({ event: 'scan_completed', wm_poi_id: manifest.wm_poi_id, products: manifest.unique_spu_count, manifest: path.join(path.resolve(args['run-dir']), 'manifest.json') });
-    return;
-  }
   const identities = new Set(pages.flatMap((page) => page.frames().map((frame) => {
     try { return new URL(frame.url()).searchParams.get('wmPoiId'); } catch { return ''; }
   })).filter(Boolean));
@@ -295,9 +257,8 @@ async function cli() {
     runDir: args['run-dir'],
     readyOnly: Boolean(args['ready-only']),
     canaryOnly: Boolean(args['canary-only']),
-    onProgress: emit,
   });
-  emit({ event: 'summary', ...result });
+  console.log(JSON.stringify(result, null, 2));
   await page.close();
 }
 

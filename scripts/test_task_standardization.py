@@ -146,7 +146,7 @@ def main() -> int:
         assert f"`{task_mode}`" in module_map_source
     results["single_main_and_platform_module_contract"] = True
     for marker in (
-        "资质图 `qualification_images_only`：`planned`",
+        "planned`（目标合同已冻结，生产 writer 尚未注册）",
         "optimizedInfoList",
         "lackQuaInfo",
         "issueText",

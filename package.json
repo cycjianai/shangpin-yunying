@@ -1,0 +1,22 @@
+{
+  "name": "qnh-fill-channel-unavailable",
+  "version": "3.11.0",
+  "description": "Versioned runtime dependencies and release validation for the QNH channel governance skill.",
+  "private": true,
+  "scripts": {
+    "test": "python3 quick_validate.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cycjianai/qnh-fill-channel-unavailable.git"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/cycjianai/qnh-fill-channel-unavailable/issues"
+  },
+  "homepage": "https://github.com/cycjianai/qnh-fill-channel-unavailable#readme",
+  "dependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}

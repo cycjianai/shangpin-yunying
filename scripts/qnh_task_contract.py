@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.3.9"
+CONTRACT_VERSION = "qnh-task-contract-v3.4.0"
 EXCEL_SCHEMA_VERSION = json.loads(
     (SKILL_ROOT / "scripts" / "operations_workbook_schema.json").read_text(encoding="utf-8")
 )["schema_version"]
@@ -145,6 +145,30 @@ ACTION_SPECS: dict[str, dict[str, Any]] = {
     "provider_query": _spec(None, budget_key="provider_query"),
     "plugin_task_execute": _spec(None),
     "plugin_readback": _spec(None),
+    "plugin_history_freeze": _spec(None),
+    "plugin_copy_canary_execute": _spec(None),
+    "plugin_copy_retry_execute": _spec(None),
+    "plugin_copy_readback": _spec(None),
+    "build_copy_retry_manifest": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py", "manifest"
+    ),
+    "extract_copy_mapping": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py", "extract-result"
+    ),
+    "validate_copy_canary": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py", "validate", "--allow-subset"
+    ),
+    "validate_copy_mapping": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py",
+        "validate",
+        forbidden_tokens=("--allow-subset",),
+    ),
+    "copy_completion_gate": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py", "completion"
+    ),
+    "handoff_copy_workbook": _spec(
+        "scripts/platforms/qnh/copy_history_retry/adapter.py", "handoff"
+    ),
 }
 
 COMMON_ACTIONS = {
@@ -241,6 +265,19 @@ MODE_ALLOWED_ACTIONS: dict[str, set[str]] = {
         "completion_gate",
         "handoff_workbook",
     },
+    "copy_history_retry": COMMON_ACTIONS
+    | {
+        "plugin_history_freeze",
+        "plugin_copy_canary_execute",
+        "plugin_copy_retry_execute",
+        "plugin_copy_readback",
+        "build_copy_retry_manifest",
+        "extract_copy_mapping",
+        "validate_copy_canary",
+        "validate_copy_mapping",
+        "copy_completion_gate",
+        "handoff_copy_workbook",
+    },
 }
 
 MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
@@ -274,6 +311,15 @@ MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
         "export_workbook",
         "validate_workbook",
     ],
+    "copy_history_retry": [
+        "session_preflight",
+        "plugin_history_freeze",
+        "plugin_copy_canary_execute",
+        "plugin_copy_retry_execute",
+        "plugin_copy_readback",
+        "extract_copy_mapping",
+        "validate_copy_mapping",
+    ],
 }
 
 MODE_DEFAULT_BUDGETS: dict[str, dict[str, int]] = {
@@ -281,6 +327,7 @@ MODE_DEFAULT_BUDGETS: dict[str, dict[str, int]] = {
     "unavailable_one_pass": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
     "qualification_images_only": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
     "plugin_attribute_fill": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
+    "copy_history_retry": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
 }
 
 CHANNEL_FORBIDDEN_ARTIFACT_GLOBS = [
@@ -378,6 +425,11 @@ def route_request(request_text: str) -> dict[str, Any]:
         r"插件.*(?:商品属性全平台填充|商品属性填充.?资质图|属性填充)|(?:商品属性全平台填充|商品属性填充.?资质图).*插件",
         text,
     )
+    copy_history_retry = _contains(
+        r"(?:原点搬品助手|搬品助手|搬品).{0,24}(?:历史|记录|失败).{0,24}(?:新增|重试|恢复|重新)|"
+        r"(?:历史|记录|失败).{0,24}(?:搬品助手|搬品).{0,24}(?:新增|重试|恢复|重新)",
+        text,
+    )
     unavailable = _contains(r"渠道不可售|不可售|下架|审核报错|退出不可售|变成可售", text)
     qualification = _contains(
         r"资质图|专项图|配料.{0,4}图|营养.{0,6}图|背签|包装标签|尺寸图|吊牌|洗唛",
@@ -399,6 +451,8 @@ def route_request(request_text: str) -> dict[str, Any]:
     )
 
     signals = []
+    if copy_history_retry:
+        signals.append("copy_history_retry")
     if plugin:
         signals.append("plugin_attribute_fill")
     if unavailable:
@@ -408,7 +462,10 @@ def route_request(request_text: str) -> dict[str, Any]:
     if attributes:
         signals.append("channel_attributes_only")
 
-    if explicit_channel_only and not plugin:
+    if copy_history_retry:
+        mode = "copy_history_retry"
+        reason = "explicit_copy_history_failure_retry"
+    elif explicit_channel_only and not plugin:
         mode = "channel_attributes_only"
         reason = "explicit_channel_only_scope"
     elif plugin:

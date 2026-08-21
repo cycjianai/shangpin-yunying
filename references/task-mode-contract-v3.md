@@ -1,6 +1,6 @@
 # QNH 任务模式合同 v3
 
-合同 ID：`qnh-task-contract-v3.3.8`。
+合同 ID：`qnh-task-contract-v3.4.0`。
 
 ## 1. 先路由，后读取
 
@@ -12,7 +12,8 @@
 2. 用户明确要求处理“不可售、下架、审核报错、从不可售列表退出”时固定为 `unavailable_one_pass`。
 3. 用户明确说“只处理资质图/专项图/配料营养图/背签/包装标签/尺寸图/吊牌洗唛”时固定为 `qualification_images_only`。
 4. 用户明确要求运行或修改插件的商品属性功能时固定为 `plugin_attribute_fill`，不得偷换为 CDP 直连批处理。
-5. 同时命中多个模式且没有“只/仅”限定，或既没有模式信号也没有“SPU 表格信息填充”上下文时，返回 `ambiguous_mode`，在用户明确范围前零商品读取、零外部调用、零平台写入。
+5. 用户明确要求把原点搬品助手历史记录中的失败商品重新新增、恢复或重试时，固定为 `copy_history_retry`。
+6. 同时命中多个模式且没有“只/仅”限定，或既没有模式信号也没有“SPU 表格信息填充”上下文时，返回 `ambiguous_mode`，在用户明确范围前零商品读取、零外部调用、零平台写入。
 
 `task_mode` 在同一 run-dir 内不可修改。用户扩大范围时必须新建 run-dir 和新合同；旧 run 的收据、计划、checkpoint 与动作日志不得迁移。
 
@@ -24,6 +25,7 @@
 | `unavailable_one_pass` | 按逐 SPU 审核原文处理并区分物化与审核退出 | `run-contract-541`、错误矩阵、普通字段、合规图片、审核反馈闭环 | 跨 SPU 猜事实、伪造法定材料、重复 provider submit、重复 final save |
 | `qualification_images_only` | 只处理用户指定的图片槽位 | 槽位审计、同 SPU 证据、正式提示词、一次 submit、上传、保存、槽位回读 | 普通字段全量补齐、不可售原因扩张、法定证照生图、无预算 provider submit |
 | `plugin_attribute_fill` | 运行/验收插件自己的商品属性链路 | 插件任务、1→10→100 实机门、字段回读、内存与交付率验证 | 改走 CDP 直连替代插件、修改无关插件功能、复用直连并发模型 |
+| `copy_history_retry` | 原失败旧 SPU 各自得到唯一新主档 SPU | 原结果冻结、成员门、1 条 canary、插件新增、主档独立回读、9 列映射表 | 非清单商品、宽泛按钮选择器、未知结果自动重发、静默删除重复主档 |
 
 `channel_attributes_only` 的硬预算永远是：`ocr=0`、`media_scan=0`、`barcode_scan=0`、`bocha=0`、`web_search=0`、`llm=0`、`provider_submit=0`、`provider_query=0`、`image_upload=0`。即使这些能力在同一 Skill 中存在，也不得调用。
 

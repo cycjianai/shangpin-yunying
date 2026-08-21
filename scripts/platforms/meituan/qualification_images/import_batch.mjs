@@ -263,8 +263,14 @@ async function cli() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
-  cli().catch((error) => {
-    console.error(JSON.stringify({ ok: false, error: `${error.name}:${error.message}` }));
-    process.exitCode = 2;
-  });
+  cli()
+    .catch((error) => {
+      console.error(JSON.stringify({ ok: false, error: `${error.name}:${error.message}` }));
+      process.exitCode = 2;
+    })
+    .finally(() => {
+      // connectOverCDP() 的底层 WebSocket 不会自动断开，事件循环永远不会自然清空；
+      // 不显式退出，父进程（run_import_process 的 process.poll()）会永远等不到子进程结束。
+      process.exit(process.exitCode ?? 0);
+    });
 }

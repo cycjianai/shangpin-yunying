@@ -1,6 +1,6 @@
 # 标准化任务外壳
 
-本合同由 `qnh-task-contract-v3.3.9` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
+本合同由 `qnh-task-contract-v3.4.0` 约束。每个 run 必须先冻结唯一 `task_mode`；模式之外的阶段不得因为
 “同一个 Skill 也支持”而启动。全部 canonical 动作通过 `run_task_action.py`，最终交付必须通过对应机器完成门。
 
 ## 1. 会话启动
@@ -12,6 +12,7 @@
 - 只有用户明确要求新开，或所有旧会话均忙碌、不健康、登录失效、身份不明时，才创建新的 profile、display、CDP、VNC 和 noVNC；全部仅监听 loopback。
 - 无论复用还是新建，每个任务都必须新建 run-dir、manifest、checkpoint 和审计表。复用时只继承登录窗口，绝不继承旧任务 SPU、租户数据、provider receipt、write intent、保存收据或完成结论；`preflight` 必须重新证明当前 tenant/store/name/profile/CDP 一致。
 - 用户没有明确要求原点账号时，只打开牵牛花，不打开原点或插件页面。
+- `copy_history_retry` 只复用当前牵牛花页中已加载的原点搬品助手；原失败清单来自用户点名的下载记录，不打开其他原点账号页。
 
 ## 2. 100% 完成口径
 
@@ -77,3 +78,6 @@
   仍不得交付；PoC、只读复核、另一个 run 或人工按修改时间挑出的 XLSX 都不是权威执行表。
 - 历史聚合审计缺项时，允许从同租户逐商品结果补齐，但每个结果必须满足顶层 verified、requested/verification
   一一对应且逐字段 verified。只有 plan、preview、保存响应或部分回读的旧文件固定拒绝，不能把“曾计划”写成“曾执行”。
+
+`copy_history_retry` 的交付是专用 9 列映射工作簿，不进入属性/资质统一 7 表 Schema。所有 ID 与条码按文本保存；每个
+目标 SPU/SKU 必须先从当前主档独立回读，再由专用 handoff 校验工作簿 SHA256、列顺序、源 SPU 数和视觉验证收据。

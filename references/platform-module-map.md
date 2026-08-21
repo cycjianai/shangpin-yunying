@@ -4,12 +4,12 @@
 任务合同、审计、统一运营 Excel Schema、完成门和交付门。所有已实现模块必须把不同 checkpoint 映射为同一
 `product-governance-operations-workbook-v1`，不得定义平台专属运营表。
 
-| `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 不可售治理 `unavailable_one_pass` | 平台文件 |
-|---|---|---|---|---|
-| `qnh` | `implemented` | `implemented` | `implemented` | `platform-qnh.md` |
-| `meituan` | `planned` | `planned` | `implemented` | `platform-meituan.md` |
-| `aoxiang` | `implemented` | `planned` | `planned` | `platform-aoxiang.md` |
-| `taobao_flash` | `planned` | `planned` | `planned` | `platform-taobao-flash.md` |
+| `platform_adapter` | 属性信息 `channel_attributes_only` | 资质图 `qualification_images_only` | 不可售治理 `unavailable_one_pass` | 搬品失败重试 `copy_history_retry` | 平台文件 |
+|---|---|---|---|---|---|
+| `qnh` | `implemented` | `implemented` | `implemented` | `implemented` | `platform-qnh.md` |
+| `meituan` | `planned` | `planned` | `implemented` | `planned` | `platform-meituan.md` |
+| `aoxiang` | `implemented` | `planned` | `planned` | `planned` | `platform-aoxiang.md` |
+| `taobao_flash` | `planned` | `planned` | `planned` | `planned` | `platform-taobao-flash.md` |
 
 `planned` 固定表示没有生产 writer：只允许做平台识别、只读能力盘点和适配器开发，不允许处理真实商品写入。
 美团 `unavailable_one_pass` 内部可以调用其已注册的本地资质图整理/导入动作；这不等于独立
@@ -21,7 +21,7 @@
 scripts/
   core/                         # manifest、合同、审计、Excel、完成/交付门
   platforms/
-    qnh/{attributes,qualification_images,unavailable_one_pass}/
+    qnh/{attributes,qualification_images,unavailable_one_pass,copy_history_retry}/
     meituan/{attributes,qualification_images,unavailable_one_pass}/
     aoxiang/{attributes,qualification_images,unavailable_one_pass}/
     taobao_flash/{attributes,qualification_images,unavailable_one_pass}/

@@ -142,6 +142,7 @@ def main() -> int:
         "channel_attributes_only",
         "qualification_images_only",
         "unavailable_one_pass",
+        "copy_history_retry",
     ):
         assert f"`{task_mode}`" in module_map_source
     results["single_main_and_platform_module_contract"] = True
@@ -255,6 +256,7 @@ def main() -> int:
             ("对不可售表里的SPU进行信息填充", "unavailable_one_pass"),
             ("只处理这些SPU的配料营养图和背签图", "qualification_images_only"),
             ("直接用插件跑商品属性全平台填充并验收", "plugin_attribute_fill"),
+            ("把原点搬品助手历史记录里失败的36个商品重新新增到主档", "copy_history_retry"),
         ):
             routed_mode = run(
                 PYTHON,

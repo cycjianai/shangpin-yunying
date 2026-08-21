@@ -1,9 +1,9 @@
 ---
 name: qnh-fill-channel-unavailable
-description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息、资质图与不可售治理任务；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、不可售一次过、标准运营审计表、断点续跑或复用跨平台经验时使用。
+description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息、资质图、不可售治理，以及牵牛花原点搬品助手历史失败重试；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、不可售一次过、失败搬品重试、标准运营审计表或断点续跑时使用。
 ---
 
-# 多平台商品渠道治理 v3.10.0
+# 多平台商品渠道治理 v3.11.0
 
 ## 不可跳过的第一步
 
@@ -32,13 +32,14 @@ description: 以版本化平台适配器、任务模式、原生接口写回、�
 python3 scripts/qnh_task_contract.py route --request-text "$REQUEST_SUMMARY"
 ```
 
-路由结果为 `ambiguous_mode` 时暂停副作用并让用户明确范围。模式只允许以下四种：
+路由结果为 `ambiguous_mode` 时暂停副作用并让用户明确范围。模式只允许以下五种：
 用户提供表格/Excel/CSV 中的 SPU 并要求“信息填充/补齐信息”时，若没有不可售、图片或插件的明确目标，按 `channel_attributes_only` 路由；不要再把这类请求当作模式缺失。
 
 - `channel_attributes_only`：指定 SPU 的渠道类目属性 100% 结构填充。
 - `unavailable_one_pass`：逐 SPU 审核原因治理并追踪是否退出不可售。
 - `qualification_images_only`：只处理用户指定的专项/资质图片槽位。
 - `plugin_attribute_fill`：运行或优化插件自己的属性填充链路，不改走 CDP 直连冒充插件结果。
+- `copy_history_retry`：只重试用户点名的原点搬品助手历史记录中失败的新增商品，并回读旧→新 SPU/SKU/条码映射。
 
 用户提供 SPU Excel/CSV 时，先用固定脚本生成只读 manifest；再创建不可变合同：
 
@@ -77,6 +78,9 @@ python3 scripts/qnh_task_contract.py create \
 - `plugin_attribute_fill`：完整阅读
   [channel-attribute-contract-v2.md](references/channel-attribute-contract-v2.md)；同时遵守项目 `AGENTS.md`、
   `docs/pitfalls.md` 和插件 1→10→100 实机门。不得修改无关稳定功能。
+- `copy_history_retry`：完整阅读
+  [copy-history-retry-contract-v1.md](references/copy-history-retry-contract-v1.md)。不得读取或重试原失败清单之外的历史商品；
+  不得把插件结果表当作主档独立回读。
 
 ## 固定动作启动器
 
@@ -385,12 +389,21 @@ python3 scripts/run_task_action.py \
 实际运行插件并以插件任务、平台保存和独立字段回读验收。不得用直连脚本的成功冒充插件成功。页面准备窗口、
 编辑页峰值、Chrome RSS、交付率和填充率按 1→10→100 逐级验证；任一级未达到 100% 就停止扩量并修复唯一根因。
 
+### `copy_history_retry`
+
+先从用户点名的原始结果表 `错误明细` 冻结失败旧 SPU，使用
+`scripts/platforms/qnh/copy_history_retry/adapter.py manifest` 生成清单并创建新合同。页面动作只允许精确绑定历史弹层、
+manifest 成员和对应“新增”按钮；先做 1 条 canary，下载结果并从当前主档独立回读后再处理剩余成员。任何非清单 SPU、
+目标 ID 缺失、未知写结果或重复目标 SPU 都立即停止。最终用同一适配器提取/验证映射、运行完成门和工作簿交付门；
+任务外重复主档只能另开清理任务并在删除前取得用户确认。
+
 ## 精确 Excel 与完成门
 
-所有平台与任务模式必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)，并使用唯一机器 Schema
+属性信息、资质图与不可售任务必须完整阅读 [excel-schema-v1.md](references/excel-schema-v1.md)，并使用唯一机器 Schema
 `scripts/operations_workbook_schema.json`。牵牛花、美团、翱象、淘宝闪购的属性信息与资质图任务必须交付完全相同的
 7 张工作表、表头、汇总指标及字段顺序；每轮只允许商品、执行前值、处理值、回读值、数量、耗时和策略等数据变化。
 平台模块不得增加专属工作表或改字段名，不适用指标填 0。资质图将图片槽位映射为字段 ID/名，仍进入同一字段级审计。
+`copy_history_retry` 不是属性/资质治理，按其专用合同交付图 2 的固定 9 列映射表，不向统一 7 表工作簿新增平台字段。
 
 固定文件名为
 `MMDD{实时租户名称}{源清单唯一SPU数}.xlsx`。源工作簿只读；统一回传表只生成 canonical 7 张工作表，并按 SPU

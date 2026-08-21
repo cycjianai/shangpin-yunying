@@ -8,49 +8,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from qualification_image_policy import load_qualification_image_policy
 
-ASSET_POLICIES: dict[str, dict[str, Any]] = {
-    "back_label": {
-        "audit_tokens": ("缺少背签图",),
-        "exclude_tokens": ("化妆品备案",),
-        "slot_tokens": ("背签",),
-        "default_type": 8,
-        "label": "背签图",
-        "required_fields": ["执行标准号", "生产企业信息", "主要原材料或背签信息"],
-    },
-    "package_label": {
-        "audit_tokens": ("缺少包装标签图",),
-        "exclude_tokens": (),
-        "slot_tokens": ("包装标签",),
-        "default_type": 3,
-        "label": "包装标签图",
-        "required_fields": ["包装标签", "关键说明文字", "规格或条码"],
-    },
-    "textile_label": {
-        "audit_tokens": ("吊牌", "洗唛"),
-        "exclude_tokens": (),
-        "slot_tokens": ("吊牌", "洗唛"),
-        "default_type": 7,
-        "label": "吊牌洗唛图",
-        "required_fields": ["执行标准号", "安全类别", "面料成分含量", "面料成分"],
-    },
-    "size_picture": {
-        "audit_tokens": ("缺少尺寸图",),
-        "exclude_tokens": (),
-        "slot_tokens": ("尺寸图",),
-        "default_type": 13,
-        "label": "尺寸图",
-        "required_fields": ["商品主体", "完整尺寸标注", "尺寸单位", "型号或规格"],
-    },
-}
-
-PROMPT = """为商品“{title}”生成一张用于美团审核的{label}。
-必须清晰展示：{required_fields}。
-要求：
-1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。
-2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。
-3. 背景干净，不要促销元素，不要夸张修饰。
-4. 所有关键信息必须完整落在画面内，适合平台审核查看。"""
+QUALIFICATION_IMAGE_POLICY = load_qualification_image_policy()
+ASSET_POLICIES: dict[str, dict[str, Any]] = QUALIFICATION_IMAGE_POLICY["asset_builders"][
+    "formal_assets"
+]
+DEFAULT_BATCH_LIMIT = int(QUALIFICATION_IMAGE_POLICY["generation"]["default_batch_limit"])
+PROMPT = str(QUALIFICATION_IMAGE_POLICY["asset_builders"]["formal_asset_prompt_template"])
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--selection-output")
     parser.add_argument("--tenant-scope", required=True)
     parser.add_argument("--asset-type", choices=sorted(ASSET_POLICIES), required=True)
-    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--limit", type=int, default=DEFAULT_BATCH_LIMIT)
     return parser.parse_args()
 
 

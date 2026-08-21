@@ -57,6 +57,8 @@
 
 生成式图片只能用于非监管类视觉，且不能生成未经实物证据支持的标签事实。CCC、医疗/化妆品
 注册备案、检验报告、公章、许可证等官方材料永远不得生成或冒充；已有真实材料可按上述条件复用。
+所有可维护的资质图生成、真实材料 OCR、上传和写回限制统一由
+`scripts/qualification_image_policy.json` 执行；字段说明见 `qualification-image-policy.md`。
 
 ## LLM 使用边界
 

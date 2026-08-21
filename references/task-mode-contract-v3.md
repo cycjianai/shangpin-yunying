@@ -1,6 +1,6 @@
 # QNH 任务模式合同 v3
 
-合同 ID：`qnh-task-contract-v3.4.0`。
+合同 ID：`qnh-task-contract-v3.5.0`。
 
 ## 1. 先路由，后读取
 
@@ -66,6 +66,7 @@ python3 scripts/run_task_action.py \
 `task-contract.json` 至少冻结：
 
 - `skill_version`、`contract_version`、`excel_schema_version`
+- 资质图模式的统一策略 schema、版本、路径和 SHA256
 - `task_mode`、路由证据、用户请求摘要 SHA256
 - 源清单类型、文件 SHA256、唯一 SPU 数和 SPU 集合 SHA256
 - allowed/forbidden actions、外部调用预算、完成必需动作

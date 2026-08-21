@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from qualification_image_policy import load_qualification_image_policy
+
+
+QUALIFICATION_IMAGE_POLICY = load_qualification_image_policy()
+POST_GENERATION_GATES = QUALIFICATION_IMAGE_POLICY["post_generation_gates"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -67,7 +72,14 @@ def main() -> None:
         reason = ""
         if not job:
             status, reason = "blocked", "job_missing"
-        elif str(result.get("status") or "") != "ready" or not artifact_path.is_file():
+        elif (
+            str(result.get("status") or "")
+            not in {str(item) for item in POST_GENERATION_GATES["ready_artifact_statuses"]}
+            or (
+                bool(POST_GENERATION_GATES["require_artifact_file"])
+                and not artifact_path.is_file()
+            )
+        ):
             status, reason = "blocked", "artifact_not_ready"
         source_sha256 = ""
         receipt_path = Path()
@@ -75,14 +87,28 @@ def main() -> None:
         if status == "ready":
             source_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
             receipt_path = receipt_root / f"image-upload-{source_sha256}.json"
-            if not receipt_path.is_file():
+            if bool(POST_GENERATION_GATES["require_upload_receipt"]) and not receipt_path.is_file():
                 status, reason = "blocked", "upload_receipt_missing"
             else:
                 upload_receipt = read_json(receipt_path)
                 if (
-                    str(upload_receipt.get("source_sha256") or upload_receipt.get("sourceSha256") or "")
-                    != source_sha256
-                    or not str(upload_receipt.get("image_url") or upload_receipt.get("imageUrl") or "")
+                    (
+                        bool(POST_GENERATION_GATES["require_upload_source_sha256_match"])
+                        and str(
+                            upload_receipt.get("source_sha256")
+                            or upload_receipt.get("sourceSha256")
+                            or ""
+                        )
+                        != source_sha256
+                    )
+                    or (
+                        bool(POST_GENERATION_GATES["require_uploaded_image_url"])
+                        and not str(
+                            upload_receipt.get("image_url")
+                            or upload_receipt.get("imageUrl")
+                            or ""
+                        )
+                    )
                 ):
                     status, reason = "blocked", "upload_receipt_invalid"
         barcode = barcode_rows.get(spu_id) or {}
@@ -90,9 +116,24 @@ def main() -> None:
         visual = visual_rows.get(spu_id) or {}
         visual_status = str(visual.get("status") or "not_checked")
         visual_evidence = str(visual.get("evidence") or "")
-        if status == "ready" and args.visual_validation and visual_status != "accepted":
+        if (
+            status == "ready"
+            and args.visual_validation
+            and visual_status
+            not in {
+                str(item)
+                for item in POST_GENERATION_GATES["visual_validation_accepted_statuses"]
+            }
+        ):
             status, reason = "blocked", f"visual_{visual_status}"
-        if status == "ready" and barcode_status not in {"exact", "not_checked"} and not args.allow_barcode_fallback:
+        if (
+            status == "ready"
+            and int(job.get("picture_type") or 0)
+            in {int(item) for item in POST_GENERATION_GATES["barcode_guard_picture_types"]}
+            and barcode_status
+            not in {str(item) for item in POST_GENERATION_GATES["barcode_accepted_statuses"]}
+            and not args.allow_barcode_fallback
+        ):
             status, reason = "blocked", f"barcode_{barcode_status}"
         plan_path = output_dir / f"{spu_id}.json"
         if status == "ready" and job:

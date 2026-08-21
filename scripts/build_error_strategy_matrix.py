@@ -53,7 +53,7 @@ RULES: tuple[dict[str, Any], ...] = (
         "key": "back_label",
         "name": "背签图",
         "pattern": r"缺少背签图|执行标准号|卫生许可证号|主要原材料",
-        "action": "复用同款真实背签；增强时使用唯一五项canonical提示词，生成后OCR核对执行标准、许可证及原材料。",
+        "action": "复用同款真实背签；增强仅限基于同一真实参考图做清晰化，不新增标签事实，随后OCR核对执行标准、许可证及原材料。",
         "evidence": "同一精确商品真实包装背签或可逐字核验的参考图。",
         "automation": "reference_generate_or_reuse",
     },

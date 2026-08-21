@@ -8,10 +8,14 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any
+
+from qualification_image_policy import (
+    load_qualification_image_policy,
+    validate_qualification_generation_job,
+)
 
 from app.services.toolbox.base import ToolboxError
 from app.services.toolbox.qnh_main_image_art import (
@@ -24,21 +28,19 @@ from app.services.toolbox.qnh_main_image_art import (
 )
 
 
-PROHIBITED_GENERATION_TOKENS = (
-    "认证证书",
-    "检验报告",
-    "备案",
-    "注册证",
-    "医疗器械",
-    "公章",
-)
+QUALIFICATION_IMAGE_POLICY = load_qualification_image_policy()
+GENERATION_POLICY = QUALIFICATION_IMAGE_POLICY["generation"]
 
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--concurrency", type=int, default=2)
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=int(GENERATION_POLICY["default_concurrency"]),
+    )
     parser.add_argument("--poll-timeout-seconds", type=int, default=300)
     parser.add_argument("--poll-interval-seconds", type=int, default=15)
     parser.add_argument("--single-provider-submit", action="store_true")
@@ -50,16 +52,13 @@ def _text(value: object, limit: int = 2000) -> str:
 
 
 def _job_id(job: dict[str, Any]) -> str:
+    idempotency = GENERATION_POLICY["provider_idempotency"]
     identity = "|".join(
-        (
-            "qnh-safe-special-v1",
-            _text(job.get("tenant_scope"), 128),
-            _text(job.get("spu_id"), 64),
-            _text(job.get("picture_type"), 64),
-            _text(job.get("picture_title"), 128),
-            _text(job.get("prompt")),
-            _text(job.get("reference_image_url"), 2000),
-        )
+        [str(idempotency["business_key_prefix"])]
+        + [
+            _text(job.get(str(field)), 2000)
+            for field in idempotency["business_key_fields"]
+        ]
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
@@ -83,26 +82,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _validate_job(job: dict[str, Any]) -> None:
-    for required in (
-        "tenant_scope",
-        "spu_id",
-        "picture_type",
-        "picture_title",
-        "prompt",
-        "reference_image_url",
-        "evidence",
-    ):
-        if not _text(job.get(required)):
-            raise ValueError(f"job missing {required}")
-    prompt_blob = f"{job.get('picture_title')} {job.get('prompt')}".lower()
-    if (
-        re.search(r"(?<![a-z0-9])3c(?![a-z0-9])", prompt_blob, re.IGNORECASE)
-        or any(token in prompt_blob for token in PROHIBITED_GENERATION_TOKENS)
-    ):
-        raise ValueError("法定证照/备案/报告图片禁止进入生成链路")
-    expected = job.get("expected_text_tokens")
-    if not isinstance(expected, list) or not [_text(item, 120) for item in expected if _text(item, 120)]:
-        raise ValueError("job missing expected_text_tokens")
+    validate_qualification_generation_job(job)
 
 
 async def _query_existing(
@@ -263,8 +243,14 @@ async def _run_one(
                 preferred_provider_key=preferred_provider_key,
                 exclude_provider_keys=exclude_provider_keys,
                 attempt_id=job_id,
-                generation_round=1,
-                stop_failover_after_provider_task_id=True,
+                generation_round=int(
+                    GENERATION_POLICY["provider_idempotency"]["generation_round"]
+                ),
+                stop_failover_after_provider_task_id=bool(
+                    GENERATION_POLICY["provider_idempotency"][
+                        "stop_failover_after_provider_task_id"
+                    ]
+                ),
             )
         except ArtImageAcceptedTaskUnavailable as exc:
             current = _read_json(receipt_path) or receipt
@@ -348,7 +334,12 @@ async def _main() -> None:
             validation_results.append(rejected)
             continue
         valid_jobs.append(job)
-    semaphore = asyncio.Semaphore(max(1, min(10, int(args.concurrency))))
+    semaphore = asyncio.Semaphore(
+        max(
+            int(GENERATION_POLICY["minimum_concurrency"]),
+            min(int(GENERATION_POLICY["maximum_concurrency"]), int(args.concurrency)),
+        )
+    )
     executed_results = await asyncio.gather(
         *(
             _run_one(

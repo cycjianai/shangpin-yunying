@@ -3,7 +3,7 @@ name: qnh-fill-channel-unavailable
 description: 以版本化平台适配器、任务模式、原生接口写回、独立回读、精确 Excel Schema 和机器完成门，管理牵牛花、美团、翱象、淘宝闪购四个平台的属性信息、资质图、不可售治理，以及牵牛花原点搬品助手历史失败重试；当前已实现模块按能力表失败关闭。用户要求当前已登录平台做属性 100% 填充、资质图治理、不可售一次过、失败搬品重试、标准运营审计表或断点续跑时使用。
 ---
 
-# 多平台商品渠道治理 v3.11.0
+# 多平台商品渠道治理 v3.12.0
 
 ## 不可跳过的第一步
 
@@ -383,6 +383,9 @@ python3 scripts/run_task_action.py \
 先审计实时 `pictureType/title/description/numLimit`，优先错槽迁移和同 SPU 真实图复用。只有用户点名的图片类型
 能进入 job manifest。每个稳定业务键最多一次 submit；拿到 `provider_task_id` 后只 query 原任务。生成制品必须
 经过品牌、型号、规格、尺寸、配料、营养、条码和法定事实目视/OCR 核验后才能上传，不能生成法定证照。
+所有类型、禁用内容、预算、批量/并发、真实材料 OCR、生成后验证和写回槽位限制只允许维护在
+[`scripts/qualification_image_policy.json`](scripts/qualification_image_policy.json)；修改前完整阅读
+[`qualification-image-policy.md`](references/qualification-image-policy.md)，禁止在执行脚本里新增平行硬编码。
 
 ### `plugin_attribute_fill`
 

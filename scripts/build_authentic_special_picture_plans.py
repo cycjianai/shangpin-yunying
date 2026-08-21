@@ -23,6 +23,12 @@ from typing import Any
 
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
+from qualification_image_policy import load_qualification_image_policy
+
+
+QUALIFICATION_IMAGE_POLICY = load_qualification_image_policy()
+AUTHENTIC_EVIDENCE_POLICY = QUALIFICATION_IMAGE_POLICY["authentic_evidence"]
+
 
 def text(value: object) -> str:
     return " ".join(str(value or "").split())
@@ -49,9 +55,13 @@ def download_image(url: str, cache_dir: Path) -> Path:
         url,
         headers={"User-Agent": "Mozilla/5.0", "Accept": "image/avif,image/webp,image/*,*/*"},
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = response.read(8 * 1024 * 1024 + 1)
-    if len(payload) > 8 * 1024 * 1024:
+    maximum_bytes = int(AUTHENTIC_EVIDENCE_POLICY["maximum_download_bytes"])
+    with urllib.request.urlopen(
+        request,
+        timeout=int(AUTHENTIC_EVIDENCE_POLICY["download_timeout_seconds"]),
+    ) as response:
+        payload = response.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes:
         raise ValueError("candidate_image_too_large")
     target.write_bytes(payload)
     return target
@@ -85,33 +95,23 @@ def ocr_image(path: Path) -> str:
         input=buffer.getvalue(),
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        timeout=12,
+        timeout=int(AUTHENTIC_EVIDENCE_POLICY["ocr_timeout_seconds"]),
         check=False,
         env={**os.environ, "OMP_THREAD_LIMIT": "1"},
     )
-    return completed.stdout.decode("utf-8", errors="ignore")[:12000]
+    return completed.stdout.decode("utf-8", errors="ignore")[
+        : int(AUTHENTIC_EVIDENCE_POLICY["maximum_ocr_characters"])
+    ]
 
 
 def picture_kind(picture: dict[str, Any]) -> str:
     value = f"{picture.get('picture_title', '')} {picture.get('picture_desc', '')}".lower()
     picture_type = int(picture.get("picture_type") or 0)
-    if "化妆品" in value or "小金盾" in value or "备案编码" in value:
-        return "cosmetic_record"
-    # A back-label contract can mention ingredients, but it is not the ordinary
-    # ingredient/nutrition slot. Match the explicit title/type first so its
-    # five-field platform contract is never weakened by the generic rule.
-    if picture_type == 8 or "背签" in value:
-        return "back_label"
-    if picture_type == 5 or "配料" in value or "营养成分" in value:
-        return "ingredients"
-    if picture_type == 13 or "尺寸" in value or "规格图" in value:
-        return "size"
-    if picture_type == 4 or "3c" in value or "强制性产品认证" in value:
-        return "certificate"
-    if "检测报告" in value or "医护级" in value:
-        return "report"
-    if picture_type == 3 or any(token in value for token in ("包装标签", "背签", "厂名", "厂址")):
-        return "factory_label"
+    for rule in AUTHENTIC_EVIDENCE_POLICY["picture_kind_rules"]:
+        if picture_type in {int(item) for item in rule.get("picture_types") or []} or any(
+            str(token).lower() in value for token in rule.get("title_tokens") or []
+        ):
+            return str(rule["kind"])
     return "unknown"
 
 
@@ -121,87 +121,32 @@ def normalized_ocr(value: str) -> str:
 
 def score_ocr(kind: str, raw_ocr: str) -> tuple[int, list[str], bool]:
     value = normalized_ocr(raw_ocr)
-    hits: list[str] = []
-
-    def hit(label: str, pattern: str) -> bool:
-        matched = re.search(pattern, value, re.IGNORECASE) is not None
-        if matched:
-            hits.append(label)
-        return matched
-
-    if kind == "ingredients":
-        ingredient = hit("配料", r"配料(?:表|：|:)?")
-        nutrition = hit("营养成分", r"营养成分|营养信息")
-        nutrients = sum(
-            hit(label, pattern)
-            for label, pattern in (
-                ("能量", r"能量"),
-                ("蛋白质", r"蛋白质"),
-                ("脂肪", r"脂肪"),
-                ("碳水化合物", r"碳水化合物"),
-                ("钠", r"(?:^|[^A-Za-z])钠"),
-            )
+    rule = (AUTHENTIC_EVIDENCE_POLICY["ocr_rules"] or {}).get(kind)
+    if not isinstance(rule, dict):
+        return 0, [], False
+    hits = {
+        str(label)
+        for label, pattern in (rule.get("patterns") or {}).items()
+        if re.search(str(pattern), value, re.IGNORECASE) is not None
+    }
+    required_all = {str(item) for item in rule.get("required_all") or []}
+    required_any = {str(item) for item in rule.get("required_any") or []}
+    valid = required_all.issubset(hits) and (not required_any or bool(required_any & hits))
+    minimum_hits = rule.get("minimum_hits") or {}
+    if minimum_hits:
+        labels = {str(item) for item in minimum_hits.get("labels") or []}
+        valid = valid and len(labels & hits) >= int(minimum_hits.get("count") or 0)
+    any_or_characters = rule.get("required_any_or_minimum_characters") or {}
+    if any_or_characters:
+        labels = {str(item) for item in any_or_characters.get("labels") or []}
+        valid = valid and (
+            bool(labels & hits)
+            or len(value) >= int(any_or_characters.get("characters") or 0)
         )
-        valid = ingredient and nutrition and nutrients >= 2
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "back_label":
-        ingredient = hit("成分/配料表", r"(?:成分|配料)(?:表|：|:)?")
-        standard = hit("执行标准号", r"执行标准|产品标准")
-        license_number = hit("生产许可证号", r"生产许可证|许可证号")
-        maker = hit("厂名", r"生产(?:企业|商|厂家)|制造商|委托(?:方|商)|厂名")
-        address = hit("厂址", r"生产地址|厂址|地址")
-        # The canonical platform contract requires all five facts across the
-        # uploaded slot. This builder currently selects one authentic image per
-        # slot, so only a single image carrying all five is eligible.
-        valid = ingredient and standard and license_number and maker and address
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "factory_label":
-        maker = hit("生产企业/制造商", r"生产(?:企业|商|厂家)|制造商|委托(?:方|商)|厂名")
-        address = hit("地址/厂址", r"生产地址|厂址|地址")
-        model = hit("型号", r"产品型号|型号")
-        standard = hit("执行标准", r"执行标准|产品标准")
-        license_number = hit("许可证号", r"生产许可证|许可证号")
-        is_certificate_page = re.search(
-            r"中国国家强制性产品认证证书|强制性产品认证证书",
-            value,
-            re.IGNORECASE,
-        ) is not None
-        # Packaging-label slots specifically ask for maker, address and model.
-        # A CCC certificate often contains addresses, standards and model lists,
-        # but is not a packaging label and must not satisfy this contract.
-        valid = maker and address and model and not is_certificate_page
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "cosmetic_record":
-        record = hit("化妆品备案编码", r"g妆网备字|国妆网备进字|国妆特字|国妆特进字")
-        filer = hit("备案人", r"备案人")
-        shield = hit("小金盾", r"小金盾")
-        valid = record and (filer or shield or len(value) >= 80)
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "size":
-        dimension = hit("尺寸单位", r"\d+(?:\.\d+)?(?:mm|cm|毫米|厘米|米)")
-        axis = hit("长宽高/尺寸", r"尺寸|长[×x*]宽|长|宽|高")
-        valid = dimension and axis
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "certificate":
-        certificate = hit("强制性认证证书", r"中国国家强制性产品认证证书|强制性产品认证证书")
-        number = hit("证书编号", r"证书编号|certificate(?:no|number)")
-        ccc = hit("CCC/3C", r"ccc|3c")
-        valid = certificate and (number or ccc)
-        return len(set(hits)), sorted(set(hits)), valid
-
-    if kind == "report":
-        report = hit("检测/检验报告", r"检测报告|检验报告")
-        number = hit("报告编号", r"报告编号|检验编号")
-        conclusion = hit("检验结论", r"检验结论|检测结论")
-        valid = report and (number or conclusion)
-        return len(set(hits)), sorted(set(hits)), valid
-
-    return 0, [], False
+    forbidden = str(rule.get("forbidden_regex") or "")
+    if forbidden and re.search(forbidden, value, re.IGNORECASE):
+        valid = False
+    return len(hits), sorted(hits), valid
 
 
 def title_tokens(title: str, brand: str) -> list[str]:
@@ -259,6 +204,10 @@ def build_plans(args: argparse.Namespace) -> dict[str, Any]:
         else output_dir / "image-cache"
     )
     cache_dir.mkdir(parents=True, exist_ok=True)
+    ocr_workers = max(
+        int(AUTHENTIC_EVIDENCE_POLICY["minimum_ocr_workers"]),
+        min(int(AUTHENTIC_EVIDENCE_POLICY["maximum_ocr_workers"]), args.workers),
+    )
 
     candidate_rows: dict[str, list[dict[str, Any]]] = {}
     all_candidates: dict[str, dict[str, Any]] = {}
@@ -286,7 +235,7 @@ def build_plans(args: argparse.Namespace) -> dict[str, Any]:
         candidate_rows[spu_id] = values
 
     prepared: dict[str, dict[str, Any]] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(4, args.workers))) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ocr_workers) as pool:
         futures = {
             pool.submit(process_candidate, candidate, cache_dir): key
             for key, candidate in all_candidates.items()
@@ -304,7 +253,9 @@ def build_plans(args: argparse.Namespace) -> dict[str, Any]:
             prepared.get(f"{spu_id}|{normalized_url(candidate['url'])}", candidate)
             for candidate in candidate_rows.get(spu_id, [])
         ]
-        for source_kind, per_source_limit in (("same_spu", 5), ("gallery", 5)):
+        for source_kind, per_source_limit in AUTHENTIC_EVIDENCE_POLICY[
+            "candidates_per_source"
+        ].items():
             ranked = sorted(
                 (
                     candidate
@@ -322,7 +273,7 @@ def build_plans(args: argparse.Namespace) -> dict[str, Any]:
                 ocr_targets[key] = candidate
 
     ocr_values: dict[str, str] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(4, args.workers))) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ocr_workers) as pool:
         futures = {
             pool.submit(ocr_image, Path(candidate["cache_path"])): key
             for key, candidate in ocr_targets.items()
@@ -462,7 +413,7 @@ def build_plans(args: argparse.Namespace) -> dict[str, Any]:
         {
             "generated_at": source.get("generated_at"),
             "candidate_snapshot": str(Path(args.candidates).resolve()),
-            "ocr_workers": max(1, min(4, args.workers)),
+            "ocr_workers": ocr_workers,
             "rows": index_rows,
         },
     )
@@ -480,7 +431,11 @@ def main() -> None:
     parser.add_argument("--candidates", required=True)
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--label", default="authentic-special-picture-plans")
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(AUTHENTIC_EVIDENCE_POLICY["maximum_ocr_workers"]),
+    )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--cache-dir", default="")

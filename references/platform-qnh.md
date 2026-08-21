@@ -2,7 +2,8 @@
 
 - `platform_adapter=qnh`
 - 属性信息：`implemented`，入口与合同见 `channel-attribute-contract-v2.md`。
-- 资质图：`implemented`，入口与合同见 `thread-928-empirical-contract.md`、`error-playbook.md`、`field-safety.md`。
+- 资质图：`implemented`，入口与合同见 `thread-928-empirical-contract.md`、`error-playbook.md`、`field-safety.md`；
+  所有限制的唯一机器事实源见 `qualification-image-policy.md`。
 - 搬品历史失败重试：`implemented`，入口与合同见 `copy-history-retry-contract-v1.md`。
 
 牵牛花模块拥有 QNH H5guard、tenant 身份、列表/详情/保存接口、Chrome 扩展 transport 和专项图槽位合同。

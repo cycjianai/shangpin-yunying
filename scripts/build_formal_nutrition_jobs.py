@@ -8,22 +8,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from qualification_image_policy import load_qualification_image_policy
 
-FORMAL_PROMPT = """为商品“{title}”生成一张用于美团审核的配料与营养成分图。
-必须清晰展示：配料表、营养成分表、条码。
-要求：
-1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。
-2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。
-3. 背景干净，不要促销元素，不要夸张修饰。
-4. 所有关键信息必须完整落在画面内，适合平台审核查看。"""
 
-FORMAL_INGREDIENT_PROMPT = """为商品“{title}”生成一张用于美团审核的配料图。
-必须清晰展示：配料表、条码。
-要求：
-1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。
-2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。
-3. 背景干净，不要促销元素，不要夸张修饰。
-4. 所有关键信息必须完整落在画面内，适合平台审核查看。"""
+QUALIFICATION_IMAGE_POLICY = load_qualification_image_policy()
+GENERATION_POLICY = QUALIFICATION_IMAGE_POLICY["generation"]
+NUTRITION_POLICY = QUALIFICATION_IMAGE_POLICY["asset_builders"]["nutrition"]
+FORMAL_PROMPT = str(NUTRITION_POLICY["full_prompt_template"])
+FORMAL_INGREDIENT_PROMPT = str(NUTRITION_POLICY["ingredient_only_prompt_template"])
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,7 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--selection-output")
     parser.add_argument("--tenant-scope", required=True)
-    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=int(GENERATION_POLICY["default_batch_limit"]),
+    )
     parser.add_argument(
         "--allow-gtin-fallback",
         action="store_true",
@@ -52,7 +48,9 @@ def text(value: object) -> str:
 
 
 def gtin_valid(value: str) -> bool:
-    if not value.isdigit() or len(value) not in {8, 12, 13, 14}:
+    if not value.isdigit() or len(value) not in {
+        int(item) for item in NUTRITION_POLICY["gtin_lengths"]
+    }:
         return False
     digits = [int(char) for char in value]
     body = digits[:-1]
@@ -92,9 +90,24 @@ def prior_paid_keys(receipt_root: Path) -> set[tuple[str, str]]:
 
 def special_slot(detail: dict[str, Any]) -> dict[str, Any] | None:
     for item in detail.get("mtSpecialPictureList") or []:
-        if isinstance(item, dict) and int(item.get("pictureType") or 0) == 5:
+        if (
+            isinstance(item, dict)
+            and int(item.get("pictureType") or 0)
+            == int(NUTRITION_POLICY["picture_type"])
+        ):
             return item
     return None
+
+
+def issue_matches(current_audit: str, rule: dict[str, Any]) -> bool:
+    all_tokens = [str(item) for item in rule.get("all_tokens") or []]
+    any_tokens = [str(item) for item in rule.get("any_tokens") or []]
+    none_tokens = [str(item) for item in rule.get("none_tokens") or []]
+    return (
+        all(token in current_audit for token in all_tokens)
+        and (not any_tokens or any(token in current_audit for token in any_tokens))
+        and not any(token in current_audit for token in none_tokens)
+    )
 
 
 def main() -> None:
@@ -122,17 +135,13 @@ def main() -> None:
         reason = ""
         gtin = ""
 
-        full_nutrition_issue = (
-            "营养成分图" in current_audit
-            and ("缺少配料" in current_audit or "【配料表】" in current_audit)
-            and "缺失" in current_audit
+        full_nutrition_issue = issue_matches(
+            current_audit,
+            NUTRITION_POLICY["full_issue"],
         )
         ingredient_only_issue = (
             args.include_ingredient_only
-            and "配料图" in current_audit
-            and "【配料表】" in current_audit
-            and "缺失" in current_audit
-            and "【营养成分图】" not in current_audit
+            and issue_matches(current_audit, NUTRITION_POLICY["ingredient_only_issue"])
         )
         if not (full_nutrition_issue or ingredient_only_issue):
             status, reason = "skipped", "audit_not_explicitly_missing_nutrition_and_ingredients"
@@ -146,14 +155,17 @@ def main() -> None:
                     status, reason = "skipped", "missing_or_invalid_unique_gtin"
             elif not args.allow_gtin_fallback:
                 status, reason = "skipped", "not_single_sku"
-        if status == "selected" and (spu_id, "5") in paid_keys:
+        picture_type = str(int(NUTRITION_POLICY["picture_type"]))
+        if status == "selected" and (spu_id, picture_type) in paid_keys:
             status, reason = "skipped", "provider_task_already_accepted"
         main_urls = [text(url) for url in (detail.get("picUrlList") or []) if text(url)]
         if status == "selected" and not main_urls:
             status, reason = "skipped", "missing_reference_image"
 
         slot = special_slot(detail)
-        picture_title = text((slot or {}).get("pictureTitle")) or "配料&营养成分图"
+        picture_title = text((slot or {}).get("pictureTitle")) or str(
+            NUTRITION_POLICY["default_title"]
+        )
         current_urls = [
             text(url)
             for url in ((slot or {}).get("pictureUrl") or [])
@@ -175,7 +187,13 @@ def main() -> None:
             rows.append(row)
             continue
 
-        expected_tokens = ["配料表"] if ingredient_only_issue else ["配料表", "营养成分表"]
+        expected_tokens = list(
+            NUTRITION_POLICY[
+                "ingredient_only_expected_text_tokens"
+                if ingredient_only_issue
+                else "full_expected_text_tokens"
+            ]
+        )
         if gtin:
             expected_tokens.append(gtin)
         issue_evidence = (
@@ -196,7 +214,7 @@ def main() -> None:
             {
                 "tenant_scope": text(args.tenant_scope),
                 "spu_id": spu_id,
-                "picture_type": "5",
+                "picture_type": picture_type,
                 "picture_title": picture_title,
                 "prompt": (
                     FORMAL_INGREDIENT_PROMPT if ingredient_only_issue else FORMAL_PROMPT

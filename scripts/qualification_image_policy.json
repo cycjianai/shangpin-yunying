@@ -1,0 +1,322 @@
+{
+  "schema": "qnh-qualification-image-policy-v1",
+  "policy_version": "1.0.0",
+  "scope": {
+    "platform": "qnh",
+    "task_mode": "qualification_images_only",
+    "standalone_platform_status": {
+      "qnh": "implemented",
+      "meituan": "planned",
+      "aoxiang": "planned",
+      "taobao_flash": "planned"
+    }
+  },
+  "external_call_default_budgets": {
+    "ocr": 0,
+    "media_scan": 0,
+    "barcode_scan": 0,
+    "bocha": 0,
+    "web_search": 0,
+    "llm": 0,
+    "provider_submit": 0,
+    "provider_query": 0,
+    "image_upload": 0
+  },
+  "generation": {
+    "default_batch_limit": 50,
+    "default_concurrency": 2,
+    "minimum_concurrency": 1,
+    "maximum_concurrency": 10,
+    "required_job_fields": [
+      "tenant_scope",
+      "spu_id",
+      "picture_type",
+      "picture_title",
+      "prompt",
+      "reference_image_url",
+      "evidence"
+    ],
+    "required_nonempty_list_fields": [
+      "expected_text_tokens"
+    ],
+    "content_scan_fields": [
+      "picture_title",
+      "prompt",
+      "expected_text_tokens"
+    ],
+    "allowed_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "prohibited_legal_content": {
+      "message": "法定证照/备案/报告图片禁止进入生成链路",
+      "tokens": [
+        "认证证书",
+        "检验报告",
+        "质检报告",
+        "检测报告",
+        "备案",
+        "注册证",
+        "医疗器械",
+        "公章",
+        "许可证",
+        "生产许可",
+        "经营许可",
+        "法定资质"
+      ],
+      "regexes": [
+        "(?<![a-z0-9])3c(?![a-z0-9])",
+        "(?<![a-z0-9])ccc(?![a-z0-9])"
+      ]
+    },
+    "provider_idempotency": {
+      "business_key_fields": [
+        "tenant_scope",
+        "spu_id",
+        "picture_type",
+        "picture_title",
+        "prompt",
+        "reference_image_url"
+      ],
+      "business_key_prefix": "qnh-safe-special-v1",
+      "generation_round": 1,
+      "maximum_accepted_provider_tasks_per_business_key": 1,
+      "query_only_after_provider_task_id": true,
+      "stop_failover_after_provider_task_id": true
+    }
+  },
+  "asset_builders": {
+    "formal_asset_prompt_template": "为商品“{title}”生成一张用于美团审核的{label}。\n必须清晰展示：{required_fields}。\n要求：\n1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。\n2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。\n3. 背景干净，不要促销元素，不要夸张修饰。\n4. 所有关键信息必须完整落在画面内，适合平台审核查看。",
+    "formal_assets": {
+      "back_label": {
+        "audit_tokens": ["缺少背签图"],
+        "exclude_tokens": ["化妆品备案"],
+        "slot_tokens": ["背签"],
+        "default_type": 8,
+        "label": "背签图",
+        "required_fields": ["执行标准号", "生产企业信息", "主要原材料或背签信息"]
+      },
+      "package_label": {
+        "audit_tokens": ["缺少包装标签图"],
+        "exclude_tokens": [],
+        "slot_tokens": ["包装标签"],
+        "default_type": 3,
+        "label": "包装标签图",
+        "required_fields": ["包装标签", "关键说明文字", "规格或条码"]
+      },
+      "textile_label": {
+        "audit_tokens": ["吊牌", "洗唛"],
+        "exclude_tokens": [],
+        "slot_tokens": ["吊牌", "洗唛"],
+        "default_type": 7,
+        "label": "吊牌洗唛图",
+        "required_fields": ["执行标准号", "安全类别", "面料成分含量", "面料成分"]
+      },
+      "size_picture": {
+        "audit_tokens": ["缺少尺寸图"],
+        "exclude_tokens": [],
+        "slot_tokens": ["尺寸图"],
+        "default_type": 13,
+        "label": "尺寸图",
+        "required_fields": ["商品主体", "完整尺寸标注", "尺寸单位", "型号或规格"]
+      }
+    },
+    "nutrition": {
+      "picture_type": 5,
+      "default_title": "配料&营养成分图",
+      "allowed_titles": ["配料&营养成分图", "配料/营养成分图", "配料图"],
+      "full_prompt_template": "为商品“{title}”生成一张用于美团审核的配料与营养成分图。\n必须清晰展示：配料表、营养成分表、条码。\n要求：\n1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。\n2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。\n3. 背景干净，不要促销元素，不要夸张修饰。\n4. 所有关键信息必须完整落在画面内，适合平台审核查看。",
+      "ingredient_only_prompt_template": "为商品“{title}”生成一张用于美团审核的配料图。\n必须清晰展示：配料表、条码。\n要求：\n1. 画面正向、文字清晰可识别，不能模糊、反光、过曝或带水印。\n2. 使用真实包装/标签表达，不添加营销文案、赠品或标题未提及的内容。\n3. 背景干净，不要促销元素，不要夸张修饰。\n4. 所有关键信息必须完整落在画面内，适合平台审核查看。",
+      "full_issue": {
+        "all_tokens": ["营养成分图", "缺失"],
+        "any_tokens": ["缺少配料", "【配料表】"],
+        "none_tokens": []
+      },
+      "ingredient_only_issue": {
+        "all_tokens": ["配料图", "【配料表】", "缺失"],
+        "any_tokens": [],
+        "none_tokens": ["【营养成分图】"],
+        "requires_explicit_flag": true
+      },
+      "gtin_lengths": [8, 12, 13, 14],
+      "requires_single_sku_unique_valid_gtin": true,
+      "fallback_requires_explicit_flag": true,
+      "full_expected_text_tokens": ["配料表", "营养成分表"],
+      "ingredient_only_expected_text_tokens": ["配料表"]
+    }
+  },
+  "post_generation_gates": {
+    "ready_artifact_statuses": ["ready"],
+    "require_artifact_file": true,
+    "require_upload_receipt": true,
+    "require_upload_source_sha256_match": true,
+    "require_uploaded_image_url": true,
+    "visual_validation_accepted_statuses": ["accepted"],
+    "barcode_accepted_statuses": ["exact", "not_checked"],
+    "barcode_guard_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "barcode_fallback_requires_explicit_flag": true
+  },
+  "authentic_evidence": {
+    "download_timeout_seconds": 20,
+    "maximum_download_bytes": 8388608,
+    "ocr_timeout_seconds": 12,
+    "maximum_ocr_characters": 12000,
+    "minimum_ocr_workers": 1,
+    "maximum_ocr_workers": 4,
+    "candidates_per_source": {
+      "same_spu": 5,
+      "gallery": 5
+    },
+    "picture_kind_rules": [
+      {"kind": "cosmetic_record", "picture_types": [], "title_tokens": ["化妆品", "小金盾", "备案编码"]},
+      {"kind": "back_label", "picture_types": [8], "title_tokens": ["背签"]},
+      {"kind": "ingredients", "picture_types": [5], "title_tokens": ["配料", "营养成分"]},
+      {"kind": "size", "picture_types": [13], "title_tokens": ["尺寸", "规格图"]},
+      {"kind": "certificate", "picture_types": [4], "title_tokens": ["3c", "强制性产品认证"]},
+      {"kind": "report", "picture_types": [], "title_tokens": ["检测报告", "医护级"]},
+      {"kind": "factory_label", "picture_types": [3], "title_tokens": ["包装标签", "背签", "厂名", "厂址"]}
+    ],
+    "ocr_rules": {
+      "ingredients": {
+        "patterns": {
+          "配料": "配料(?:表|：|:)?",
+          "营养成分": "营养成分|营养信息",
+          "能量": "能量",
+          "蛋白质": "蛋白质",
+          "脂肪": "脂肪",
+          "碳水化合物": "碳水化合物",
+          "钠": "(?:^|[^A-Za-z])钠"
+        },
+        "required_all": ["配料", "营养成分"],
+        "minimum_hits": {"labels": ["能量", "蛋白质", "脂肪", "碳水化合物", "钠"], "count": 2}
+      },
+      "back_label": {
+        "patterns": {
+          "成分/配料表": "(?:成分|配料)(?:表|：|:)?",
+          "执行标准号": "执行标准|产品标准",
+          "生产许可证号": "生产许可证|许可证号",
+          "厂名": "生产(?:企业|商|厂家)|制造商|委托(?:方|商)|厂名",
+          "厂址": "生产地址|厂址|地址"
+        },
+        "required_all": ["成分/配料表", "执行标准号", "生产许可证号", "厂名", "厂址"]
+      },
+      "factory_label": {
+        "patterns": {
+          "生产企业/制造商": "生产(?:企业|商|厂家)|制造商|委托(?:方|商)|厂名",
+          "地址/厂址": "生产地址|厂址|地址",
+          "型号": "产品型号|型号",
+          "执行标准": "执行标准|产品标准",
+          "许可证号": "生产许可证|许可证号"
+        },
+        "required_all": ["生产企业/制造商", "地址/厂址", "型号"],
+        "forbidden_regex": "中国国家强制性产品认证证书|强制性产品认证证书"
+      },
+      "cosmetic_record": {
+        "patterns": {
+          "化妆品备案编码": "g妆网备字|国妆网备进字|国妆特字|国妆特进字",
+          "备案人": "备案人",
+          "小金盾": "小金盾"
+        },
+        "required_all": ["化妆品备案编码"],
+        "required_any_or_minimum_characters": {"labels": ["备案人", "小金盾"], "characters": 80}
+      },
+      "size": {
+        "patterns": {
+          "尺寸单位": "\\d+(?:\\.\\d+)?(?:mm|cm|毫米|厘米|米)",
+          "长宽高/尺寸": "尺寸|长[×x*]宽|长|宽|高"
+        },
+        "required_all": ["尺寸单位", "长宽高/尺寸"]
+      },
+      "certificate": {
+        "patterns": {
+          "强制性认证证书": "中国国家强制性产品认证证书|强制性产品认证证书",
+          "证书编号": "证书编号|certificate(?:no|number)",
+          "CCC/3C": "ccc|3c"
+        },
+        "required_all": ["强制性认证证书"],
+        "required_any": ["证书编号", "CCC/3C"]
+      },
+      "report": {
+        "patterns": {
+          "检测/检验报告": "检测报告|检验报告",
+          "报告编号": "报告编号|检验编号",
+          "检验结论": "检验结论|检测结论"
+        },
+        "required_all": ["检测/检验报告"],
+        "required_any": ["报告编号", "检验结论"]
+      }
+    }
+  },
+  "candidate_selection": {
+    "audit_tokens_by_picture_type": {
+      "3": ["包装标签", "厂名", "厂址", "产品型号"],
+      "4": ["3C证书", "3C认证证书", "质量认证"],
+      "5": ["配料表", "配料图", "营养成分"],
+      "6": ["纺织品使用说明", "安全技术类别"],
+      "7": ["吊牌", "洗唛"],
+      "8": ["背签图", "背签", "卫生许可证", "主要原材料", "化妆品备案编码"],
+      "13": ["尺寸图", "尺寸"]
+    },
+    "default_concurrency": 10,
+    "minimum_concurrency": 1,
+    "maximum_concurrency": 20
+  },
+  "writeback": {
+    "allowed_generated_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "require_upload_receipt": true,
+    "require_upload_receipt_url_match": true,
+    "require_expected_old_urls_match_when_present": true,
+    "deduplicate_urls": true,
+    "use_live_slot_num_min_and_num_limit": true,
+    "default_num_min": 1,
+    "default_num_limit": 4,
+    "synthetic_missing_slots": [
+      {
+        "picture_type": 13,
+        "exact_titles": ["尺寸图"],
+        "audit_all_tokens": ["缺少尺寸图", "尺寸图"],
+        "audit_any_tokens": [],
+        "picture_desc": "展示商品实际尺寸，尺寸信息须清晰、准确且与所售商品一致。"
+      },
+      {
+        "picture_type": 5,
+        "exact_titles": ["配料&营养成分图", "配料/营养成分图", "配料图"],
+        "audit_all_tokens": [],
+        "audit_any_token_groups": [["营养成分图", "缺少配料"], ["营养成分图", "【配料表】"], ["缺少配料图"]],
+        "picture_desc": "当前类目需上传清晰完整的商品配料、营养成分表图片，建议上传电子扫描图或平面设计图；若实拍图片，建议对关键信息特写拍摄，保证文字清晰、背景整洁。"
+      },
+      {
+        "picture_type": 3,
+        "exact_titles": ["包装标签图"],
+        "audit_all_tokens": ["缺少包装标签图"],
+        "audit_any_tokens": [],
+        "picture_desc": "展示商品包装标签中的厂名、厂址、型号及平台要求的商品参数，文字清晰完整。"
+      },
+      {
+        "picture_type": 3,
+        "exact_titles": ["背签图"],
+        "audit_all_tokens": ["缺少背签图"],
+        "audit_any_tokens": [],
+        "picture_desc": "展示商品外包装背签中的配料、执行标准、厂名和厂址，文字清晰完整。"
+      },
+      {
+        "picture_type": 8,
+        "exact_titles": ["背签图"],
+        "audit_all_tokens": [],
+        "audit_any_tokens": [],
+        "picture_desc": "建议优先上传商品外包装背签图。有效文本必须清晰、可识别，图片和文字正向，背景整洁，无裁切、遮挡、折叠或阴影。"
+      },
+      {
+        "picture_type": 6,
+        "exact_titles": ["纺织品使用说明"],
+        "audit_all_tokens": ["缺少纺织品使用说明"],
+        "audit_any_tokens": [],
+        "picture_desc": "展示执行标准号、安全类别、面料成分含量和面料成分等纺织品使用说明。"
+      },
+      {
+        "picture_type": 15,
+        "title_contains": ["礼袋图"],
+        "audit_all_tokens": [],
+        "audit_any_tokens": ["缺少原厂礼袋图", "缺少礼袋图"],
+        "picture_desc": "展示与当前商品品牌和规格对应的原厂礼袋，主体完整、文字清晰。"
+      }
+    ]
+  }
+}

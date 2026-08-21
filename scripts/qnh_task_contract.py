@@ -14,10 +14,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from qualification_image_policy import (
+    load_qualification_image_policy,
+    qualification_default_budgets,
+)
+
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.4.0"
+CONTRACT_VERSION = "qnh-task-contract-v3.5.0"
 EXCEL_SCHEMA_VERSION = json.loads(
     (SKILL_ROOT / "scripts" / "operations_workbook_schema.json").read_text(encoding="utf-8")
 )["schema_version"]
@@ -325,10 +330,13 @@ MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
 MODE_DEFAULT_BUDGETS: dict[str, dict[str, int]] = {
     "channel_attributes_only": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
     "unavailable_one_pass": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
-    "qualification_images_only": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
+    "qualification_images_only": qualification_default_budgets(),
     "plugin_attribute_fill": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
     "copy_history_retry": {key: 0 for key in EXTERNAL_BUDGET_KEYS},
 }
+
+if set(MODE_DEFAULT_BUDGETS["qualification_images_only"]) != set(EXTERNAL_BUDGET_KEYS):
+    raise RuntimeError("qualification_image_policy budget keys do not match task contract")
 
 CHANNEL_FORBIDDEN_ARTIFACT_GLOBS = [
     "media-scan/**",
@@ -591,6 +599,7 @@ def create_contract(args: argparse.Namespace) -> dict[str, Any]:
     budgets.update(overrides)
 
     files = build_file_fingerprints()
+    qualification_policy = load_qualification_image_policy()
     allowed = sorted(MODE_ALLOWED_ACTIONS[mode])
     forbidden = sorted(set(ACTION_SPECS) - set(allowed))
     executors: dict[str, Any] = {}
@@ -638,6 +647,16 @@ def create_contract(args: argparse.Namespace) -> dict[str, Any]:
         "forbidden_actions": forbidden,
         "required_success_actions": MODE_REQUIRED_ACTIONS[mode],
         "external_call_budgets": budgets,
+        "qualification_image_policy": (
+            {
+                "schema": qualification_policy["schema"],
+                "policy_version": qualification_policy["policy_version"],
+                "path": "scripts/qualification_image_policy.json",
+                "sha256": files["scripts/qualification_image_policy.json"],
+            }
+            if mode == "qualification_images_only"
+            else None
+        ),
         "canonical_executors": executors,
         "forbidden_artifact_globs": (
             CHANNEL_FORBIDDEN_ARTIFACT_GLOBS

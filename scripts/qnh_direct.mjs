@@ -43,6 +43,14 @@ import {
   withCsecVersion,
 } from './qnh_protocol_profile.mjs';
 
+const QUALIFICATION_IMAGE_POLICY = JSON.parse(
+  await fs.readFile(new URL('./qualification_image_policy.json', import.meta.url), 'utf8'),
+);
+if (QUALIFICATION_IMAGE_POLICY?.schema !== 'qnh-qualification-image-policy-v1') {
+  throw new Error('qualification_image_policy_schema_mismatch');
+}
+const QUALIFICATION_WRITEBACK_POLICY = QUALIFICATION_IMAGE_POLICY.writeback || {};
+
 let chromium = null;
 
 const DEFAULT_CDP = 'http://127.0.0.1:9292';
@@ -112,6 +120,45 @@ function toArray(value) {
 
 function toObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function matchesGeneratedSlotRule(rule, pictureType, pictureTitle, auditText) {
+  if (Number(rule?.picture_type) !== Number(pictureType)) return false;
+  const exactTitles = toArray(rule?.exact_titles).map(String);
+  const titleContains = toArray(rule?.title_contains).map(String);
+  if (exactTitles.length && !exactTitles.includes(String(pictureTitle))) return false;
+  if (titleContains.length && !titleContains.some((token) => String(pictureTitle).includes(token))) {
+    return false;
+  }
+  const allTokens = toArray(rule?.audit_all_tokens).map(String);
+  const anyTokens = toArray(rule?.audit_any_tokens).map(String);
+  const anyGroups = toArray(rule?.audit_any_token_groups)
+    .map((group) => toArray(group).map(String));
+  return (
+    allTokens.every((token) => auditText.includes(token))
+    && (!anyTokens.length || anyTokens.some((token) => auditText.includes(token)))
+    && (!anyGroups.length || anyGroups.some((group) => group.every((token) => auditText.includes(token))))
+  );
+}
+
+function synthesizeGeneratedPictureSlot(pictureType, pictureTitle, auditText) {
+  const rule = toArray(QUALIFICATION_WRITEBACK_POLICY.synthetic_missing_slots).find(
+    (candidate) => matchesGeneratedSlotRule(candidate, pictureType, pictureTitle, auditText),
+  );
+  if (!rule) return null;
+  return {
+    pictureType: Number(pictureType),
+    pictureTitle: String(pictureTitle),
+    pictureDesc: String(rule.picture_desc || ''),
+    pictureExample: [],
+    isRequired: 1,
+    isDisplay: 1,
+    numLimit: Number(QUALIFICATION_WRITEBACK_POLICY.default_num_limit || 4),
+    pictureUrl: null,
+    customized: null,
+    deleted: false,
+    numMin: Number(QUALIFICATION_WRITEBACK_POLICY.default_num_min || 1),
+  };
 }
 
 function firstNonEmpty(...values) {
@@ -2041,160 +2088,28 @@ function applyDirectPlanToDetail(detail, plan) {
       if (!Number.isFinite(pictureType) || !verifiedUrl) {
         throw new Error('生成资质图必须提供本次上传回执验证的 URL 和有效 picture_type');
       }
+      if (!toArray(QUALIFICATION_WRITEBACK_POLICY.allowed_generated_picture_types)
+        .map(Number).includes(pictureType)) {
+        throw new Error(`生成资质图类型未被统一策略允许：${pictureType}/${pictureTitle}`);
+      }
       let picture = pictures.find((candidate) => (
         Number(candidate?.pictureType) === pictureType
         && (!pictureTitle || String(candidate?.pictureTitle || '') === pictureTitle)
       ));
-      if (
-        !picture
-        && pictureType === 13
-        && pictureTitle === '尺寸图'
-        && currentAuditText.includes('缺少尺寸图')
-        && currentAuditText.includes('尺寸图')
-      ) {
-        picture = {
-          pictureType: 13,
-          pictureTitle: '尺寸图',
-          pictureDesc: '展示商品实际尺寸，尺寸信息须清晰、准确且与所售商品一致。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
-      }
-      if (
-        !picture
-        && pictureType === 5
-        && ['配料&营养成分图', '配料/营养成分图', '配料图'].includes(pictureTitle)
-        && (
-          (
-            currentAuditText.includes('营养成分图')
-            && (currentAuditText.includes('缺少配料') || currentAuditText.includes('【配料表】'))
-          )
-          || currentAuditText.includes('缺少配料图')
-        )
-      ) {
-        picture = {
-          pictureType: 5,
+      if (!picture) {
+        picture = synthesizeGeneratedPictureSlot(
+          pictureType,
           pictureTitle,
-          pictureDesc: '当前类目需上传清晰完整的商品配料、营养成分表图片，建议上传电子扫描图或平面设计图；若实拍图片，建议对关键信息特写拍摄，保证文字清晰、背景整洁。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
-      }
-      if (
-        !picture
-        && pictureType === 3
-        && ['包装标签图', '背签图'].includes(pictureTitle)
-        && (
-          (pictureTitle === '包装标签图' && currentAuditText.includes('缺少包装标签图'))
-          || (pictureTitle === '背签图' && currentAuditText.includes('缺少背签图'))
-        )
-      ) {
-        picture = {
-          pictureType: 3,
-          pictureTitle,
-          pictureDesc: pictureTitle === '包装标签图'
-            ? '展示商品包装标签中的厂名、厂址、型号及平台要求的商品参数，文字清晰完整。'
-            : '展示商品外包装背签中的配料、执行标准、生产许可证、厂名和厂址，文字清晰完整。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
-      }
-      if (
-        !picture
-        && pictureType === 8
-        && pictureTitle === '背签图'
-      ) {
-        // The Meituan Flash Sale channel renders its required back-label slot
-        // as type 8.  Some tenant/detail responses omit the empty channel
-        // slot while the editor still exposes it; a type-8 repair plan is
-        // already the explicit evidence that this slot is required, so
-        // materialize it for the v4.2.4 channel container.
-        picture = {
-          pictureType: 8,
-          pictureTitle: '背签图',
-          pictureDesc: '建议优先上传商品外包装【背签图】，同时支持单商品多图片，但必须包括以下六种信息：执行标准号、卫生标准号、生产企业卫生许可证号、保质期、主要原材料、条形码。图片中的有效文本内容要清晰、可识别，无模糊、反光、过曝和有水印等问题。图片和文字需正向，背景无杂乱，裁切、遮挡、折叠、阴影等。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
-      }
-      if (
-        !picture
-        && pictureType === 6
-        && pictureTitle === '纺织品使用说明'
-        && currentAuditText.includes('缺少纺织品使用说明')
-      ) {
-        picture = {
-          pictureType: 6,
-          pictureTitle,
-          pictureDesc: '展示执行标准号、安全类别、面料成分含量和面料成分等纺织品使用说明。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
-      }
-      if (
-        !picture
-        && pictureType === 15
-        && pictureTitle.includes('礼袋图')
-        && (
-          currentAuditText.includes('缺少原厂礼袋图')
-          || currentAuditText.includes('缺少礼袋图')
-        )
-      ) {
-        picture = {
-          pictureType: 15,
-          pictureTitle,
-          pictureDesc: '展示与当前商品品牌和规格对应的原厂礼袋，主体完整、文字清晰。',
-          pictureExample: [],
-          isRequired: 1,
-          isDisplay: 1,
-          numLimit: 4,
-          pictureUrl: null,
-          customized: null,
-          deleted: false,
-          numMin: 1,
-        };
-        pictures.push(picture);
+          currentAuditText,
+        );
+        if (picture) pictures.push(picture);
       }
       if (!picture) throw new Error(`未找到生成资质图槽位：${pictureType}/${pictureTitle}`);
       const oldUrls = toArray(picture.pictureUrl).map(String).filter(Boolean);
       const expectedOldUrls = toArray(item?.expected_old_urls).map(String).filter(Boolean);
       if (
-        Object.prototype.hasOwnProperty.call(item || {}, 'expected_old_urls')
+        QUALIFICATION_WRITEBACK_POLICY.require_expected_old_urls_match_when_present !== false
+        && Object.prototype.hasOwnProperty.call(item || {}, 'expected_old_urls')
         && JSON.stringify(oldUrls.map(normalizedImageUrl))
           !== JSON.stringify(expectedOldUrls.map(normalizedImageUrl))
       ) {
@@ -2203,13 +2118,20 @@ function applyDirectPlanToDetail(detail, plan) {
       const candidateUrls = item?.replace_existing === true
         ? [verifiedUrl]
         : [verifiedUrl, ...oldUrls];
-      const finalUrls = candidateUrls
-        .filter((url, index, values) => (
+      const uniqueUrls = QUALIFICATION_WRITEBACK_POLICY.deduplicate_urls === false
+        ? candidateUrls
+        : candidateUrls.filter((url, index, values) => (
           values.findIndex((candidate) => normalizedImageUrl(candidate) === normalizedImageUrl(url))
           === index
-        ))
-        .slice(0, Number(picture.numLimit || 4));
-      if (finalUrls.length < Math.max(1, Number(picture.numMin || 1))) {
+        ));
+      const numLimit = QUALIFICATION_WRITEBACK_POLICY.use_live_slot_num_min_and_num_limit === false
+        ? Number(QUALIFICATION_WRITEBACK_POLICY.default_num_limit || 4)
+        : Number(picture.numLimit || QUALIFICATION_WRITEBACK_POLICY.default_num_limit || 4);
+      const numMin = QUALIFICATION_WRITEBACK_POLICY.use_live_slot_num_min_and_num_limit === false
+        ? Number(QUALIFICATION_WRITEBACK_POLICY.default_num_min || 1)
+        : Number(picture.numMin || QUALIFICATION_WRITEBACK_POLICY.default_num_min || 1);
+      const finalUrls = uniqueUrls.slice(0, numLimit);
+      if (finalUrls.length < Math.max(1, numMin)) {
         throw new Error(`生成资质图数量不满足槽位限制：${pictureType}/${finalUrls.length}`);
       }
       if (
@@ -3495,14 +3417,21 @@ async function applyDirectPlanCore(
   if (requestedUploadedPictures.length) {
     const verifiedUploadedUrls = [];
     for (const item of requestedUploadedPictures) {
-      if (!item?.upload_receipt_path) {
+      if (
+        QUALIFICATION_WRITEBACK_POLICY.require_upload_receipt !== false
+        && !item?.upload_receipt_path
+      ) {
         throw new Error('生成资质图计划缺少 upload_receipt_path');
       }
-      const receiptPath = path.resolve(String(item.upload_receipt_path));
-      const receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8'));
-      const receiptUrl = String(receipt?.image_url || '');
+      const receipt = item?.upload_receipt_path
+        ? JSON.parse(await fs.readFile(path.resolve(String(item.upload_receipt_path)), 'utf8'))
+        : {};
+      const receiptUrl = String(receipt?.image_url || item?.url || '');
       if (
-        normalizedImageUrl(receiptUrl) !== normalizedImageUrl(item?.url)
+        (
+          QUALIFICATION_WRITEBACK_POLICY.require_upload_receipt_url_match !== false
+          && normalizedImageUrl(receiptUrl) !== normalizedImageUrl(item?.url)
+        )
         || !collectMeituanImageUrls(receiptUrl).length
       ) {
         throw new Error('生成资质图 URL 与上传回执不一致');
@@ -6710,15 +6639,8 @@ async function snapshotSpecialPictureCandidates(
     if (!text) return false;
     const title = String(picture?.pictureTitle || '');
     if (title && text.includes(title)) return true;
-    const tokensByType = {
-      3: ['包装标签', '厂名', '厂址', '产品型号'],
-      4: ['3C证书', '3C认证证书', '质量认证'],
-      5: ['配料表', '配料图', '营养成分'],
-      6: ['纺织品使用说明', '安全技术类别'],
-      7: ['吊牌', '洗唛'],
-      8: ['背签图', '背签', '卫生许可证', '主要原材料', '化妆品备案编码'],
-      13: ['尺寸图', '尺寸'],
-    };
+    const tokensByType = QUALIFICATION_IMAGE_POLICY.candidate_selection
+      ?.audit_tokens_by_picture_type || {};
     return toArray(tokensByType[Number(picture?.pictureType || 0)])
       .some((token) => text.includes(token));
   };
@@ -6737,9 +6659,15 @@ async function snapshotSpecialPictureCandidates(
     candidates.push({ product, detail, missingPictures, auditText });
   }
   const selected = candidates.slice(0, limit > 0 ? limit : undefined);
+  const selectionPolicy = QUALIFICATION_IMAGE_POLICY.candidate_selection || {};
   const concurrency = Math.max(
-    1,
-    Math.min(20, Number.isFinite(requestedConcurrency) ? Math.floor(requestedConcurrency) : 10),
+    Number(selectionPolicy.minimum_concurrency || 1),
+    Math.min(
+      Number(selectionPolicy.maximum_concurrency || 20),
+      Number.isFinite(requestedConcurrency)
+        ? Math.floor(requestedConcurrency)
+        : Number(selectionPolicy.default_concurrency || 10),
+    ),
   );
   const rows = new Array(selected.length);
   let nextIndex = 0;

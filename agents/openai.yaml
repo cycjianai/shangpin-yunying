@@ -1,0 +1,4 @@
+interface:
+  display_name: "美团饿了么调价推送自动化"
+  short_description: "安全实施、审查与排查商家后台批量调价、活动推送及写后验真"
+  default_prompt: "Use $meituan-eleme-price-push-automation to safely diagnose or implement an authorized Meituan/Eleme bulk price-push workflow and verify every write by independent readback."

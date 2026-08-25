@@ -198,7 +198,7 @@ qnh_saved → materialized → audit_exited`。任何前置状态都不能冒充
 - `provider_ready`、上传成功、QNH 保存成功、审核退出分别统计。
 - 整批同步预校验必须早于任何付费协程；监管类违规任务标记 `validation_rejected/not_sent`。
 - 已拿到 provider_task_id 后的 terminal failure、查询超时、制品拒绝或审核未退出都不自动重提。
-- 字段/QNH 保存可从不同 SPU 并发 10 开始；同一 SPU 串行且 mutation 单飞。
+- 字段/QNH 保存默认单热页；只有同量 canary 更快且资源余量持续通过才按不同 SPU `1→2→4` 扩量；同一 SPU 串行且 mutation 单飞。
 - OCR/Tesseract 每账号最多 4 workers；同机多账号协调资源，优先串行。
 - OCR 使用共享图片缓存、`OMP_THREAD_LIMIT=1` 和小分片落盘；40 SPU 长任务多次被 SIGTERM，
   应改为最多 10 SPU 分片，必要时单 SPU/workers=1。

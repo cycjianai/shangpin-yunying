@@ -22,7 +22,7 @@ from qualification_image_policy import (
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = SKILL_ROOT / "VERSION"
-CONTRACT_VERSION = "qnh-task-contract-v3.5.0"
+CONTRACT_VERSION = "qnh-task-contract-v3.6.0"
 EXCEL_SCHEMA_VERSION = json.loads(
     (SKILL_ROOT / "scripts" / "operations_workbook_schema.json").read_text(encoding="utf-8")
 )["schema_version"]
@@ -58,6 +58,9 @@ def _spec(
 
 
 ACTION_SPECS: dict[str, dict[str, Any]] = {
+    "runtime_resource_admission": _spec(
+        "scripts/runtime_resource_policy.py", "validate", "--metrics", "--output"
+    ),
     "start_browser": _spec("scripts/start_qnh_browser.sh"),
     "session_preflight": _spec(
         "scripts/qnh_direct.mjs",
@@ -177,10 +180,34 @@ ACTION_SPECS: dict[str, dict[str, Any]] = {
 }
 
 COMMON_ACTIONS = {
+    "runtime_resource_admission",
     "start_browser",
     "session_preflight",
     "close_edit_tabs",
     "build_source_manifest",
+}
+
+RESOURCE_GATED_ACTIONS = {
+    "start_browser",
+    "session_preflight",
+    "close_edit_tabs",
+    "freeze_unavailable",
+    "read_details_initial",
+    "probe_exact_editor_frames",
+    "read_recommendations",
+    "orchestrate_channel_task",
+    "dry_run_plan",
+    "apply_plan",
+    "apply_batch",
+    "apply_prepared_barrier_batch",
+    "read_details_final",
+    "image_upload",
+    "plugin_task_execute",
+    "plugin_readback",
+    "plugin_history_freeze",
+    "plugin_copy_canary_execute",
+    "plugin_copy_retry_execute",
+    "plugin_copy_readback",
 }
 
 MODE_ALLOWED_ACTIONS: dict[str, set[str]] = {
@@ -261,6 +288,8 @@ MODE_ALLOWED_ACTIONS: dict[str, set[str]] = {
         "completion_gate",
     },
     "plugin_attribute_fill": {
+        "runtime_resource_admission",
+        "runtime_resource_admission",
         "plugin_task_execute",
         "plugin_readback",
         "validate_channel_contracts",
@@ -287,6 +316,7 @@ MODE_ALLOWED_ACTIONS: dict[str, set[str]] = {
 
 MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
     "channel_attributes_only": [
+        "runtime_resource_admission",
         "session_preflight",
         "read_details_initial",
         "build_channel_plans",
@@ -296,6 +326,7 @@ MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
         "validate_workbook",
     ],
     "unavailable_one_pass": [
+        "runtime_resource_admission",
         "session_preflight",
         "freeze_unavailable",
         "read_details_initial",
@@ -304,12 +335,14 @@ MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
         "export_unavailable_ledger",
     ],
     "qualification_images_only": [
+        "runtime_resource_admission",
         "session_preflight",
         "read_details_initial",
         "read_details_final",
         "export_unavailable_ledger",
     ],
     "plugin_attribute_fill": [
+        "runtime_resource_admission",
         "plugin_task_execute",
         "plugin_readback",
         "validate_channel_contracts",
@@ -317,6 +350,7 @@ MODE_REQUIRED_ACTIONS: dict[str, list[str]] = {
         "validate_workbook",
     ],
     "copy_history_retry": [
+        "runtime_resource_admission",
         "session_preflight",
         "plugin_history_freeze",
         "plugin_copy_canary_execute",
@@ -748,6 +782,15 @@ def consumed_units(contract: dict[str, Any], budget_key: str) -> int:
     return total
 
 
+def successful_action_names(contract: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for row in read_ledger(Path(contract["action_ledger_path"])):
+        payload = row.get("payload") or {}
+        if row.get("action") == "task_action_terminal" and payload.get("outcome") == "succeeded":
+            names.add(str(payload.get("requested_action") or ""))
+    return names
+
+
 def guard_action(
     contract: dict[str, Any],
     action: str,
@@ -759,6 +802,8 @@ def guard_action(
     mode = str(contract["task_mode"])
     if action not in contract.get("allowed_actions", []):
         raise ContractError(f"scope_violation:{mode}:{action}")
+    if action in RESOURCE_GATED_ACTIONS and "runtime_resource_admission" not in successful_action_names(contract):
+        raise ContractError(f"runtime_resource_admission_required:{action}")
     executor = (contract.get("canonical_executors") or {}).get(action)
     if not executor:
         raise ContractError(f"executor_not_frozen:{action}")

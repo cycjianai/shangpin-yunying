@@ -90,8 +90,9 @@ OCR → 已验证的另一目标渠道同一事实 → 当前平台精确候选�
 
 ## 5. 渐进并发与断点续跑
 
-先通过 1 条 UI canary、1 条直接接口 canary、50 条只读扫描和 10 条多品类实写。全量从并发 1 起步，连续健康波次按
-`1→2→4→6` 提升；出现 429、请求失败或异常长尾时降档。只读请求可重试，mutation 固定一次并靠独立回读判定。
+先通过统一资源准入、1 条 UI canary、1 条直接接口 canary、50 条只读扫描和 10 条多品类实写。全量默认复用 1 个
+热 writer；只有同量 canary 端到端更快且资源余量持续通过才按 `1→2→4` 提升，硬上限 4。出现 429、请求失败、
+异常长尾或资源压力时粘滞降档。只读请求可重试，mutation 固定一次并靠独立回读判定。
 
 每轮 `AoxiangChannelEngine.exportTask(taskId)` 输出
 `aoxiang-channel-fill-checkpoint-v1`。恢复时只跳过 `verified/verified_no_change`，blocked 与 failed 必须基于新的详情

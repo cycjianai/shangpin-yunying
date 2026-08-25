@@ -16,6 +16,20 @@ def issue_text(issue: dict) -> str:
     return "：".join(filter(None, [str(issue.get("field_name") or ""), str(issue.get("comment") or "")]))
 
 
+def collect_runtime_metrics(*artifacts: dict) -> dict:
+    """Carry forward only metrics emitted by this run; never invent batch facts."""
+    merged: dict = {}
+    for artifact in artifacts:
+        for candidate in (
+            artifact.get("runtime_metrics"),
+            artifact.get("metrics"),
+            (artifact.get("summary") or {}).get("metrics"),
+        ):
+            if isinstance(candidate, dict):
+                merged.update({str(key): value for key, value in candidate.items()})
+    return merged
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
@@ -109,6 +123,7 @@ def main() -> int:
         "rescan_stable": rescan_ids is not None,
         "report_ready": len(items) == int(manifest.get("unique_spu_count") or 0),
         "completion_ready": rescan_ids is not None and not rescan_ids and not any(row["blockers"] for row in values),
+        "metrics": collect_runtime_metrics(manifest, execution, evidence, field_plan),
     }
     output = {"schema": "meituan-operations-checkpoint-v1", "summary": summary, "items": items}
     Path(args.output).write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

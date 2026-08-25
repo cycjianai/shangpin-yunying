@@ -324,7 +324,7 @@ const feedbackRows = [
   HEADERS[SHEETS[5]],
   ["跨平台字段结构不同", "先复用同一商品另一渠道的事实，再转换成目标渠道所需的数值/单位或复合结构", "取暖器500W、11–20㎡样本保存并回读通过"],
   ["类目候选与商品标题不完全一致", "仅对非监管字段按标题与候选的最长有效语义重合选择；监管字段禁止猜测", "收纳包样本保存并回读通过"],
-  ["高并发写入需要兼顾速度与稳定性", "读写分波次，自适应1→2→4→6；限流或失败立即降档，保存请求不盲重试", `峰值并发${Number(summary.peakConcurrency || 0)}，限流${Number(summary.metrics?.rateLimits || 0)}次`],
+  ["并发写入需要兼顾速度与资源", "统一资源准入后默认单热页，只按1→2→4升档；限流、失败或资源压力立即粘滞降档，保存请求不盲重试", `峰值并发${Number(summary.peakConcurrency || 0)}，限流${Number(summary.metrics?.rateLimits || 0)}次`],
   ["监管事实字段", "仅接受平台匹配值、现有渠道有效值或标题/规格明确事实，缺证时隔离", "最终残差经独立回读门禁"],
 ];
 writeTableSheet(feedbackSheet, feedbackRows[0], feedbackRows.slice(1), [34, 68, 48], "ChannelStrategyFeedback");

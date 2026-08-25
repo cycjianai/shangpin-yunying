@@ -209,8 +209,8 @@ function extractJson(text) {
 
 function remoteRunnerSource(payload) {
   return `
-process.chdir('/home/yuandian/backend');
-require('/home/yuandian/backend/scripts/meituan_product_optimization_basic_info_fill.js');
+const backendRoot = String(process.env.YD_BACKEND_ROOT || '/home/saas/repo/backend').trim();
+process.chdir(backendRoot);
 const input = ${JSON.stringify(payload)};
 const key = String(process.env.MEITUAN_ATTRIBUTE_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || '').trim();
 const base = String(process.env.MEITUAN_ATTRIBUTE_LLM_BASE_URL || process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\\/+$/, '');

@@ -25,7 +25,7 @@
 | `unavailable_one_pass` | 按逐 SPU 审核原文处理并区分物化与审核退出 | `run-contract-541`、错误矩阵、普通字段、合规图片、审核反馈闭环 | 跨 SPU 猜事实、伪造法定材料、重复 provider submit、重复 final save |
 | `qualification_images_only` | 只处理用户指定的图片槽位 | 槽位审计、同 SPU 证据、正式提示词、一次 submit、上传、保存、槽位回读 | 普通字段全量补齐、不可售原因扩张、法定证照生图、无预算 provider submit |
 | `plugin_attribute_fill` | 运行/验收插件自己的商品属性链路 | 插件任务、1→10→100 实机门、字段回读、内存与交付率验证 | 改走 CDP 直连替代插件、修改无关插件功能、复用直连并发模型 |
-| `copy_history_retry` | 原失败旧 SPU 各自得到唯一新主档 SPU | 原结果冻结、成员门、1 条 canary、插件新增、主档独立回读、9 列映射表 | 非清单商品、宽泛按钮选择器、未知结果自动重发、静默删除重复主档 |
+| `copy_history_retry` | 原失败旧 SPU 各自得到唯一新主档 SPU | 原结果冻结、成员门、1 条 canary、插件新增、主档独立回读、内部映射证据、统一 7 表 | 非清单商品、宽泛按钮选择器、未知结果自动重发、专用九列表、静默删除重复主档 |
 
 `channel_attributes_only` 的硬预算永远是：`ocr=0`、`media_scan=0`、`barcode_scan=0`、`bocha=0`、`web_search=0`、`llm=0`、`provider_submit=0`、`provider_query=0`、`image_upload=0`。即使这些能力在同一 Skill 中存在，也不得调用。
 
@@ -49,7 +49,7 @@ python3 scripts/run_task_action.py \
 - `qnh_direct.mjs` 的预检、详情、建议、单计划 dry-run/保存与最终详情读取子命令
 - `qnh_direct.mjs probe-exact-editor-frames` 的 5–10 条同页精确 frame 只读能力实验；平台 mutation 固定为 0
 - `qnh_direct.mjs apply-prepared-barrier-batch` 的精确编辑页预热屏障、集中保存、统一回读实验；仅限用户明确授权提速、
-  1–10 条 ready 计划、资源门通过且每个 SPU 拥有独立编辑页时使用
+  1–4 条 ready 计划、资源门通过且每个 SPU 拥有独立编辑页时使用
 - `build_channel_contract_v2_plans.py`
 - `run_qnh_batch.sh`
 - `validate_channel_contracts.py`
@@ -94,7 +94,7 @@ python3 scripts/run_task_action.py \
 - 列表 profile 只接受当前列表文档原生 `POST page-query` 的 HTTP 2xx 证据，可冻结 4.2.0、4.2.4 或 4.3.0。
 - 4.3.0 同租户详情/建议 query-only 可复用已冻结列表页并按目标请求逐次精确签名；mutation 只接受当前精确 SPU 编辑页原生 `POST detail` 的 HTTP 2xx、页面 SPU 与 body `spuId` 三方一致证据。
 - 列表 query-only 只允许同一页面内最多 5 个 fetch，不创建商品标签；mutation 对同一 SPU 始终单飞。用户明确授权
-  当前任务提速后，不同 SPU 必须使用相互独立的精确编辑页 worker，按 2→4→6→8→10 渐进放量并受宿主内存门约束。
+  当前任务提速后，不同 SPU 必须使用相互独立的精确编辑页 worker，并先过统一资源准入；只按 1→2→4 渐进放量，硬上限 4。
 - 每个自定义请求必须对最终 URL、POST 方法和最终 body 直接调用 H5guard；明文 a9 版本必须等于 URL 版本，opaque a9 只接受本次精确直签。
 - 4.2.0/4.2.4 旧路径继续保留；未知版本、错 endpoint、错页面、错 SPU、第二次不一致和 HTTP 403 后改版一律失败关闭。
 - 4.3.0 每个 worker 逐 SPU 单飞并及时关闭内部编辑标签；worker 页可以复用但不得跨并发商品共享。首次进入目标页时
@@ -104,7 +104,8 @@ python3 scripts/run_task_action.py \
   或判任务失败。安全边界由随后精确 SPU 编辑页原生 detail 证据承担，任何证据不完整仍然零保存。
 - 每个 4.3.0 短批进程必须先完成一次无商品绑定、完成即关闭的 10 秒 SPA 引导页，再创建真实 worker。引导页不读
   目标商品且不得进入保存路径；其唯一目的，是避免短进程第一个冷 worker 在路由器未就绪时吞掉首个真实 SPU。
-- 引导页之后的第一个真实 SPU 固定单飞；成功完成后才开放2并发，再按2/10/20/30个真实完成项升到4/6/8/10。
+- 引导页之后的第一个真实 SPU 固定单飞；成功完成后才开放 2 并发，累计 10 个真实终态且同量 canary 更快、资源
+  余量持续通过后才开放 4 并发；4 是硬上限。
   首商品没有精确 detail 时批次失败关闭，不得用第二个并发商品替它暖机。
 - 进程内任何资源降档都必须输出 `runtimePressureObserved`；外层观察器同时消费软降档与硬回收，把后续任务上限
   粘滞为 `max(1, peak-2)`。4→2 后若 2 路仍触发回收，固定转为 1 个长驻热 worker；资源短暂恢复不得抹掉该上限。

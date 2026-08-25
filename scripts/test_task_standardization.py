@@ -6,6 +6,8 @@
 2. 最终结构问题不为零、Excel Schema 漂移或 Skill/脚本哈希漂移时禁止宣称完成。
 3. 只有固定动作、完整 SPU 终态、独立全量验证和标准工作簿全部通过才允许 complete=true。
 4. 交付链接只能来自 execution 运行的机器交付门；只读复核表不得冒充执行结果。
+5. 平台请求、writer、回读和事实判定必须隔离；只有业务终态、审计、Excel 与完成门允许共享。
+6. 所有平台动作先过资源准入，writer 只允许 1→2→4；所有任务最终只交付统一七表。
 """
 
 from __future__ import annotations
@@ -95,6 +97,7 @@ def final_details(manifest: dict) -> dict:
 
 def record_fixture_actions(contract: dict) -> None:
     for action in (
+        "runtime_resource_admission",
         "session_preflight",
         "read_details_initial",
         "build_channel_plans",
@@ -131,6 +134,21 @@ def main() -> int:
     meituan_source = (ROOT / "references" / "platform-meituan.md").read_text(
         encoding="utf-8"
     )
+    unified_success_source = (
+        ROOT / "references" / "unified-business-success-contract-v1.md"
+    ).read_text(encoding="utf-8")
+    resource_contract_source = (
+        ROOT / "references" / "runtime-resource-contract-v1.md"
+    ).read_text(encoding="utf-8")
+    protected_request_source = (
+        ROOT / "references" / "qnh-protected-request-maintenance-v1.md"
+    ).read_text(encoding="utf-8")
+    excel_contract_source = (ROOT / "references" / "excel-schema-v1.md").read_text(
+        encoding="utf-8"
+    )
+    runtime_policy = json.loads(
+        (SCRIPTS / "runtime_resource_policy.json").read_text(encoding="utf-8")
+    )
     operations_schema = json.loads(
         (SCRIPTS / "operations_workbook_schema.json").read_text(encoding="utf-8")
     )
@@ -147,6 +165,62 @@ def main() -> int:
         assert f"`{task_mode}`" in module_map_source
     results["single_main_and_platform_module_contract"] = True
     for marker in (
+        "本合同统一“商品治理何时算业务成功”，不统一平台协议",
+        "materialized_readback",
+        "verified_complete",
+        "verified_no_change",
+        "waiting_platform_review",
+        "manual_evidence_required",
+        "pending_verify",
+        "verified_cleared >= verified_target",
+        "禁止盲目重发",
+        "product-governance-operations-workbook-v1",
+    ):
+        assert marker in unified_success_source, marker
+    assert "unified-business-success-contract-v1.md" in skill_source
+    assert "禁止直接复用请求、签名" in module_map_source
+    results["platform_isolation_and_unified_business_success"] = True
+    assert "qnh-protected-request-maintenance-v1.md" in skill_source
+    for marker in ("受保护请求工程维护轨道", "请求入口"):
+        assert marker in skill_source, marker
+    for marker in (
+        "/home/saas/repo", "current_tab_extension", "backend_managed_context",
+        "4.2.0", "4.2.4", "4.3.0", "qnh_page_context_unavailable",
+        "qnh_store_context_mismatch", "qnh_signature_unavailable",
+        "qnh_risk_rejected", "`1→2→4`", "`1→5→20`", "统一业务成功合同",
+    ):
+        assert marker in protected_request_source, marker
+    assert "1→2→10" not in skill_source
+    assert "4/6/8/10" not in skill_source
+    assert "/home/yuandian" not in protected_request_source
+    assert "/home/yuandian" not in (
+        SCRIPTS / "aoxiang_deepseek_semantic_planner.mjs"
+    ).read_text(encoding="utf-8")
+    results["protected_request_engineering_track"] = True
+    for marker in (
+        "所有平台、所有任务模式",
+        "默认只使用一个可复用热 writer 页",
+        "`1→2→4`",
+        "4 个 writer 是单任务全平台硬上限",
+        "禁止一商品一标签",
+        "runtime-resource-admission.json",
+        "runtime-resource-summary.json",
+        "不得宣称正式实现或完成",
+    ):
+        assert marker in resource_contract_source, marker
+    assert runtime_policy["page_budget"]["scale_steps"] == [1, 2, 4]
+    assert runtime_policy["page_budget"]["max_writer_pages"] == 4
+    assert runtime_policy["admission"]["min_mem_available_bytes"] >= 5 * 1024**3
+    assert "全部任务模式" in excel_contract_source
+    assert "不得另交专用 9 列工作簿" in skill_source
+    copy_adapter_source = (SCRIPTS / "platforms/qnh/copy_history_retry/adapter.py").read_text(encoding="utf-8")
+    assert "product-governance-operations-workbook-v1" in copy_adapter_source
+    assert "workbook_sheet_order_mismatch" in copy_adapter_source
+    assert "qnh-copy-mapping-workbook-validation-v1" not in copy_adapter_source
+    assert "runtime_resource_admission" in MODE_ALLOWED_ACTIONS["channel_attributes_only"]
+    assert all("runtime_resource_admission" in actions for actions in MODE_ALLOWED_ACTIONS.values())
+    results["all_platform_resource_and_all_task_workbook_prerequisites"] = True
+    for marker in (
         "资质图 `qualification_images_only`：`planned`",
         "optimizedInfoList",
         "lackQuaInfo",
@@ -159,7 +233,12 @@ def main() -> int:
         "saveType=2",
         "auditSource=1",
         "product-governance-operations-workbook-v1",
-        "默认 4、上限 6",
+        "默认 1 个可复用热 writer",
+        "最终 `verified_cleared` 配额",
+        "DeepSeek 是本",
+        "唯一语义决策源",
+        "每波最多 25 SPU",
+        "按原 task ID 续跑",
         "只能 dry-run 或小样本",
     ):
         assert marker in meituan_source, marker
@@ -367,6 +446,55 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
+        blocked_before_admission = run(
+            PYTHON,
+            str(SCRIPTS / "run_task_action.py"),
+            "--contract",
+            str(contract_path),
+            "--action",
+            "session_preflight",
+            "--",
+            PYTHON,
+            str(SCRIPTS / "qnh_extension_receipt.py"),
+            "preflight",
+            "--receipt",
+            str(extension_receipt),
+            expected=2,
+        )
+        assert "runtime_resource_admission_required" in blocked_before_admission.stderr
+        resource_metrics = run_dir / "runtime-resource-metrics.json"
+        resource_metrics.write_text(
+            json.dumps(
+                {
+                    "total_memory_bytes": 16 * 1024**3,
+                    "mem_available_bytes": 7 * 1024**3,
+                    "task_process_rss_bytes": 256 * 1024**2,
+                    "task_owned_live_pages": 2,
+                    "control_pages": 2,
+                    "writer_pages": 0,
+                    "bootstrap_pages": 0,
+                    "bounded_runtime": True,
+                    "runtime_pressure_observed": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        run(
+            PYTHON,
+            str(SCRIPTS / "run_task_action.py"),
+            "--contract",
+            str(contract_path),
+            "--action",
+            "runtime_resource_admission",
+            "--",
+            PYTHON,
+            str(SCRIPTS / "runtime_resource_policy.py"),
+            "validate",
+            "--metrics",
+            str(resource_metrics),
+            "--output",
+            str(run_dir / "runtime-resource-admission.json"),
+        )
         run(
             PYTHON,
             str(SCRIPTS / "run_task_action.py"),
@@ -381,6 +509,7 @@ def main() -> int:
             "--receipt",
             str(extension_receipt),
         )
+        results["runtime_resource_admission_blocks_platform_actions"] = True
         results["chrome_extension_receipt_guard"] = True
         run(
             PYTHON,

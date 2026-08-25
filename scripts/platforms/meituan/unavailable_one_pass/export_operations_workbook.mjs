@@ -51,28 +51,33 @@ table(sheets['SPU清单'], schema.headers['SPU清单'], productRows, [18, 56, 78
 table(sheets['字段级审计'], schema.headers['字段级审计'], auditRows, [18, 38, 10, 14, 24, 28, 30, 30, 34, 26], 'MeituanAudit');
 table(sheets['平台不存在'], schema.headers['平台不存在'], [], [18, 26, 44], 'MeituanMissing');
 const summary = checkpoint.summary;
+const metrics = summary.metrics || {};
+const metric = (name) => Object.hasOwn(metrics, name) ? metrics[name] : '未记录';
+const exited = items.filter((x) => x.still_in_target_set === false).length;
+const readbackPassed = auditRows.filter((r) => String(r[8]).includes('回读通过')).length;
+const operationItems = auditRows.filter((r) => r[4] !== '阻塞项').length;
+const completionRate = summary.unique_spu_count ? exited / summary.unique_spu_count : 0;
 const summaryRows = [
   ['Excel Schema版本', schema.schema_version], ['Skill版本', args['skill-version']], ['执行平台', '美团闪购商家平台'], ['任务类型', '无法售卖/审核未通过一次过治理'], ['合同指纹SHA256', args['contract-fingerprint']], ['门店/租户名称', args['store-name']],
-  ['源清单商品数', summary.unique_spu_count], ['平台现存商品数', summary.unique_spu_count], ['平台不存在商品数', 0], ['最终合同通过商品数', 0], ['完成率', 0], ['本次有操作商品数', summary.modified_unique_spu], ['无需修改商品数', 0], ['唯一操作项数', auditRows.filter((r) => r[4] !== '阻塞项').length], ['最终回读通过项数', auditRows.filter((r) => String(r[8]).includes('回读通过')).length], ['最终问题数', summary.with_blockers],
-  ['OCR调用数', 2413], ['媒体扫描数', 1377], ['条码扫描数', 1377], ['博查调用数', 0], ['Web搜索调用数', 0], ['模型调用数', 7], ['Provider Submit数', 0], ['Provider Query数', 0], ['图片上传数', 0], ['验收口径', '保存受理、字段物化、独立回读、平台复审退出四层分开；真实资料缺失不冒充完成'],
+  ['源清单商品数', summary.unique_spu_count], ['平台现存商品数', summary.unique_spu_count], ['平台不存在商品数', 0], ['最终合同通过商品数', exited], ['完成率', completionRate], ['本次有操作商品数', summary.modified_unique_spu], ['无需修改商品数', items.filter((x) => !(x.changes || []).length && !(x.blockers || []).length).length], ['唯一操作项数', operationItems], ['最终回读通过项数', readbackPassed], ['最终问题数', summary.with_blockers],
+  ['OCR调用数', metric('ocr_calls')], ['媒体扫描数', metric('media_scans')], ['条码扫描数', metric('barcode_scans')], ['博查调用数', metric('bocha_calls')], ['Web搜索调用数', metric('web_search_calls')], ['模型调用数', metric('model_calls')], ['Provider Submit数', metric('provider_submit_calls')], ['Provider Query数', metric('provider_query_calls')], ['图片上传数', metric('image_uploads')], ['验收口径', '保存受理、字段物化、独立回读、平台复审退出四层分开；真实资料缺失不冒充完成'],
 ];
 table(sheets['执行汇总'], schema.headers['执行汇总'], summaryRows, [34, 84], 'MeituanSummary');
 sheets['执行汇总'].getRange('B11').format.numberFormat = '0.0%';
-const exited = items.filter((x) => x.still_in_target_set === false).length;
-const verifyRows = [['最终详情分片', '官方详情全量读取 1377/1377；官方审核集合稳定双快照'], ['源清单商品数', summary.unique_spu_count], ['平台现存商品数', summary.unique_spu_count], ['平台不存在商品数', 0], ['最终合同通过商品数', 0], ['最终回读通过项数', auditRows.filter((r) => String(r[8]).includes('回读通过')).length], ['最终问题数', summary.with_blockers], ['完成率', 0]];
+const verifyRows = [['最终详情分片', `${items.length}/${summary.unique_spu_count}；${summary.rescan_stable ? '官方审核集合已复扫' : '官方审核集合未复扫'}`], ['源清单商品数', summary.unique_spu_count], ['平台现存商品数', summary.unique_spu_count], ['平台不存在商品数', 0], ['最终合同通过商品数', exited], ['最终回读通过项数', readbackPassed], ['最终问题数', summary.with_blockers], ['完成率', completionRate]];
 table(sheets['最终结构复核'], schema.headers['最终结构复核'], verifyRows, [38, 82], 'MeituanVerify');
 sheets['最终结构复核'].getRange('B9').format.numberFormat = '0.0%';
 const feedbackRows = [
   ['Chrome 连接弹窗反复出现', '优先使用 Codex Chrome 插件 scoped CDP 接管当前登录页；仅在插件不可用且身份校验通过时使用 managed CDP', '当前会话无重复远程调试授权弹窗'],
-  ['列表总数大于唯一SPU数', '连续两轮冻结总记录与唯一SPU集合；重复记录单独计数', '1379 条记录稳定对应 1377 个唯一SPU，重复 2 条'],
+  ['列表总数大于唯一SPU数', '连续两轮冻结总记录与唯一SPU集合；重复记录单独计数', `${summary.platform_record_count} 条记录对应 ${summary.unique_spu_count} 个唯一SPU，重复 ${summary.duplicate_record_count} 条`],
   ['只改条码却丢失既有专项图', '每次保存都把完整 cpvGuidePicMap 序列化回 cpvGuidePicList，并做媒体回读', '原图已恢复；后续批次零媒体丢失'],
   ['详情图裸URL被平台拒绝', '复用主图时统一追加 ?w=1080&h=1080', '详情图 canary 与批次回读通过'],
   ['容量单位 L 在预校验中丢失', '把 g/kg/ml/L 映射为平台单位标签 克(g)/千克(kg)/毫升(ml)/升(L)', '容量 canary 回读通过'],
   ['修改会退出营销活动', 'actCheck 命中停止活动时失败关闭，不自动牺牲活动资格', '相关商品未发送最终保存并进入阻塞清单'],
-  ['资质图可能被普通主图冒充', '只接受同商品原图 OCR 严格命中或权威来源；证书/备案/注册材料禁止生成', '2413 张图仅 9 张通过，其他全部阻塞'],
+  ['资质图可能被普通主图冒充', '只接受同商品原图 OCR 严格命中或权威来源；证书/备案/注册材料禁止生成', `本次 OCR ${metric('ocr_calls')}，证据匹配 ${metric('evidence_matches')}，其余按真实资料门阻塞`],
 ];
 table(sheets['问题与策略回灌'], schema.headers['问题与策略回灌'], feedbackRows, [34, 72, 52], 'MeituanFeedback');
-const performanceRows = [['处理商品数', summary.unique_spu_count], ['唯一操作项数', auditRows.filter((r) => r[4] !== '阻塞项').length], ['总墙钟秒', '本次交互式会话'], ['平均秒/商品', '不以点击间隔冒充端到端耗时'], ['实际峰值并发', '读取8；写入1'], ['配置并发上限', '读取10；写入6'], ['请求数', '官方列表+详情+保存+回读'], ['请求错误数', 9], ['限流次数', 0], ['保存checkpoint文件数', 1], ['保存结果事件数（含残差）', Object.values(checkpoint.items).reduce((n, x) => n + (x.events || []).length, 0)], ['verified事件', summary.modified_unique_spu], ['failed响应事件（均经复读判定）', 9], ['OCR调用数', 2413], ['媒体扫描数', 1377], ['条码扫描数', 1377], ['博查调用数', 0], ['Web搜索调用数', 0], ['模型调用数', 7], ['Provider Submit数', 0], ['Provider Query数', 0], ['图片上传数', 0]];
+const performanceRows = [['处理商品数', summary.unique_spu_count], ['唯一操作项数', operationItems], ['总墙钟秒', metric('wall_seconds')], ['平均秒/商品', metric('average_seconds_per_product')], ['实际峰值并发', metric('peak_concurrency')], ['配置并发上限', metric('configured_concurrency_limit')], ['请求数', metric('requests')], ['请求错误数', metric('request_errors')], ['限流次数', metric('rate_limits')], ['保存checkpoint文件数', 1], ['保存结果事件数（含残差）', Object.values(checkpoint.items).reduce((n, x) => n + (x.events || []).length, 0)], ['verified事件', summary.modified_unique_spu], ['failed响应事件（均经复读判定）', metric('failed_responses')], ['OCR调用数', metric('ocr_calls')], ['媒体扫描数', metric('media_scans')], ['条码扫描数', metric('barcode_scans')], ['博查调用数', metric('bocha_calls')], ['Web搜索调用数', metric('web_search_calls')], ['模型调用数', metric('model_calls')], ['Provider Submit数', metric('provider_submit_calls')], ['Provider Query数', metric('provider_query_calls')], ['图片上传数', metric('image_uploads')]];
 table(sheets['性能与外部调用统计'], schema.headers['性能与外部调用统计'], performanceRows, [42, 72], 'MeituanPerformance');
 for (const name of schema.sheets) { const used = sheets[name].getUsedRange(); if (used) used.format.font = { name: 'Aptos', size: 10, color: '#24292F' }; }
 if (productRows.length) {

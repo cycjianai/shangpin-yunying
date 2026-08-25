@@ -1,4 +1,4 @@
 interface:
-  display_name: "多平台商品渠道治理"
-  short_description: "四平台商品治理与牵牛花失败搬品重试，独立回读交付"
-  default_prompt: "使用 $qnh-fill-channel-unavailable，锁定平台与任务模式，执行属性、资质图、不可售治理或牵牛花失败搬品重试，并独立回读交付。"
+  display_name: "多平台商品治理"
+  short_description: "受保护请求兼容、多平台商品治理与统一七表验收"
+  default_prompt: "使用 $qnh-fill-channel-unavailable，先隔离平台请求入口并通过资源准入，再完成商品治理、独立回读与统一七表交付。"

@@ -16,6 +16,10 @@
 
 ## 2. 100% 完成口径
 
+四个平台先统一遵守 [统一业务成功合同](unified-business-success-contract-v1.md)。平台适配器负责产生可信的身份、
+写前事实、写回收据、独立回读和范围复扫证据；共享核心只消费这些证据，不解释平台响应，也不替平台选择字段值。
+本节其余条目是 QNH `channel_attributes_only` 对该共同合同的具体映射。
+
 - 目标始终是源清单中“平台当前存在”的全部 SPU 的全部渠道类目属性满足类型结构合同，而不是页面非空、保存 HTTP 200 或本轮修改项通过。
 - 先冻结源清单并去重；平台明确返回记录不存在的 SPU 单列 `missing_on_platform`，保留在 Excel，但从平台现存填充率分母剔除。
 - 最终必须重新读取所有平台现存 SPU 并运行 `validate_channel_contracts.py`。仅当 `products_with_issues=0` 且 `issue_count=0` 才能报告现存商品填充率 100%。
@@ -57,7 +61,8 @@
 因没有平台写入可只补检失败项。正式保存 checkpoint 的 failed/unknown 语义不变，必须先全量回读再决定 residual。
 新 worker 在列表页只要求 H5guard 可用；可选 SPA 标签壳不挂载不构成失败，目标编辑页的原生 detail 精确绑定才是写前硬门。
 每个短批进程还必须先用一个无商品绑定、10 秒后关闭的引导页暖加载 SPA；首个真实商品不得承担冷启动探针职责。
-引导页后第一个真实商品固定单飞成功，随后才允许2并发和后续渐进扩量；这个单商品硬门不得被配置上限10覆盖。
+引导页后第一个真实商品固定单飞成功，随后才允许 2 并发；只有同量 canary 更快且资源余量持续通过才允许 4 并发，
+任何历史配置值都不得覆盖 4 的硬上限。
 
 已验证品牌结构：若当前租户、当前类目的品牌属性为 `attrValueType=4`，并且当前详情同时返回空 `optionList` 与空 `attrValueList`，远端品牌查询也无候选，则这是自定义文本品牌合同，不应伪造品牌编码。使用 `customValue.attrValueId="0"` 与受长度约束的品牌文本物化，先做单商品 dry-run、保存和独立回读；只有该精确形状允许此分支，有候选列表时仍必须使用当前候选的 ID/标签。
 
@@ -67,7 +72,7 @@
 - 日期使用任务交付日的 Asia/Shanghai 月日；租户名称来自本次 `session_identity.json` 的当前租户可见名称，移除文件名非法字符和空白；数量使用源表去重后的 SPU 数，不使用平台现存数、修改数或成功数。
 - 使用 `scripts/standard_output_name.py` 生成路径，避免人工拼错口径。
 - 运营交付只包含统一 7 张工作表；不复制来源各异的其他业务工作表。B 列逐 SPU 写执行前问题，C 列写本任务实际处理内容与最终独立回读值。历史已执行记录若有可信审计，应合并而不是覆写成“无需修改”。
-- 四个平台的属性信息与资质图任务严格使用 `product-governance-operations-workbook-v1`，工作表名称、顺序和表头见
+- 四个平台的所有商品治理任务严格使用 `product-governance-operations-workbook-v1`，工作表名称、顺序和表头见
   [excel-schema-v1.md](excel-schema-v1.md)；“至少包含”不再允许用近义工作表替代。
 - 只允许平台模块注册的 canonical 导出器导出；牵牛花使用 `export_standard_channel_fill_workbook.py`，翱象使用
   `export_multiplatform_channel_workbook.mjs`，两者及未来模块必须读取同一个 `operations_workbook_schema.json`，并通过
@@ -79,5 +84,5 @@
 - 历史聚合审计缺项时，允许从同租户逐商品结果补齐，但每个结果必须满足顶层 verified、requested/verification
   一一对应且逐字段 verified。只有 plan、preview、保存响应或部分回读的旧文件固定拒绝，不能把“曾计划”写成“曾执行”。
 
-`copy_history_retry` 的交付是专用 9 列映射工作簿，不进入属性/资质统一 7 表 Schema。所有 ID 与条码按文本保存；每个
-目标 SPU/SKU 必须先从当前主档独立回读，再由专用 handoff 校验工作簿 SHA256、列顺序、源 SPU 数和视觉验证收据。
+`copy_history_retry` 的 9 个映射事实只作为内部执行证据，不得直接交付专用工作簿。所有 ID 与条码按文本保存；每个
+目标 SPU/SKU 必须先从当前主档独立回读，再映射进统一 7 表，由 handoff 校验 Schema、工作表顺序、源 SPU 数与文件指纹。

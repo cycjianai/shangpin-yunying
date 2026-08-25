@@ -25,8 +25,12 @@ from qnh_task_contract import read_ledger, verify_contract  # noqa: E402
 MANIFEST_SCHEMA = "qnh-copy-history-failure-manifest-v1"
 MAPPING_SCHEMA = "qnh-copy-history-mapping-v1"
 READBACK_SCHEMA = "qnh-copy-platform-readback-v1"
-WORKBOOK_VALIDATION_SCHEMA = "qnh-copy-mapping-workbook-validation-v1"
-HANDOFF_SCHEMA = "qnh-copy-mapping-handoff-v1"
+OPERATIONS_WORKBOOK_SCHEMA = "product-governance-operations-workbook-v1"
+ACCEPTED_VALIDATION_SCHEMAS = {
+    "qnh-channel-fill-workbook-validation-v1",
+    "multiplatform-channel-fill-workbook-validation-v1",
+}
+HANDOFF_SCHEMA = "qnh-copy-operations-workbook-handoff-v1"
 MAPPING_COLUMNS = [
     "旧SPU",
     "旧SKU ID",
@@ -329,21 +333,29 @@ def command_handoff(args: argparse.Namespace) -> int:
         issues.append("task_role_not_execution")
     if not completion.get("complete"):
         issues.append("completion_not_complete")
-    if validation.get("schema") != WORKBOOK_VALIDATION_SCHEMA or not validation.get("valid"):
+    if validation.get("schema") not in ACCEPTED_VALIDATION_SCHEMAS or not validation.get("valid"):
         issues.append("workbook_validation_failed")
     if not workbook.is_file():
         issues.append("workbook_missing")
     else:
-        if validation.get("workbook_path") != str(workbook):
+        validation_path = validation.get("workbook") or validation.get("workbook_path")
+        if validation_path != str(workbook):
             issues.append("workbook_path_mismatch")
-        if validation.get("workbook_sha256") != sha256_file(workbook):
+        if validation.get("workbook_sha256") and validation.get("workbook_sha256") != sha256_file(workbook):
             issues.append("workbook_sha256_mismatch")
-    if validation.get("columns") != MAPPING_COLUMNS:
-        issues.append("workbook_columns_mismatch")
-    if int(validation.get("product_count") or 0) != int(completion.get("source_spu_count") or -1):
+        workbook_probe = load_workbook(workbook, read_only=True)
+        try:
+            actual_sheets = workbook_probe.sheetnames
+        finally:
+            workbook_probe.close()
+        operations_schema = json.loads((SCRIPTS_ROOT / "operations_workbook_schema.json").read_text(encoding="utf-8"))
+        if operations_schema.get("schema_version") != OPERATIONS_WORKBOOK_SCHEMA:
+            issues.append("operations_schema_mismatch")
+        if actual_sheets != operations_schema.get("sheets"):
+            issues.append("workbook_sheet_order_mismatch")
+    validation_count = validation.get("source_unique_spu", validation.get("products", 0))
+    if int(validation_count or 0) != int(completion.get("source_spu_count") or -1):
         issues.append("workbook_product_count_mismatch")
-    if not validation.get("visual_verified"):
-        issues.append("workbook_visual_not_verified")
     payload = {
         "schema": HANDOFF_SCHEMA,
         "ready": not issues,

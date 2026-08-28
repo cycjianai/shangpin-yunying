@@ -1,0 +1,175 @@
+{
+  "schema_version": "multiplatform-product-capability-registry-v1",
+  "capability_statuses": ["implemented", "runtime_guided", "planned"],
+  "shared": {
+    "execution_references": [
+      "references/unified-business-success-contract-v1.md",
+      "references/runtime-resource-contract-v1.md"
+    ],
+    "output_references": [
+      "references/core/output-contract.md",
+      "references/excel-schema-v1.md"
+    ],
+    "diagnosis_references": [
+      "references/debugging-and-rollout.md"
+    ]
+  },
+  "platforms": {
+    "qnh": {
+      "display_name": "牵牛花",
+      "adapter_reference": "references/platforms/qnh.md",
+      "tasks": {
+        "channel_attributes_only": {
+          "status": "implemented",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": ["references/channel-attribute-contract-v2.md"]
+        },
+        "unavailable_one_pass": {
+          "status": "implemented",
+          "task_reference": "references/tasks/unavailable-one-pass.md",
+          "detail_references": [
+            "references/run-contract-541.md",
+            "references/error-playbook.md",
+            "references/field-safety.md"
+          ]
+        },
+        "qualification_images_only": {
+          "status": "implemented",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": [
+            "references/qualification-image-policy.md",
+            "references/field-safety.md"
+          ]
+        },
+        "plugin_attribute_fill": {
+          "status": "implemented",
+          "task_reference": "references/tasks/plugin-attribute-fill.md",
+          "detail_references": ["references/channel-attribute-contract-v2.md"]
+        },
+        "copy_history_retry": {
+          "status": "implemented",
+          "task_reference": "references/tasks/copy-history-retry.md",
+          "detail_references": ["references/copy-history-retry-contract-v1.md"]
+        },
+        "protected_request_maintenance": {
+          "status": "runtime_guided",
+          "uses_operations_workbook": false,
+          "task_reference": "references/tasks/protected-request-maintenance.md",
+          "detail_references": ["references/qnh-protected-request-maintenance-v1.md"]
+        }
+      }
+    },
+    "meituan": {
+      "display_name": "美团",
+      "adapter_reference": "references/platforms/meituan.md",
+      "tasks": {
+        "price_push": {
+          "status": "runtime_guided",
+          "task_reference": "references/tasks/price-push.md",
+          "detail_references": [
+            "references/business-state-machine.md",
+            "references/meituan.md",
+            "references/evidence-and-completion.md"
+          ]
+        },
+        "product_editing": {
+          "status": "runtime_guided",
+          "task_reference": "references/tasks/product-editing.md",
+          "detail_references": ["references/meituan-product-editing.md"]
+        },
+        "medical_device_store_migration": {
+          "status": "runtime_guided",
+          "task_reference": "references/tasks/medical-device-store-migration.md",
+          "detail_references": ["references/meituan-medical-device-store-migration.md"]
+        },
+        "unavailable_one_pass": {
+          "status": "implemented",
+          "task_reference": "references/tasks/unavailable-one-pass.md",
+          "detail_references": ["references/platform-meituan.md"]
+        },
+        "channel_attributes_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": []
+        },
+        "qualification_images_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": []
+        }
+      }
+    },
+    "eleme": {
+      "display_name": "饿了么",
+      "adapter_reference": "references/platforms/eleme.md",
+      "tasks": {
+        "price_push": {
+          "status": "runtime_guided",
+          "task_reference": "references/tasks/price-push.md",
+          "detail_references": [
+            "references/business-state-machine.md",
+            "references/eleme.md",
+            "references/evidence-and-completion.md"
+          ]
+        },
+        "product_editing": {
+          "status": "planned",
+          "task_reference": "references/tasks/product-editing.md",
+          "detail_references": []
+        },
+        "channel_attributes_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": []
+        }
+      }
+    },
+    "aoxiang": {
+      "display_name": "翱象",
+      "adapter_reference": "references/platforms/aoxiang.md",
+      "tasks": {
+        "channel_attributes_only": {
+          "status": "implemented",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": ["references/aoxiang-channel-contract-v1.md"]
+        },
+        "qualification_images_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": []
+        },
+        "unavailable_one_pass": {
+          "status": "planned",
+          "task_reference": "references/tasks/unavailable-one-pass.md",
+          "detail_references": []
+        }
+      }
+    },
+    "taobao_flash": {
+      "display_name": "淘宝闪购",
+      "adapter_reference": "references/platforms/taobao-flash.md",
+      "tasks": {
+        "channel_attributes_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": []
+        },
+        "qualification_images_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": []
+        },
+        "unavailable_one_pass": {
+          "status": "planned",
+          "task_reference": "references/tasks/unavailable-one-pass.md",
+          "detail_references": []
+        },
+        "price_push": {
+          "status": "planned",
+          "task_reference": "references/tasks/price-push.md",
+          "detail_references": []
+        }
+      }
+    }
+  }
+}

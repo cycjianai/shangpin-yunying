@@ -1,0 +1,24 @@
+{
+  "merged_skill": "multiplatform-product-operations",
+  "version": "1.0.0",
+  "merged_at": "2026-08-28",
+  "sources": [
+    {
+      "repository": "https://github.com/cycjianai/meituan-eleme-price-push-automation",
+      "commit": "d92c4fa18f09d6ab5f4cf24a4d95148308538dc6"
+    },
+    {
+      "repository": "https://github.com/cycjianai/qnh-fill-channel-unavailable",
+      "commit": "a84240caac8867d74647ad386af9619e8ead522d"
+    }
+  ],
+  "architecture": {
+    "entrypoint": "SKILL.md",
+    "machine_router": "scripts/route_skill.py",
+    "capability_registry": "scripts/capability_registry.json",
+    "platform_references": "references/platforms/",
+    "task_references": "references/tasks/",
+    "shared_output_contract": "references/core/output-contract.md",
+    "machine_workbook_schema": "scripts/operations_workbook_schema.json"
+  }
+}

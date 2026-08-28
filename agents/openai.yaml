@@ -1,0 +1,4 @@
+interface:
+  display_name: "多平台商品运营自动化"
+  short_description: "按平台与任务渐进加载，统一写回、回读和七表交付"
+  default_prompt: "使用 $multiplatform-product-operations，先冻结当前平台和单一任务，只加载路由器返回的参考文件，再按统一业务成功合同和七表 Schema 执行与验收。"

@@ -1,0 +1,27 @@
+{
+  "schema": "product-governance-runtime-resource-policy-v1",
+  "policy_version": "1.0.0",
+  "admission": {
+    "min_mem_available_bytes": 5368709120,
+    "min_mem_available_ratio": 0.35,
+    "max_task_process_rss_bytes": 1717986918,
+    "require_bounded_runtime": true
+  },
+  "page_budget": {
+    "default_writer_pages": 1,
+    "max_writer_pages": 4,
+    "max_control_pages": 2,
+    "max_bootstrap_pages": 1,
+    "scale_steps": [1, 2, 4],
+    "bootstrap_must_close_before_writer": true
+  },
+  "pressure": {
+    "sticky_monotonic_downshift": true,
+    "never_stop_other_processes": true,
+    "defer_current_checkpoint": true
+  },
+  "required_receipts": [
+    "runtime-resource-admission.json",
+    "runtime-resource-summary.json"
+  ]
+}

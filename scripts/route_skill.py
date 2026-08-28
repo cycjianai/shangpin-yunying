@@ -21,6 +21,7 @@ TASKS = (
     "qualification_images_only",
     "plugin_attribute_fill",
     "copy_history_retry",
+    "copy_conflict_reconciliation",
     "price_push",
     "product_editing",
     "medical_device_store_migration",
@@ -109,6 +110,8 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("medical_device_store_migration")
     if contains(text, r"原点搬品助手", r"搬品历史", r"历史.*新增失败", r"失败.*重新新增"):
         candidates.add("copy_history_retry")
+    if contains(text, r"新增前后映射", r"搬品.*冲突.*复核", r"名称变化.*条形码变化", r"末尾.*(?:1|一).*回退", r"一样的商品sku"):
+        candidates.add("copy_conflict_reconciliation")
     if contains(text, r"调价", r"价格推送", r"目标价", r"target_price", r"活动价", r"修改原价"):
         candidates.add("price_push")
     if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑"):
@@ -126,6 +129,8 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
     if "medical_device_store_migration" in candidates:
         candidates.discard("product_editing")
     if "copy_history_retry" in candidates:
+        candidates.discard("product_editing")
+    if "copy_conflict_reconciliation" in candidates:
         candidates.discard("product_editing")
     if "unavailable_one_pass" in candidates and "qualification_images_only" in candidates:
         if contains(text, r"只.*(?:资质图|专项图|背签|营养图|3c)", r"仅.*(?:资质图|专项图|背签|营养图|3c)"):

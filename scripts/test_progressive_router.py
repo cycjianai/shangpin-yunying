@@ -33,6 +33,7 @@ def main() -> int:
         ("美团修改店内码并逐SKU回读", "meituan", "product_editing", "runtime_guided"),
         ("翱象补齐美团和饿了么渠道属性", "aoxiang", "channel_attributes_only", "implemented"),
         ("牵牛花重试原点搬品助手历史新增失败", "qnh", "copy_history_retry", "implemented"),
+        ("牵牛花新增前后映射表按末尾1回退名称和条形码做搬品冲突复核", "qnh", "copy_conflict_reconciliation", "runtime_guided"),
         ("淘宝闪购直连商家平台批量调价", "taobao_flash", "price_push", "planned"),
         ("牵牛花排查H5guard 403", "qnh", "protected_request_maintenance", "runtime_guided"),
     ]
@@ -46,7 +47,7 @@ def main() -> int:
         if status == "planned":
             assert payload["side_effect_policy"].startswith("zero_writes")
         else:
-            if task == "protected_request_maintenance":
+            if task in {"protected_request_maintenance", "copy_conflict_reconciliation"}:
                 assert "references/core/output-contract.md" not in payload["load_order"]
                 assert "references/excel-schema-v1.md" not in payload["load_order"]
             else:

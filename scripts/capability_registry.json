@@ -51,6 +51,12 @@
           "task_reference": "references/tasks/copy-history-retry.md",
           "detail_references": ["references/copy-history-retry-contract-v1.md"]
         },
+        "copy_conflict_reconciliation": {
+          "status": "runtime_guided",
+          "uses_operations_workbook": false,
+          "task_reference": "references/tasks/copy-conflict-reconciliation.md",
+          "detail_references": ["references/copy-conflict-reconciliation-contract-v1.md"]
+        },
         "protected_request_maintenance": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,

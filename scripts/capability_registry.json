@@ -57,6 +57,12 @@
           "task_reference": "references/tasks/copy-conflict-reconciliation.md",
           "detail_references": ["references/copy-conflict-reconciliation-contract-v1.md"]
         },
+        "store_sku_replacement": {
+          "status": "runtime_guided",
+          "uses_operations_workbook": false,
+          "task_reference": "references/tasks/store-sku-replacement.md",
+          "detail_references": ["references/store-sku-replacement-contract-v1.md"]
+        },
         "protected_request_maintenance": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,

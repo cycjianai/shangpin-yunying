@@ -1,9 +1,9 @@
 ---
 name: meituan-eleme-price-push-automation
-description: "为已授权的美团、饿了么商家后台实施、审查或排查批量调价与活动推送自动化；适用于浏览器页面能成功但脚本失败、签名或会话异常、商品与活动 ID 映射、多规格 SKU、异步批量任务、写后回读、停止续跑和失败复盘。"
+description: "为已授权的美团、饿了么商家后台实施、审查或排查商品信息编辑、店内码修改、批量调价与活动推送自动化；适用于多字段商品匹配、多规格 SKU、浏览器会话或签名异常、受控并发、异步批量任务、写后物化回读、停止续跑和失败复盘。"
 ---
 
-# 美团饿了么调价推送自动化
+# 美团饿了么商品编辑与调价推送自动化
 
 把策略算价、平台写入和平台验真视为三个独立阶段。策略产生 `target_price`，平台写入只表示请求被接收，只有从平台独立读回目标 SKU 的最终有效价格后才算成功。
 
@@ -20,6 +20,7 @@ description: "为已授权的美团、饿了么商家后台实施、审查或排
 
 - 理解候选筛选、价格动作、任务状态、幂等、停止续跑或补偿时，读 [references/business-state-machine.md](references/business-state-machine.md)。
 - 涉及美团店内码、折扣活动、浏览器强签或美团回读时，读 [references/meituan.md](references/meituan.md)。
+- 涉及美团商品名称、规格、条码、店内码或其他商品属性编辑时，必须读 [references/meituan-product-editing.md](references/meituan-product-editing.md)。
 - 涉及饿了么 mtop、多套门店 ID、多规格、共享活动或延迟校验时，读 [references/eleme.md](references/eleme.md)。
 - 遇到 `403`、`504`、`SESSION_EXPIRED`、`SID_INVALID`、`UNKNOWN_FAIL_CODE`、`verify_mismatch`、写成功但回读失败或并发退化时，读 [references/debugging-and-rollout.md](references/debugging-and-rollout.md)。
 - 设计日志、ID 账本、结果表或完成门时，读 [references/evidence-and-completion.md](references/evidence-and-completion.md)。
@@ -37,6 +38,8 @@ description: "为已授权的美团、饿了么商家后台实施、审查或排
 9. **不确定写入先读后重试。** 超时、连接中断或未知响应可能已落地；先查询真实状态，再决定重试。认证、权限、业务校验失败不得盲重试。
 10. **日志保护秘密。** 全链路用 `trace_id`，但 Cookie、token、签名、手机号和其他凭据只记录脱敏摘要或指纹，不得写入报告或普通 JSONL。
 11. **阶梯放量。** 只读预检 → 单 SKU 写并回读 → 历史失败 SKU → 5/20/50/100，再根据批量规模继续。任一级未达成定义的通过门就停止，不得“先全量看看”。
+12. **整对象保存必须单写者。** 若当前页面保存的是完整 SPU 而非单字段 patch，每次都从平台重新读取完整商品，在内存中只修改目标字段；同一 SPU 只能由一个 worker 串行保存，跨 SPU 才允许受控并发。
+13. **并发服从平台健康。** 商品编辑默认从低并发和带抖动间隔开始；列表查询、写入和回读分别限速。出现 `403/429`、页面列表归零或“接口请求异常”时立即停止新任务领取并退避，不得靠刷新或加线程恢复。
 
 ## 标准闭环
 

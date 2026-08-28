@@ -12,6 +12,10 @@
       "commit": "a84240caac8867d74647ad386af9619e8ead522d"
     }
   ],
+  "preservation": {
+    "source_commits_are_ancestors_of_main": true,
+    "purpose": "Preserve both source repositories and their complete reachable histories without loading legacy root instructions during normal skill routing."
+  },
   "architecture": {
     "entrypoint": "SKILL.md",
     "machine_router": "scripts/route_skill.py",

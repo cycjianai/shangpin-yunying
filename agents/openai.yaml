@@ -1,4 +1,4 @@
 interface:
-  display_name: "美团饿了么商品编辑与调价自动化"
-  short_description: "受控并发实施商品编辑、店内码修改、调价推送及物化验真"
-  default_prompt: "Use $meituan-eleme-price-push-automation to safely run an authorized Meituan/Eleme product-edit or price-push workflow with controlled concurrency and independent materialized readback."
+  display_name: "美团商品编辑与美团饿了么调价"
+  short_description: "美团商品编辑、店内码修改及美团饿了么调价推送验真"
+  default_prompt: "Use $meituan-eleme-price-push-automation for an authorized Meituan product-edit workflow or a Meituan/Eleme price-push workflow, applying only the platform-specific branch and verification rules."

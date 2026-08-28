@@ -1,4 +1,4 @@
 interface:
-  display_name: "美团商品编辑与美团饿了么调价"
-  short_description: "美团商品编辑、店内码修改及美团饿了么调价推送验真"
-  default_prompt: "Use $meituan-eleme-price-push-automation for an authorized Meituan product-edit workflow or a Meituan/Eleme price-push workflow, applying only the platform-specific branch and verification rules."
+  display_name: "美团医疗器械迁移与平台自动化"
+  short_description: "医疗器械整店复制、美团商品编辑及美团饿了么调价验真"
+  default_prompt: "Use $meituan-eleme-price-push-automation for an authorized Meituan Medical/medical-device store migration, Meituan product-edit workflow, or Meituan/Eleme price-push workflow. Identify the exact business backend first and apply only its platform-specific branch and verification rules."

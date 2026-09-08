@@ -90,7 +90,21 @@ def main() -> int:
     legacy = run("--request-text", "牵牛花调价", expected=2)
     assert legacy["routing_status"] == "unsupported_combination"
     assert run("--request-text", "牵牛花总部零售价补齐并填充渠道类目属性", expected=2)["routing_status"] == "ambiguous_task"
-    print(json.dumps({"passed": True, "cases": len(cases) + 8}, ensure_ascii=False))
+    for request, intent in [
+        ("诊断美团调价失败原因", "diagnosis"),
+        ("解释饿了么价格推送链路", "review"),
+        ("分析牵牛花渠道属性填充", "review"),
+        ("牵牛花总部零售价只读核对，不要保存", "review"),
+        ("开发美团商品信息编辑功能", "implementation"),
+        ("美团修改店内码", "execution"),
+    ]:
+        result = run("--request-text", request)
+        assert result["intent"] == intent, (request, result)
+        if intent in {"review", "diagnosis"}:
+            assert result["side_effect_policy"] == "read_only"
+    result = run("--request-text", "牵牛花填充渠道类目属性，包括保质期")
+    assert result["task_mode"] == "channel_attributes_only"
+    print(json.dumps({"passed": True, "cases": len(cases) + 15}, ensure_ascii=False))
     return 0
 
 

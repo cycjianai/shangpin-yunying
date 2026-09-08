@@ -43,13 +43,16 @@ def evaluate(metrics: dict[str, Any], policy: dict[str, Any] | None = None) -> d
     writers = integer(metrics, "writer_pages")
     bootstrap = integer(metrics, "bootstrap_pages")
     reasons: list[str] = []
+    if total == 0 or available > total:
+        reasons.append("host_memory_metrics_invalid")
     required_available = max(
         int(admission["min_mem_available_bytes"]),
         math.ceil(total * float(admission["min_mem_available_ratio"])),
     )
     if available < required_available:
         reasons.append("host_memory_reserve_insufficient")
-    if rss > int(admission["max_task_process_rss_bytes"]):
+    rss_limit = admission.get("max_task_process_rss_bytes")
+    if rss_limit is not None and rss > int(rss_limit):
         reasons.append("task_process_rss_exceeded")
     if admission.get("require_bounded_runtime") and metrics.get("bounded_runtime") is not True:
         reasons.append("bounded_runtime_required")

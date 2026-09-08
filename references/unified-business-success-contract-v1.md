@@ -81,7 +81,7 @@ payload、reader、planner、writer、回读器、审核集合和失败码始终
 
 ## 7. 审计与交付
 
-所有平台与商品任务把上述证据映射到 `product-governance-operations-workbook-v1`，并遵守统一字段 ID、终态与来源策略。
+需要标准运营工作簿时，把上述证据映射到 `product-governance-operations-workbook-v1`，并遵守统一字段 ID、终态与来源策略。仅汇报数量的任务仍以真实回读验收，不强加表格交付。
 执行汇总必须从最终商品终态重新计算，
 不得复用旧批次数字。工作簿通过 Schema validator 只代表结构正确；仍须通过当前平台完成门和同一 execution run 的
 handoff gate，才能向用户交付并宣称完成。

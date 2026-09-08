@@ -63,6 +63,15 @@ class PriceFillTests(unittest.TestCase):
         for event in result["audit_events"]:
             normalize_event(event)
 
+    def test_existing_sibling_price_is_preserved_when_other_variant_filled(self):
+        data = baseline()
+        data["products"][1]["skus"].append(sku("existing-sibling", "中号", price="0.45"))
+        plan = p.build_plan(data, source())
+        result = p.verify(plan, materialize(plan))
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["non_target_sku"], 2)
+        self.assertEqual(result["preserved_non_target_sku"], 2)
+
     def test_duplicate_same_price_is_not_unique(self):
         data = source()
         extra = dict(data["rows"][1], native_sku_id="b3")
@@ -178,7 +187,10 @@ class PriceFillTests(unittest.TestCase):
         self.assertTrue(all(e["result"] == "pending_verify" for e in result["audit_events"]))
         final = materialize(plan)
         final["products"][2]["skus"][0]["suggestPrice"]["tenantSuggestPrice"]["unifiedSuggestPrice"] = "9.00"
-        self.assertFalse(p.verify(plan, final)["complete"])
+        changed = p.verify(plan, final)
+        self.assertFalse(changed["complete"])
+        self.assertEqual(changed["non_target_sku"], 1)
+        self.assertEqual(changed["preserved_non_target_sku"], 0)
         final = materialize(plan)
         final["products"][1]["skus"][0]["upcList"] = ["bad-barcode"]
         result = p.verify(plan, final)

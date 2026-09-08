@@ -2,9 +2,12 @@
 
 合同 ID：`qnh-task-contract-v3.5.0`。
 
+本合同只适用于下表五种既有 QNH 执行器模式，由 `qnh_task_contract.py` 管理。多平台路由以
+`capability_registry.json` 为准；总部零售价导入、映射复核和门店替换各用自己的任务合同，不进入本启动器。
+
 ## 1. 先路由，后读取
 
-每个新 run 必须先由 `scripts/qnh_task_contract.py create` 冻结唯一 `task_mode`。模式冻结前只允许发现空闲浏览器、创建空 run-dir 和读取用户源清单；不得读取商品、扫描图片、调用外部服务或写平台。
+使用下表执行器的新 run 先由 `scripts/qnh_task_contract.py create` 冻结唯一 `task_mode`。模式冻结前只允许发现空闲浏览器、创建空 run-dir 和读取用户源清单；不得读取商品、扫描图片、调用外部服务或写平台。
 
 路由优先级如下：
 
@@ -99,7 +102,7 @@ python3 scripts/run_task_action.py \
 - 4.2.0/4.2.4 旧路径继续保留；未知版本、错 endpoint、错页面、错 SPU、第二次不一致和 HTTP 403 后改版一律失败关闭。
 - 4.3.0 每个 worker 逐 SPU 单飞并及时关闭内部编辑标签；worker 页可以复用但不得跨并发商品共享。首次进入目标页时
   必须在导航前安装原生 detail 监听，一次 `goto` 即取证，禁止先导航再 reload 的重复往返。升级 Skill 后必须新建
-  run-dir 和 3.2 合同，通过协议自动测试、5 条只读和 2 条写回门才可扩量。
+  run-dir 和当前执行器合同，通过协议自动测试、5 条只读和 2 条写回门才可扩量。
 - worker 列表页预热只硬等当前页 H5guard；可选的 `#multiple-nav-tabs` 壳可能在新标签中不挂载，不得因此等待45秒
   或判任务失败。安全边界由随后精确 SPU 编辑页原生 detail 证据承担，任何证据不完整仍然零保存。
 - 每个 4.3.0 短批进程必须先完成一次无商品绑定、完成即关闭的 10 秒 SPA 引导页，再创建真实 worker。引导页不读
@@ -117,7 +120,7 @@ python3 scripts/run_task_action.py \
 - 计划器缺少上述回执时必须返回可审计的明确原因，不能泄漏为 `StopIteration` 或让整批无原因崩溃。
 - 长任务恢复时，完整详情、建议、计划与已完成窗口只能在同一合同/run-dir内复用；已完成窗口必须零启动、零页面、零保存。
 - `channel_attributes_only` 在 4.3.0、约 15 GiB 宿主上的默认 winner 为单个长驻热编辑页；多编辑页、同 Chrome
-  双分片和 frame 并发只能先做小 canary，任一失败、宿主可用内存接近 5 GiB或端到端均值不优于单热页即停止。
+  双分片和 frame 并发只能先做小 canary，任一失败、当前执行器报告资源压力或端到端均值不优于单热页即停止。
   配置上限仍可保留为探索门，但后续正式分片必须粘滞采用本轮实测最快且零失败的实际 worker 数。
 - 初始 mutation 的 `failed/unknown` 不得在下一分片自动重发。先完成独立全量详情读取和结构验证，只为仍有问题的
   精确 SPU 建 residual；residual 成功后必须再次全量读取，最终问题为 0 才完成。

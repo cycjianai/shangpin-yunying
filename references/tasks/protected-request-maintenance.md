@@ -1,7 +1,7 @@
 # 任务分支：牵牛花受保护请求维护
 
 只处理 403、H5guard/A9、Cookie/页面身份、成本同步、保质期、受管 Chrome、健康检查和协议兼容工程。完整读取
-[维护合同](../qnh-protected-request-maintenance-v1.md) 以及当前目标代码库自己的 `AGENTS.md`、项目规则和 OpenSpec。
+[维护合同](../qnh-protected-request-maintenance-v1.md) 以及当前目标代码库适用的项目规则；仅加载本次影响范围需要的其他合同。
 
 默认只读诊断；请求入口、签名或健康检查成功只证明 transport 可用，不证明商品写入、独立回读、结构正确、审核退出或
 七表完成。当前标签页扩展与后端受管上下文必须隔离，Cookie、页面证据和签名缓存不得互传。

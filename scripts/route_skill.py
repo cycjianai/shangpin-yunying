@@ -106,7 +106,7 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
     text = request_text.lower()
     candidates: set[str] = set()
 
-    if contains(text, r"403", r"h5guard", r"\ba9\b", r"受保护请求", r"成本同步", r"保质期", r"健康检查"):
+    if contains(text, r"403", r"h5guard", r"\ba9\b", r"受保护请求", r"成本同步", r"保质期.*(?:接口|兼容|代码|签名)", r"健康检查"):
         candidates.add("protected_request_maintenance")
     if contains(text, r"医疗器械", r"买药") and contains(text, r"整店", r"迁移", r"搬店", r"分类复制", r"全店备份"):
         candidates.add("medical_device_store_migration")
@@ -160,27 +160,15 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
 
 def infer_intent(request_text: str) -> str:
     text = request_text.lower()
-    if contains(text, r"总部(?:建议)?零售价", r"总部建议价"):
-        if contains(text, r"解释", r"审查", r"分析", r"对比", r"设计"):
-            return "review"
-        if contains(text, r"诊断", r"排查", r"为什么", r"失败原因"):
-            return "diagnosis"
-        if contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构"):
-            return "implementation"
-        if contains(text, r"填充", r"补齐", r"补价", r"修改", r"保存", r"导入", r"执行"):
-            return "execution"
-    execution = contains(text, r"执行", r"处理", r"填充", r"推送", r"调价", r"迁移", r"新增", r"导入", r"清退")
-    implementation = contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构")
-    diagnosis = contains(text, r"诊断", r"排查", r"为什么", r"报错", r"失败原因")
-    review = contains(text, r"解释", r"审查", r"阅读", r"分析", r"对比", r"设计")
-    if execution:
-        return "execution"
-    if implementation:
-        return "implementation"
-    if diagnosis:
+    # A requested explanation of an action is not authorization to perform it.
+    if contains(text, r"诊断", r"排查", r"为什么", r"失败原因", r"报错原因"):
         return "diagnosis"
-    if review:
+    if contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构", r"优化.*skill", r"修改.*skill"):
+        return "implementation"
+    if contains(text, r"解释", r"审查", r"阅读", r"分析", r"对比", r"设计", r"只读", r"不(?:要)?(?:执行|写入|修改|保存)"):
         return "review"
+    if contains(text, r"执行", r"处理", r"填充", r"补齐", r"补价", r"推送", r"调价", r"迁移", r"新增", r"导入", r"清退", r"修改", r"保存", r"回填"):
+        return "execution"
     return "review"
 
 
@@ -200,7 +188,7 @@ def route(args: argparse.Namespace, registry: dict[str, Any]) -> tuple[dict[str,
             "platform_candidates": platform_candidates,
             "task_candidates": [],
             "load_order": [],
-            "side_effect_policy": "zero_product_reads_and_zero_writes_until_platform_is_unique",
+            "side_effect_policy": "authorized_context_discovery_only_until_platform_is_unique",
         }, 2)
 
     task = args.task
@@ -215,7 +203,7 @@ def route(args: argparse.Namespace, registry: dict[str, Any]) -> tuple[dict[str,
             "platform_candidates": [platform],
             "task_candidates": task_candidates,
             "load_order": [registry["platforms"][platform]["adapter_reference"]],
-            "side_effect_policy": "zero_product_reads_and_zero_writes_until_task_is_unique",
+            "side_effect_policy": "authorized_context_discovery_only_until_task_is_unique",
         }, 2)
 
     platform_spec = registry["platforms"][platform]

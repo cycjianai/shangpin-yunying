@@ -351,7 +351,10 @@ def verify(plan, final):
     return {"schema": "qnh-headquarters-price-verification-v1", "plan_sha256": plan["plan_sha256"],
             "complete": not issues and not plan["blocked"] and after_counts["sku"] == 0,
             "before_empty": before_counts, "after_empty": after_counts,
-            "planned_sku": len(planned), "preserved_non_target_sku": len(before) - len(planned),
+            "planned_sku": len(planned), "non_target_sku": len(before) - len(planned),
+            "preserved_non_target_sku": sum(key not in planned and old[1] == after[key][1]
+                for key, old in before.items()
+                if old[0]["spuId"] not in {i["spu_id"] for i in issues}),
             "issues": issues, "blocked": plan["blocked"], "audit_events": events}
 
 

@@ -1,6 +1,6 @@
 {
   "name": "multiplatform-product-operations",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Progressively routed merchant-platform product operations with one canonical workbook contract.",
   "private": true,
   "scripts": {

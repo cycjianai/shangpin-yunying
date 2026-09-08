@@ -28,7 +28,7 @@ policy = load_policy()
 assert evaluate(BASE, policy)["admitted"] is True
 too_many = {**BASE, "task_owned_live_pages": 7, "writer_pages": 5}
 assert "writer_page_budget_exceeded" in evaluate(too_many, policy)["reasons"]
-low_memory = {**BASE, "mem_available_bytes": 4 * GIB}
+low_memory = {**BASE, "mem_available_bytes": GIB}
 assert "host_memory_reserve_insufficient" in evaluate(low_memory, policy)["reasons"]
 overlap = {**BASE, "task_owned_live_pages": 4, "bootstrap_pages": 1}
 assert "bootstrap_and_writer_overlap" in evaluate(overlap, policy)["reasons"]
@@ -36,4 +36,8 @@ pressure = {**BASE, "task_owned_live_pages": 4, "writer_pages": 2, "runtime_pres
 assert "pressure_requires_single_writer" in evaluate(pressure, policy)["reasons"]
 unbounded = {**BASE, "bounded_runtime": False}
 assert "bounded_runtime_required" in evaluate(unbounded, policy)["reasons"]
-print('{"ok":true,"cases":6}')
+assert evaluate({**BASE, "mem_available_bytes": 2 * GIB}, policy)["admitted"] is True
+assert evaluate({**BASE, "total_memory_bytes": 0}, policy)["admitted"] is False
+assert evaluate({**BASE, "mem_available_bytes": 17 * GIB}, policy)["admitted"] is False
+assert evaluate({**BASE, "total_memory_bytes": 4 * GIB, "mem_available_bytes": GIB}, policy)["admitted"] is True
+print('{"ok":true,"cases":10}')

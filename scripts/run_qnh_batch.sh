@@ -6,7 +6,7 @@ set -Eeuo pipefail
 
 umask 077
 
-readonly guard=/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh
+readonly guard="${QNH_RUNTIME_GUARD:-/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh}"
 readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly direct_script="${script_dir}/qnh_direct.mjs"
 readonly adaptive_controller="${script_dir}/qnh_adaptive_concurrency.py"
@@ -65,6 +65,7 @@ if [[ "${YDSG_AUTOMATION_MANAGED:-0}" != "1" ]]; then
     export QNH_DIRECT_MAX_CONCURRENCY
     printf '%s\n' "$decision_json" >&2
   fi
+  [[ -x "$guard" ]] || { echo "bounded runtime entry missing; configure QNH_RUNTIME_GUARD" >&2; exit 79; }
   exec "$guard" --kind batch -- "$0" "$@"
 fi
 

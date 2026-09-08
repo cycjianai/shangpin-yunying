@@ -8,9 +8,10 @@ umask 077
 
 # Only future launches enter the isolated automation slice. A browser session
 # that was already running when this file changed is neither moved nor restarted.
-readonly runtime_guard=/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh
+readonly runtime_guard="${QNH_RUNTIME_GUARD:-/home/saas/repo/tools/runtime_stability/run_bounded_automation.sh}"
 readonly host_os="$(uname -s)"
 if [[ "$host_os" == "Linux" && "${YDSG_AUTOMATION_MANAGED:-0}" != "1" ]]; then
+  [[ -x "$runtime_guard" ]] || { echo "bounded runtime entry missing; configure QNH_RUNTIME_GUARD" >&2; exit 79; }
   exec "$runtime_guard" --kind browser -- "$0" "$@"
 fi
 

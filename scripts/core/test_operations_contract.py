@@ -22,6 +22,7 @@ CASES = {
     "qualification_images_only": ("qnh", "qualification.8.01", "背签 01"),
     "plugin_attribute_fill": ("qnh", "channel_attribute.meituan.material", "材质"),
     "copy_history_retry": ("qnh", "copy_mapping.target_spu_id", "目标 SPU ID"),
+    "headquarters_price_fill": ("qnh", "sku.sku-001.headquarters_retail_price", "总部零售价"),
     "price_push": ("eleme", "price.sku-001.effective", "最终有效价"),
     "product_editing": ("meituan", "sku.sku-001.store_code", "店内码"),
     "medical_device_store_migration": ("meituan", "migration.target_spu_id", "目标 SPU ID"),

@@ -1,6 +1,7 @@
 # 牵牛花模块
 
 - `platform_adapter=qnh`
+- 总部零售价按货盘补齐：`runtime_guided`；入口 `tasks/qnh-headquarters-price-fill.md`，只修改主档，不能套用门店活动调价。
 - 属性信息：`implemented`，入口与合同见 `channel-attribute-contract-v2.md`。
 - 资质图：`implemented`，入口与合同见 `thread-928-empirical-contract.md`、`error-playbook.md`、`field-safety.md`；
   所有限制的唯一机器事实源见 `qualification-image-policy.md`。

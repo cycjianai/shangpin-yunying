@@ -63,6 +63,11 @@
           "task_reference": "references/tasks/store-sku-replacement.md",
           "detail_references": ["references/store-sku-replacement-contract-v1.md"]
         },
+        "headquarters_price_fill": {
+          "status": "runtime_guided",
+          "task_reference": "references/tasks/qnh-headquarters-price-fill.md",
+          "detail_references": ["references/qnh-bulk-operations.md"]
+        },
         "protected_request_maintenance": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,

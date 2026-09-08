@@ -36,6 +36,9 @@ writer、Cookie、回读器或成功捷径。
 | `aoxiang` | `planned` | `planned` | `planned` | `planned` |
 | `taobao_flash` | `planned` | `planned` | `planned` | `planned` |
 
+牵牛花另有 `headquarters_price_fill=runtime_guided`：按授权货盘补齐空总部零售价，优先当前官方 Excel 导入；
+它独立于 `price_push`，不能推断门店、活动价或其他平台调价已实现。详见 `tasks/qnh-headquarters-price-fill.md`。
+
 ## 目录职责
 
 ```text

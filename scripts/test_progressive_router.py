@@ -27,6 +27,7 @@ def main() -> int:
 
     cases = [
         ("牵牛花渠道类目属性100%填充", "qnh", "channel_attributes_only", "implemented"),
+        ("牵牛花从货盘按条码和名称补齐总部零售价，多规格逐规格填充", "qnh", "headquarters_price_fill", "runtime_guided"),
         ("美团把目标价推送到活动价并回读", "meituan", "price_push", "runtime_guided"),
         ("饿了么批量调价", "eleme", "price_push", "runtime_guided"),
         ("美团医疗器械整店迁移并复制分类", "meituan", "medical_device_store_migration", "runtime_guided"),
@@ -74,7 +75,22 @@ def main() -> int:
     assert read_only["side_effect_policy"] == "read_only"
     assert "references/core/output-contract.md" not in read_only["load_order"]
 
-    print(json.dumps({"passed": True, "cases": len(cases) + 2}, ensure_ascii=False))
+    price = run("--request-text", "商品标签筛选后从货盘价格填充空总部零售价，多规格对应规格保存", "--page-url", "https://qnh.meituan.com/home.html#/unifiedGoods/tenant/spu-list")
+    assert price["task_mode"] == "headquarters_price_fill"
+    assert price["intent"] == "execution"
+    assert "references/qnh-bulk-operations.md" in price["load_order"]
+    assert "references/meituan.md" not in price["load_order"]
+    assert "references/channel-attribute-contract-v2.md" not in price["load_order"]
+    review = run("--request-text", "分析牵牛花总部零售价补齐请求链路")
+    assert review["intent"] == "review" and review["side_effect_policy"] == "read_only"
+    unsupported = run("--request-text", "美团总部零售价补齐", expected=2)
+    assert unsupported["routing_status"] == "unsupported_combination"
+    assert unsupported["side_effect_policy"].startswith("zero_writes")
+    assert run("--request-text", "牵牛花补齐总部零售价并修改活动价", expected=2)["routing_status"] == "ambiguous_task"
+    legacy = run("--request-text", "牵牛花调价", expected=2)
+    assert legacy["routing_status"] == "unsupported_combination"
+    assert run("--request-text", "牵牛花总部零售价补齐并填充渠道类目属性", expected=2)["routing_status"] == "ambiguous_task"
+    print(json.dumps({"passed": True, "cases": len(cases) + 8}, ensure_ascii=False))
     return 0
 
 

@@ -23,6 +23,7 @@ TASKS = (
     "copy_history_retry",
     "copy_conflict_reconciliation",
     "store_sku_replacement",
+    "headquarters_price_fill",
     "price_push",
     "product_editing",
     "medical_device_store_migration",
@@ -115,6 +116,9 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("copy_conflict_reconciliation")
     if contains(text, r"门店.*(?:旧|原).*sku.*(?:新|目标).*sku", r"旧.*商品.*删除.*新.*商品.*上架", r"迁移.*(?:渠道库存|库位|供应商关系|渠道状态)", r"覆盖更多门店.*(?:删除|上架)"):
         candidates.add("store_sku_replacement")
+    headquarters_price = contains(text, r"总部(?:建议)?零售价", r"总部建议价")
+    if headquarters_price:
+        candidates.add("headquarters_price_fill")
     if contains(text, r"调价", r"价格推送", r"目标价", r"target_price", r"活动价", r"修改原价"):
         candidates.add("price_push")
     if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑"):
@@ -127,6 +131,10 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("plugin_attribute_fill")
     if contains(text, r"渠道属性", r"渠道类目属性", r"类目属性", r"信息填充", r"补齐信息", r"属性.*100%"):
         candidates.add("channel_attributes_only")
+
+    # Exact headquarters price scope must not inherit activity-price semantics.
+    if "headquarters_price_fill" in candidates and not contains(text, r"活动价", r"终端价", r"修改原价", r"价格推送"):
+        candidates.discard("price_push")
 
     # Composite task signals that are subordinate to a stronger one-pass goal.
     if "medical_device_store_migration" in candidates:
@@ -152,6 +160,15 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
 
 def infer_intent(request_text: str) -> str:
     text = request_text.lower()
+    if contains(text, r"总部(?:建议)?零售价", r"总部建议价"):
+        if contains(text, r"解释", r"审查", r"分析", r"对比", r"设计"):
+            return "review"
+        if contains(text, r"诊断", r"排查", r"为什么", r"失败原因"):
+            return "diagnosis"
+        if contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构"):
+            return "implementation"
+        if contains(text, r"填充", r"补齐", r"补价", r"修改", r"保存", r"导入", r"执行"):
+            return "execution"
     execution = contains(text, r"执行", r"处理", r"填充", r"推送", r"调价", r"迁移", r"新增", r"导入", r"清退")
     implementation = contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构")
     diagnosis = contains(text, r"诊断", r"排查", r"为什么", r"报错", r"失败原因")

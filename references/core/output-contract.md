@@ -55,6 +55,7 @@ channel code；不得使用随语言变化的临时中文近义词作为 ID。
 - `qualification_images_only`
 - `plugin_attribute_fill`
 - `copy_history_retry`
+- `headquarters_price_fill`
 - `price_push`
 - `product_editing`
 - `medical_device_store_migration`
@@ -89,6 +90,7 @@ channel code；不得使用随语言变化的临时中文近义词作为 ID。
 
 ## 各任务如何进入同一表
 
+- 总部零售价补齐：`sku.<sku_id>.headquarters_retail_price`，来源策略 `source_store_verified_archive`；只代表主档建议价，不代表门店或渠道终端有效价。
 - 调价：每个 SKU 分别记录写前原价/活动价、目标价、回读有效价和活动状态。
 - 商品编辑：每个 SKU 或 SPU 字段分别记录，完整对象保存不合并成“编辑成功”一行。
 - 医疗器械迁移：源 SPU 为 `SPUID`；目标 ID、分类、属性、销售、店内码和各媒体角色分别审计。

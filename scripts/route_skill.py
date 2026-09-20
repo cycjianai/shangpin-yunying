@@ -16,6 +16,7 @@ REGISTRY_PATH = Path(__file__).with_name("capability_registry.json")
 
 PLATFORMS = ("qnh", "meituan", "eleme", "aoxiang", "taobao_flash")
 TASKS = (
+    "watermark_scan",
     "channel_attributes_only",
     "unavailable_one_pass",
     "qualification_images_only",
@@ -106,6 +107,8 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
     text = request_text.lower()
     candidates: set[str] = set()
 
+    if contains(text, r"水印", r"watermark"):
+        candidates.add("watermark_scan")
     if contains(text, r"403", r"h5guard", r"\ba9\b", r"受保护请求", r"成本同步", r"保质期.*(?:接口|兼容|代码|签名)", r"健康检查"):
         candidates.add("protected_request_maintenance")
     if contains(text, r"医疗器械", r"买药") and contains(text, r"整店", r"迁移", r"搬店", r"分类复制", r"全店备份"):
@@ -233,6 +236,8 @@ def route(args: argparse.Namespace, registry: dict[str, Any]) -> tuple[dict[str,
 
     if task_spec["status"] == "planned":
         side_effect_policy = "zero_writes_capability_not_implemented"
+    elif task_spec.get("read_only") and intent != "implementation":
+        side_effect_policy = "read_only"
     elif intent in {"review", "diagnosis"}:
         side_effect_policy = "read_only"
     elif intent == "implementation":

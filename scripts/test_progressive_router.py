@@ -26,6 +26,7 @@ def main() -> int:
     assert run("--validate-registry")["valid"] is True
 
     cases = [
+        ("牵牛花扫描其他品牌主图水印，输出SPU清单", "qnh", "watermark_scan", "runtime_guided"),
         ("牵牛花渠道类目属性100%填充", "qnh", "channel_attributes_only", "implemented"),
         ("牵牛花从货盘按条码和名称补齐总部零售价，多规格逐规格填充", "qnh", "headquarters_price_fill", "runtime_guided"),
         ("美团把目标价推送到活动价并回读", "meituan", "price_push", "runtime_guided"),
@@ -49,12 +50,17 @@ def main() -> int:
         if status == "planned":
             assert payload["side_effect_policy"].startswith("zero_writes")
         else:
-            if task in {"protected_request_maintenance", "copy_conflict_reconciliation", "store_sku_replacement"}:
+            if task in {"watermark_scan", "protected_request_maintenance", "copy_conflict_reconciliation", "store_sku_replacement"}:
                 assert "references/core/output-contract.md" not in payload["load_order"]
                 assert "references/excel-schema-v1.md" not in payload["load_order"]
             else:
                 assert "references/core/output-contract.md" in payload["load_order"]
             assert len(payload["load_order"]) < 10
+
+    scan = run("--request-text", "牵牛花执行全量水印扫描", "--intent", "execution")
+    assert scan["side_effect_policy"] == "read_only"
+    assert "references/tasks/qnh-watermark-scan.md" in scan["load_order"]
+    assert run("--request-text", "美团水印扫描", expected=2)["routing_status"] == "unsupported_combination"
 
     ambiguous = run(
         "--request-text",

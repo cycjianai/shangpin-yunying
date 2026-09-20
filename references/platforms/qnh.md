@@ -19,6 +19,8 @@ writer 和回读器不得复用于其他平台。
 
 ## 功能分支
 
+- 主图品牌水印扫描：`runtime_guided`，只读；加载 `tasks/qnh-watermark-scan.md`，使用可配置文字/图案规则和视觉复核，输出 SPU 清单。
+
 - 渠道属性：`implemented`；按路由器加载 `tasks/channel-attributes.md`。
 - 不可售一次过：`implemented`；加载 `tasks/unavailable-one-pass.md`。
 - 资质/专项图：`implemented`；加载 `tasks/qualification-images.md`。

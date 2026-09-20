@@ -10,9 +10,7 @@
       "references/core/output-contract.md",
       "references/excel-schema-v1.md"
     ],
-    "diagnosis_references": [
-      "references/debugging-and-rollout.md"
-    ]
+    "diagnosis_references": ["references/debugging-and-rollout.md"]
   },
   "platforms": {
     "qnh": {
@@ -73,6 +71,13 @@
           "uses_operations_workbook": false,
           "task_reference": "references/tasks/protected-request-maintenance.md",
           "detail_references": ["references/qnh-protected-request-maintenance-v1.md"]
+        },
+        "watermark_scan": {
+          "status": "runtime_guided",
+          "read_only": true,
+          "uses_operations_workbook": false,
+          "task_reference": "references/tasks/qnh-watermark-scan.md",
+          "detail_references": []
         }
       }
     },

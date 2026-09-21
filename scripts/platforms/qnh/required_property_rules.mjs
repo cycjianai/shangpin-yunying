@@ -153,11 +153,53 @@ export function fillProperty(prop, title = '') {
     const options = prop.attrValueList || prop.optionalValue || [];
     if (!options.length) return null;
 
-    // 阶段 1: 标题语义精确匹配
-    let matched = options.find(o => {
-      const optName = o.attrValue || o.optionValue || '';
-      return optName && optName.length >= 2 && title.includes(optName);
-    });
+    // 阶段 1: 常见关键业务属性精准语义匹配
+    let matched = null;
+
+    // A. 包装方式 / 包装形式
+    if (/(?:包装方式|包装形式|包装类型)/.test(name)) {
+      if (/真空/.test(title)) matched = options.find(o => /真空/.test(o.attrValue || o.optionValue || ''));
+      else if (/礼盒/.test(title)) matched = options.find(o => /礼盒/.test(o.attrValue || o.optionValue || ''));
+      else if (/袋/.test(title)) matched = options.find(o => /袋/.test(o.attrValue || o.optionValue || ''));
+      else if (/盒/.test(title)) matched = options.find(o => /盒/.test(o.attrValue || o.optionValue || ''));
+      else if (/罐/.test(title)) matched = options.find(o => /罐/.test(o.attrValue || o.optionValue || ''));
+      else if (/桶/.test(title)) matched = options.find(o => /桶/.test(o.attrValue || o.optionValue || ''));
+      else if (/箱/.test(title)) matched = options.find(o => /箱/.test(o.attrValue || o.optionValue || ''));
+      else if (/散装/.test(title)) matched = options.find(o => /散装/.test(o.attrValue || o.optionValue || ''));
+    }
+
+    // B. 是否有机
+    if (!matched && /(?:是否有机|有机)/.test(name)) {
+      if (/有机/.test(title)) {
+        matched = options.find(o => /^(?:是|有机)$/.test(o.attrValue || o.optionValue || ''));
+      } else {
+        matched = options.find(o => /^(?:否|非有机)$/.test(o.attrValue || o.optionValue || ''));
+      }
+    }
+
+    // C. 国产/进口
+    if (!matched && /(?:国产\/进口|进口\/国产)/.test(name)) {
+      if (/进口/.test(title)) {
+        matched = options.find(o => /进口/.test(o.attrValue || o.optionValue || ''));
+      } else {
+        matched = options.find(o => /国产/.test(o.attrValue || o.optionValue || ''));
+      }
+    }
+
+    // D. 储藏条件 / 储存条件
+    if (!matched && /(?:储藏条件|储存条件|保存条件)/.test(name)) {
+      if (/冷冻/.test(title)) matched = options.find(o => /冷冻/.test(o.attrValue || o.optionValue || ''));
+      else if (/冷藏/.test(title)) matched = options.find(o => /冷藏/.test(o.attrValue || o.optionValue || ''));
+      else matched = options.find(o => /常温/.test(o.attrValue || o.optionValue || ''));
+    }
+
+    // 阶段 2: 标题字面精确包含匹配
+    if (!matched) {
+      matched = options.find(o => {
+        const optName = o.attrValue || o.optionValue || '';
+        return optName && optName.length >= 2 && title.includes(optName);
+      });
+    }
 
     // 常见同义词匹配
     if (!matched) {
@@ -189,7 +231,7 @@ export function fillProperty(prop, title = '') {
     if (!matched) {
       matched = options.find(o => /(?:其他|其它)/.test(o.attrValue || o.optionValue || ''));
     }
-    // 默认第一个可用候选
+    // 默认第一个可用候选，确保不留白
     if (!matched) {
       matched = options[0];
     }

@@ -88,12 +88,22 @@ flowchart TD
    * **数量/包数**：从标题提取数字，未标注默认填写 **`1`**。
    * **文本长度保护**：自由文本严格截断至 `maxTextLength`。
 
+### 阶段 3.5：商品详情图（picContentList）检查与自动补齐
+* **适用范围**：所有商品主档详情图。
+* **业务背景**：若商品详情图为空，美团、饿了么等多个渠道将直接拦截审核或判定不合格无法上线。
+* **动作**：
+  * 检查 `detail.picContentList`，若为空数组或 null，自动补齐平台认证的 2 张标准合规详情图：
+    1. `https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png`
+    2. `https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png`
+  * 在保存时，`coverageRequest.fieldCoverageInfoList` 必须显式增加 `{ field: 'picture', coverToStore: 1 }`，确保详情图同步覆盖全部门店。
+
 ### 阶段 4：增量保存与全渠道覆盖
 * **接口**：`POST /qnh-gw3/api/product/tenant/update/v2`
-* **覆盖声明**：在 `coverageRequest.fieldCoverageInfoList` 中覆盖更新的所有渠道：
-  * 美团：`mt_channel_category_property`
-  * 饿了么：`elm_channel_category_property`
-  * 京东到家：`jd_channel_category_property`
+* **覆盖声明**：在 `coverageRequest.fieldCoverageInfoList` 中覆盖更新的所有渠道与字段：
+  * 美团属性：`mt_channel_category_property`
+  * 饿了么属性：`elm_channel_category_property`
+  * 京东到家属性：`jd_channel_category_property`
+  * 详情图（如有补齐）：`picture`
 * **完成判定**：以返回 `code === 0` 为准。
 
 ---

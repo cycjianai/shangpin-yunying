@@ -44,7 +44,9 @@ python3 scripts/route_skill.py \
 
 - [统一业务成功合同](references/unified-business-success-contract-v1.md)：保存受理不等于成功；只有独立回读、非目标保护和
   适用集合复扫通过，才进入统一终态。
-- [渠道属性全量治理合同](references/channel-attribute-contract-v2.md)：**核心铁律：只填写必填是不对的！** 官方明确提示“非必填项填写越多越有利于商品曝光”。所有渠道属性（必填 + 非必填）必须全量回填（官方推荐 ➔ 跨渠道事实继承 ➔ 标题语义提取 ➔ 规则库兜底），做到页面 0 空白。
+- [渠道属性与详情图全量治理合同](references/channel-attribute-contract-v2.md)：
+  * **核心铁律 1（属性拉满）**：只填写必填是不对的！所有渠道属性（必填 + 非必填）必须全量回填（官方推荐 ➔ 事实继承 ➔ 语义提取 ➔ 规则库兜底），做到页面 0 空白。
+  * **核心铁律 2（详情图兜底）**：详情图缺失会导致多渠道审核不过。若 `picContentList` 为空，自动补齐 2 张合规详情图并覆盖 `picture` 字段保存。
 - [资源合同](references/runtime-resource-contract-v1.md)：遵守当前项目受控入口与内存规则；默认单热 writer，本包现有执行器支持 `1→2→4`，按实测决定是否升档。
 - [统一输出内容合同](references/core/output-contract.md) 与
   [Excel 精确 Schema](references/excel-schema-v1.md)：从第一条事件开始使用统一字段、状态和来源词汇。

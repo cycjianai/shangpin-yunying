@@ -186,7 +186,18 @@ async function processSingleSpu(page, spuItem) {
     }
   }
 
-  // 4. Remaining Required Properties Fallback
+  // 3.5 Detail Images Check & Fill (若详情图为空，自动补齐2张标准合规详情图)
+  const DEFAULT_DETAIL_IMAGES = [
+    'https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png',
+    'https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png'
+  ];
+  let detailImagesFilled = false;
+  if (!detail.picContentList || detail.picContentList.length === 0) {
+    detail.picContentList = [...DEFAULT_DETAIL_IMAGES];
+    detailImagesFilled = true;
+  }
+
+  // 4. Remaining Properties Fallback (必填 + 非必填全量填满，做到 0 空白)
   const mtChannel = activeChannels.find(c => Number(c.channelId) === 100);
   const mtShelfProp = mtChannel?.categoryProperties?.find(p => p.attrName === '保质期');
   const mtShelfVal = mtShelfProp?.customValue?.[0]?.attrValue || '360天';
@@ -196,7 +207,7 @@ async function processSingleSpu(page, spuItem) {
     if (!ch.categoryProperties || ch.categoryProperties.length === 0) continue;
 
     for (const prop of ch.categoryProperties) {
-      if (prop.isRequired === 1 && !isPropertyValid(prop)) {
+      if (!isPropertyValid(prop)) {
         // 保质期结构值
         if (prop.attrName === '保质期' && String(prop.attrValueType) === '10') {
           const daysMatch = mtShelfVal.match(/(\d+)/);
@@ -300,11 +311,15 @@ async function processSingleSpu(page, spuItem) {
   }
 
   // 5. Save to QNH
-  if (modifiedChannels.size > 0) {
+  if (modifiedChannels.size > 0 || detailImagesFilled) {
     const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({
       field: coverageField(cid),
       coverToStore: 1,
     })).filter(f => f.field);
+
+    if (detailImagesFilled) {
+      fieldCoverageInfoList.push({ field: 'picture', coverToStore: 1 });
+    }
 
     const updateRes = await page.evaluate(async ({ url, body }) => {
       let reqUrl = url;
@@ -333,6 +348,7 @@ async function processSingleSpu(page, spuItem) {
         categoriesFilledCount,
         recommendationsAppliedCount,
         fallbacksFilledCount,
+        detailImagesFilled,
         durationMs: Date.now() - startTime
       };
     }
@@ -341,10 +357,11 @@ async function processSingleSpu(page, spuItem) {
   return {
     spuId,
     spuName,
-    status: modifiedChannels.size > 0 ? 'updated' : 'no_change',
+    status: (modifiedChannels.size > 0 || detailImagesFilled) ? 'updated' : 'no_change',
     categoriesFilledCount,
     recommendationsAppliedCount,
     fallbacksFilledCount,
+    detailImagesFilled,
     modifiedChannels: Array.from(modifiedChannels),
     durationMs: Date.now() - startTime
   };

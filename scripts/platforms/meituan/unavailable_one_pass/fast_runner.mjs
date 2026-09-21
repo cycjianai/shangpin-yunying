@@ -355,9 +355,9 @@ async function main() {
     console.log('[生图提交引擎] 全量任务提交完毕。');
   }
 
-  // LANE 2: Concurrent Polling Lane (Poll in-flight tasks every 4s, concurrency 16)
+  // LANE 2: Concurrent Polling Lane (Poll ALL in-flight tasks in chunks of 30)
   async function runPollLane() {
-    console.log('[生图轮询引擎] 启动并发轮询...');
+    console.log('[生图轮询引擎] 启动全量并发轮询...');
     while (!stopPipeline) {
       const submittedKeys = Object.keys(imageState).filter(k => 
         imageState[k].task_id && 
@@ -375,74 +375,82 @@ async function main() {
         continue;
       }
 
-      // Poll in chunks of 16
-      const chunk = submittedKeys.slice(0, 16);
-      await Promise.all(chunk.map(async (key) => {
-        const rec = imageState[key];
-        try {
-          const res = await fetch(APIMART_POLL_URL + rec.task_id, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-          });
-          const d = await res.json();
-          const st = d?.data?.status;
-          if (st === 'completed' || st === 'succeeded') {
-            const url = d?.data?.result?.images?.[0]?.url?.[0] || d?.data?.result?.images?.[0]?.url || d?.data?.url;
-            if (url) {
-              rec.status = 'generated';
-              rec.gen_url = url;
+      // Poll ALL submitted keys in batches of 30 concurrently
+      for (let i = 0; i < submittedKeys.length && !stopPipeline; i += 30) {
+        const batch = submittedKeys.slice(i, i + 30);
+        await Promise.all(batch.map(async (key) => {
+          const rec = imageState[key];
+          try {
+            const res = await fetch(APIMART_POLL_URL + rec.task_id, {
+              headers: { 'Authorization': `Bearer ${apiKey}` },
+            });
+            const d = await res.json();
+            const st = d?.data?.status;
+            if (st === 'completed' || st === 'succeeded') {
+              const url = d?.data?.result?.images?.[0]?.url?.[0] || d?.data?.result?.images?.[0]?.url || d?.data?.url;
+              if (url) {
+                rec.status = 'generated';
+                rec.gen_url = url;
+              }
+            } else if (st === 'failed' || st === 'error') {
+              rec.status = 'failed';
+              rec.error = JSON.stringify(d);
+            } else {
+              rec.status = 'processing';
+              rec.progress = d?.data?.progress;
             }
-          } else if (st === 'failed' || st === 'error') {
-            rec.status = 'failed';
-            rec.error = JSON.stringify(d);
-          } else {
-            rec.status = 'processing';
-            rec.progress = d?.data?.progress;
+          } catch (e) {
+            // ignore transient poll error
           }
-        } catch (e) {
-          // ignore transient poll error
-        }
-      }));
+        }));
+        await new Promise(r => setTimeout(r, 100)); // Pacing between batches
+      }
 
       await new Promise(r => setTimeout(r, 2500));
     }
   }
 
-  // LANE 3: Upload generated images to Meituan CDN (Concurrency 4 across pages)
+  // LANE 3: Upload generated images to Meituan CDN (Concurrency across the 3 worker tabs)
   async function runUploadLane() {
-    console.log('[CDN上传引擎] 启动美团CDN上传...');
-    while (!stopPipeline) {
-      const needUploadKeys = Object.keys(imageState).filter(k => 
-        imageState[k].gen_url && 
-        !imageState[k].meituan_url && 
-        imageState[k].status !== 'uploading'
-      );
+    console.log('[CDN上传引擎] 启动美团CDN并发上传...');
+    
+    async function uploader(tabIndex) {
+      const page = pages[tabIndex % pages.length];
+      while (!stopPipeline) {
+        const needUploadKeys = Object.keys(imageState).filter(k => 
+          imageState[k].gen_url && 
+          !imageState[k].meituan_url && 
+          imageState[k].status !== 'uploading'
+        );
 
-      if (needUploadKeys.length === 0) {
-        const allDone = allQuaTasks.every(t => imageState[t.taskKey].meituan_url || imageState[t.taskKey].status === 'failed');
-        if (allDone) {
-          console.log('[CDN上传引擎] 全量资质图CDN上传完毕。');
-          break;
+        if (needUploadKeys.length === 0) {
+          const allDone = allQuaTasks.every(t => imageState[t.taskKey].meituan_url || imageState[t.taskKey].status === 'failed');
+          if (allDone) break;
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
         }
-        await new Promise(r => setTimeout(r, 1500));
-        continue;
-      }
 
-      const key = needUploadKeys[0];
-      const rec = imageState[key];
-      rec.status = 'uploading';
+        const key = needUploadKeys[0];
+        const rec = imageState[key];
+        rec.status = 'uploading';
 
-      try {
-        const uploadPage = pages[0]; // use first page for uploads
-        const mtUrl = await uploadImageToMeituan(uploadPage, rec.gen_url, `qua_${rec.spuId}_${rec.quaType}.png`, wmPoiId);
-        rec.meituan_url = mtUrl;
-        rec.status = 'completed';
-        // console.log(`  [CDN上传成功] ${rec.spuId} (${rec.quaTitle}): ${mtUrl}`);
-      } catch (e) {
-        rec.status = 'generated'; // retry
-        console.error(`  [CDN上传重试] ${rec.spuId}:`, e.message);
-        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const mtUrl = await uploadImageToMeituan(page, rec.gen_url, `qua_${rec.spuId}_${rec.quaType}.png`, wmPoiId);
+          rec.meituan_url = mtUrl;
+          rec.status = 'completed';
+        } catch (e) {
+          rec.status = 'generated'; // retry
+          await new Promise(r => setTimeout(r, 500));
+        }
       }
     }
+
+    const uploadWorkers = [];
+    for (let i = 0; i < pages.length; i++) {
+      uploadWorkers.push(uploader(i));
+    }
+    await Promise.all(uploadWorkers);
+    console.log('[CDN上传引擎] 全量资质图CDN上传完毕。');
   }
 
   // LANE 4: High-Concurrency SPU Audit Worker Pool (Pure Webpack Evaluate, 0 Page Reloads)

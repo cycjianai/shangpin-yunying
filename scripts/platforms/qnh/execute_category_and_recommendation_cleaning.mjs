@@ -195,18 +195,38 @@ async function processSingleSpu(page, spuItem) {
             const days = daysMatch ? daysMatch[1] : '360';
             prop.customValue = [{
               attrValueId: null,
-              attrValue: `${days}天`,
+              attrValue: null,
               douyinDiyType: null,
               structAttrValueList: [
                 {
-                  sequence: 1,
-                  valueList: [{ value: String(days) }]
+                  formatType: 1,
+                  valueList: [
+                    [
+                      {
+                        value: String(days),
+                        optionId: null,
+                        sequence: 1,
+                        optionValue: null,
+                        moduleId: null,
+                        unitId: null,
+                        unitName: null,
+                      },
+                      {
+                        value: null,
+                        optionId: 1,
+                        sequence: 2,
+                        optionValue: '天',
+                        moduleId: null,
+                        unitId: null,
+                        unitName: null,
+                      },
+                    ],
+                  ],
+                  templateId: null,
                 },
-                {
-                  sequence: 2,
-                  valueList: [{ value: '1' }] // 1 = 天
-                }
-              ]
+              ],
+              childrenJson: null,
+              useFallbackValue: null,
             }];
             modifiedChannels.add(cid);
             fallbacksFilledCount++;
@@ -219,21 +239,42 @@ async function processSingleSpu(page, spuItem) {
           const m = spuName.match(/(\d+(?:\.\d+)?)\s*(g|克|kg|千克|ml|毫升|l|升)/i);
           const num = m ? m[1] : '500';
           const unit = m ? m[2].toLowerCase() : 'g';
-          const unitId = (unit === 'kg' || unit === '千克' || unit === 'l' || unit === '升') ? '2' : '1';
+          const unitId = (unit === 'kg' || unit === '千克' || unit === 'l' || unit === '升') ? 2 : 1;
+          const unitName = unitId === 2 ? 'kg' : 'g';
           prop.customValue = [{
             attrValueId: null,
-            attrValue: `${num}${unit}`,
+            attrValue: null,
             douyinDiyType: null,
             structAttrValueList: [
               {
-                sequence: 1,
-                valueList: [{ value: String(num) }]
+                formatType: 1,
+                valueList: [
+                  [
+                    {
+                      value: String(num),
+                      optionId: null,
+                      sequence: 1,
+                      optionValue: null,
+                      moduleId: null,
+                      unitId: null,
+                      unitName: null,
+                    },
+                    {
+                      value: null,
+                      optionId: unitId,
+                      sequence: 2,
+                      optionValue: unitName,
+                      moduleId: null,
+                      unitId: null,
+                      unitName: null,
+                    },
+                  ],
+                ],
+                templateId: null,
               },
-              {
-                sequence: 2,
-                valueList: [{ value: unitId }]
-              }
-            ]
+            ],
+            childrenJson: null,
+            useFallbackValue: null,
           }];
           modifiedChannels.add(cid);
           fallbacksFilledCount++;

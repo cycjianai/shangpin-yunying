@@ -203,11 +203,12 @@ function buildSaveExpression({
       return { ok: false, status: 'validation_blocked_before_save', validation, changes };
     }
 
-    const activity = await api.L0({ poiId: String(poiId), product, context });
-    const activityText = JSON.stringify(activity || {});
-    if (/退选|停止|下线/.test(activityText) && !/不影响|无需/.test(activityText)) {
-      return { ok: false, status: 'activity_protected_before_save', activity, changes };
-    }
+    // 规则7：允许强制保存（以恢复合规售卖为第一优先级，记录活动影响但不阻断保存）
+    let activityWarning = null;
+    try {
+      const act = await api.L0({ poiId: String(poiId), product, context });
+      activityWarning = act?.title || null;
+    } catch(e) {}
 
     let save;
     try {

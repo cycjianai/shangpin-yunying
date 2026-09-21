@@ -264,3 +264,30 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
 5. **属性通用选项优先匹配**：未填写的必填类目属性按“通用 ➔ 其他 ➔ 常规 ➔ 标准 ➔ 否 ➔ 无”优先级匹配原生选项池，降低非法输入风险。
 6. **执行顺序与一次过（One-Pass）完整性**：必须严格遵循 **“先填属性与规格条码 ➔ 再填详情图 ➔ 整单一次过提交”**。平台保存机制为整单强校验（`sI`），单改一个字段会被拒保，必须将商品当前的所有空必填项与驳回项一次性全部补齐。
 
+### 12.1 高吞吐并发架构与纯内存执行规范（借鉴牵牛花高并发思路）
+
+在面对数百乃至上千个无法售卖商品、大量资质图缺失的场景下，**绝对禁止每个商品重新打开/跳转标签页（`tab.goto`）或使用前端页面点击**。必须严格采用类似牵牛花（QNH）平台的四泳道并发架构：
+
+- **四泳道并发架构 (Four-Lane Concurrency Architecture)**：
+  1. **Lane 1 (生图异步批量提交)**：
+     - 使用 APIMART `gpt-image-2` 接口（`https://api.aishuch.com/v1/images/generations`）。
+     - 采用 15-20 高并发 HTTP POST，步长 100-150ms 持续下发。
+     - 10-30 秒内将全量 200+ 资质图任务全数提交至云端集群队列，立即获得 `task_id`。
+  2. **Lane 2 (异步并发轮询)**：
+     - 独立轮询线程以 16 并发每 2.5 秒批量轮询 `https://api.aishuch.com/v1/tasks/{task_id}`。
+     - 任务状态转为 `completed` 后直接提取生成图片的高清 URL。
+  3. **Lane 3 (美团 CDN 高速上传)**：
+     - 绕过界面文件选择器，直接调用常驻页面的 Webpack 上传模块 `UPLOAD_MODULE: 27177` (`r(27177).lU(dataUrl, fileName, [wmPoiId], false)`)。
+     - 图片秒级写入美团官方 CDN (`http://p0.meituan.net/shangouproductapi/...`)，完成合法性确权。
+  4. **Lane 4 (多标签分布式免刷执行 Worker 池)**：
+     - 预热 3-4 个常驻 Worker 标签页（打开一次 `/reuse/sc/product/page/detail/audit`，保持运行时模块与会话）。
+     - 运行 6-12 个并发 Worker，轮询分发 SPU。
+     - **纯内存评估 (Pure Webpack Evaluate)**：
+       - 调用 `DETAIL_MODULE: 42467` (`vP({ spuId, poiId })`) 获取原生结构。
+       - 内存中完成 69 条形码生成、规格注入、通用属性选定、详情图及资质图（`cpvGuidePicMap`）写入。
+       - 调用 `FORM_MODULE: 86925` (`$P`) 生成表单体。
+       - 执行 `sI`（原生合法性核验）与 `L0`（营销活动退选保护）。
+       - 调用 `$W` 极速保存，并以 `vP` 回读确认退出审核队列。
+     - **单 SPU 处理耗时 < 800ms，整体吞吐量稳定达到 100-200 SPU/分钟**。
+
+

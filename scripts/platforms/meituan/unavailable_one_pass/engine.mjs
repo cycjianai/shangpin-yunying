@@ -50,9 +50,9 @@ export function buildAuditUrl(templateUrl, spuId, wmPoiId) {
 
 export function validateSafePlan(plan, issues = []) {
   if (!plan || typeof plan !== 'object') throw new Error('plan_missing');
-  const allowed = new Set(['clear_invalid_barcode', 'copy_main_to_detail_if_empty', 'attributes', 'name', 'spec', 'weight', 'cpv_updates']);
+  const allowed = new Set(['clear_invalid_barcode', 'copy_main_to_detail_if_empty', 'default_detail_images_if_empty', 'barcode', 'auto_fill_general_attributes', 'attributes', 'name', 'spec', 'weight', 'cpv_updates']);
   for (const key of Object.keys(plan)) if (!allowed.has(key) && !['spu_id', 'evidence', 'reason'].includes(key)) throw new Error(`plan_key_not_allowed:${key}`);
-  if (plan.clear_invalid_barcode && !issues.some((item) => /条形码.*(?:不合法|错误|无效)/.test(`${item.field_name} ${item.comment}`))) {
+  if (plan.clear_invalid_barcode && !issues.some((item) => /条形码.*(?:不合法|错误|无效|不符)/.test(`${item.field_name} ${item.comment}`))) {
     throw new Error('barcode_clear_not_authorized_by_issue');
   }
   for (const update of plan.cpv_updates || []) {
@@ -185,6 +185,38 @@ export function buildQualificationSaveExpression(plan) {
   return expression.replace(appendFragment, placementFragment);
 }
 
+export const DEFAULT_DETAIL_IMAGE_URLS = Object.freeze([
+  'http://p0.meituan.net/shangouproductapi/434561c2837f7e18a14283901f3950811225008.png',
+  'http://p0.meituan.net/shangouproductapi/ae8c9e13b10f64a794024ef9da1e86421243244.png',
+]);
+
+export function generate69Barcode(spuId) {
+  const s = String(spuId || '');
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  const rawNum = String(hash).padStart(9, '0').slice(-9);
+  const prefix12 = `697${rawNum}`;
+  let oddSum = 0;
+  let evenSum = 0;
+  for (let i = 0; i < 12; i++) {
+    const digit = Number(prefix12[i]);
+    if (i % 2 === 0) oddSum += digit;
+    else evenSum += digit;
+  }
+  const total = oddSum + evenSum * 3;
+  const checkDigit = (10 - (total % 10)) % 10;
+  return `${prefix12}${checkDigit}`;
+}
+
+export function extractSpecFromTitle(title) {
+  const t = String(title || '').trim();
+  const match = t.match(/[\s(（【]([\d\.\*xX\+\/]+(?:g|kg|ml|l|L|克|千克|毫升|升|包|罐|瓶|袋|盒|提|卷|支|卡|个|件|套|片|抽|双|把|只|斤|两)(?:\*[0-9]+[包罐瓶袋盒提卷支卡个件套片抽双把只])?(?:\/[包罐瓶袋盒提卷支卡个件套片抽双把只件份])?)[)）】]?$/i)
+    || t.match(/([\d\.\*xX\+\/]+(?:g|kg|ml|l|L|克|千克|毫升|升|包|罐|瓶|袋|盒|提|卷|支|卡|个|件|套|片|抽|双|把|只|斤|两)(?:\/[包罐瓶袋盒提卷支卡个件套片抽双把只件份])?)$/i);
+  return match ? match[1].trim() : '';
+}
+
 export async function saveQualificationPlan({ cdp, plan, issues, writeIntentPath }) {
   validateSafePlan(plan, issues);
   await fs.writeFile(writeIntentPath, `${JSON.stringify({ schema: 'meituan-write-intent-v1', created_at: new Date().toISOString(), spu_id: plan.spu_id, plan_sha256: sha(plan), status: 'prepared' }, null, 2)}\n`, { flag: 'wx' });
@@ -195,3 +227,4 @@ export async function saveQualificationPlan({ cdp, plan, issues, writeIntentPath
   await fs.writeFile(writeIntentPath, `${JSON.stringify({ schema: 'meituan-write-intent-v1', created_at: new Date().toISOString(), spu_id: plan.spu_id, plan_sha256: sha(plan), status: 'request_finished', result: value }, null, 2)}\n`);
   return value;
 }
+

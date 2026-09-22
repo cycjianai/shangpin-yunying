@@ -1,7 +1,7 @@
 # 牵牛花模块
 
 - `platform_adapter=qnh`
-- 渠道类目与属性一体化治理：`implemented`；入口与合同见 `channel-attribute-contract-v2.md`（v3 生产版），核心执行器见 `scripts/platforms/qnh/execute_category_and_recommendation_cleaning.mjs`。严格执行“空类目官方推荐先行 → 官方属性推荐全采纳 → 跨渠道事实继承与规则库兜底 → 3并发安全签署保存”。
+- 渠道类目与属性一体化治理：`implemented`；入口与合同见 `channel-attribute-contract-v2.md`（v4 生产实战版），核心执行器见 `scripts/platforms/qnh/execute_mass_spu_cleaning.mjs`。严格执行“空类目官方推荐先行 → 官方属性推荐 100% 优先采纳 → 剩余空白语义与规则库二次补齐 (0空白) → 【4 Tabs + 12 并发】满速分布式签署保存 (coverToStore: 1)”。
 - 总部零售价按货盘补齐：`runtime_guided`；入口 `tasks/qnh-headquarters-price-fill.md`，只修改主档，不能套用门店活动调价。
 - 资质图：`implemented`，入口与合同见 `thread-928-empirical-contract.md`、`error-playbook.md`、`field-safety.md`；
   所有限制的唯一机器事实源见 `qualification-image-policy.md`。

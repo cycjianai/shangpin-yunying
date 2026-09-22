@@ -9,8 +9,8 @@ const __dirname = path.dirname(__filename);
 
 function parseArgs() {
   const args = {
-    tabs: 2,
-    concurrency: 6,
+    tabs: 4,
+    concurrency: 12,
     offset: 0,
     limit: null,
     benchmark: false,
@@ -18,9 +18,9 @@ function parseArgs() {
   };
   for (const arg of process.argv.slice(2)) {
     if (arg.startsWith('--tabs=')) {
-      args.tabs = parseInt(arg.split('=')[1], 10) || 2;
+      args.tabs = parseInt(arg.split('=')[1], 10) || 4;
     } else if (arg.startsWith('--concurrency=')) {
-      args.concurrency = parseInt(arg.split('=')[1], 10) || 6;
+      args.concurrency = parseInt(arg.split('=')[1], 10) || 12;
     } else if (arg.startsWith('--offset=')) {
       args.offset = parseInt(arg.split('=')[1], 10) || 0;
     } else if (arg.startsWith('--limit=')) {
@@ -101,7 +101,6 @@ async function processSingleSpu(page, spuItem) {
     const recMap = {};
     recList.forEach(r => { recMap[Number(r.channelId)] = r; });
 
-    const channelCodeMap = {};
     for (const ch of activeChannels) {
       const cid = Number(ch.channelId);
       if ((!ch.categoryCode || !ch.categoryName) && recMap[cid]) {
@@ -112,32 +111,40 @@ async function processSingleSpu(page, spuItem) {
         ch.categoryNamePath = rec.namePath;
         ch.upcRequired = rec.upcRequired ?? null;
         ch.resourceType = rec.resourceType ?? null;
-        channelCodeMap[String(cid)] = [{ channelCategoryId: rec.categoryId }];
         modifiedChannels.add(cid);
         categoriesFilledCount++;
       }
     }
+  }
 
-    if (Object.keys(channelCodeMap).length > 0) {
-      const propBatchRes = await page.evaluate(async (map) => {
-        let url = 'https://qnh.meituan.com/qnh-gw5/api/v1/channelCategory/property/batchQuery?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
-        let headers = { 'Content-Type': 'application/json' };
-        let body = JSON.stringify({ channelCategoryCodeMapV2: map });
-        if (window.H5guard && typeof window.H5guard.sign === 'function') {
-          const signed = await window.H5guard.sign({ url, method: 'POST', data: body });
-          Object.assign(headers, signed.headers || {});
-          if (signed.url) url = signed.url;
-        }
-        const resp = await fetch(url, { method: 'POST', headers, body, credentials: 'include' });
-        return await resp.json();
-      }, channelCodeMap);
+  // 2.1 Check if any MT/ELM channel is missing categoryProperties schema, query batchQuery if needed
+  const missingPropChannelMap = {};
+  for (const ch of activeChannels) {
+    const cid = Number(ch.channelId);
+    if ((cid === 100 || cid === 200) && ch.categoryCode && (!ch.categoryProperties || ch.categoryProperties.length === 0)) {
+      missingPropChannelMap[String(cid)] = [{ channelCategoryId: ch.categoryCode }];
+    }
+  }
 
-      const propData = propBatchRes.data || {};
-      for (const ch of activeChannels) {
-        const chKey = String(ch.channelId);
-        if (propData[chKey] && propData[chKey][0]) {
-          ch.categoryProperties = propData[chKey][0].categoryProperties || [];
-        }
+  if (Object.keys(missingPropChannelMap).length > 0) {
+    const propBatchRes = await page.evaluate(async (map) => {
+      let url = 'https://qnh.meituan.com/qnh-gw5/api/v1/channelCategory/property/batchQuery?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
+      let headers = { 'Content-Type': 'application/json' };
+      let body = JSON.stringify({ channelCategoryCodeMapV2: map });
+      if (window.H5guard && typeof window.H5guard.sign === 'function') {
+        const signed = await window.H5guard.sign({ url, method: 'POST', data: body });
+        Object.assign(headers, signed.headers || {});
+        if (signed.url) url = signed.url;
+      }
+      const resp = await fetch(url, { method: 'POST', headers, body, credentials: 'include' });
+      return await resp.json();
+    }, missingPropChannelMap);
+
+    const propData = propBatchRes.data || {};
+    for (const ch of activeChannels) {
+      const chKey = String(ch.channelId);
+      if (propData[chKey] && propData[chKey][0]) {
+        ch.categoryProperties = propData[chKey][0].categoryProperties || [];
       }
     }
   }
@@ -441,6 +448,7 @@ async function main() {
   let totalCategoriesFilled = 0;
   let totalRecommendationsApplied = 0;
   let totalFallbacksFilled = 0;
+  let totalDetailImagesFilled = 0;
   const failures = [];
   const durations = [];
 
@@ -449,55 +457,71 @@ async function main() {
   let lastCheckpointTime = Date.now();
 
   async function worker(workerId) {
-    // Assign page based on workerId
-    const page = pages[(workerId - 1) % pages.length];
-
     while (true) {
       const idx = currentIndex++;
       if (idx >= targets.length) break;
 
       const item = targets[idx];
       const spuId = String(item.spuId);
+      let page = pages[(workerId - 1) % pages.length];
 
-      try {
-        const result = await processSingleSpu(page, item);
-        durations.push(result.durationMs);
-        processedSpuIds.add(spuId);
+      // Tab health check
+      if (page.isClosed()) {
+        console.log(`[Worker ${workerId}] Tab was closed, recreating...`);
+        page = await context.newPage();
+        await page.goto('https://qnh.meituan.com/home.html#/unifiedGoods/tenant/spu-list', { waitUntil: 'domcontentloaded' });
+        pages[(workerId - 1) % pages.length] = page;
+      }
 
-        if (result.status === 'updated') {
-          updatedCount++;
-          successCount++;
-          totalCategoriesFilled += result.categoriesFilledCount;
-          totalRecommendationsApplied += result.recommendationsAppliedCount;
-          totalFallbacksFilled += result.fallbacksFilledCount;
-        } else if (result.status === 'no_change') {
-          noChangeCount++;
-          successCount++;
-        } else {
-          failCount++;
-          failures.push({ spuId, error: result.error, name: result.spuName });
+      let retries = 0;
+      while (retries < 3) {
+        try {
+          const result = await processSingleSpu(page, item);
+          durations.push(result.durationMs);
+          processedSpuIds.add(spuId);
+
+          if (result.status === 'updated') {
+            updatedCount++;
+            successCount++;
+            totalCategoriesFilled += result.categoriesFilledCount;
+            totalRecommendationsApplied += result.recommendationsAppliedCount;
+            totalFallbacksFilled += result.fallbacksFilledCount;
+            if (result.detailImagesFilled) totalDetailImagesFilled++;
+          } else if (result.status === 'no_change') {
+            noChangeCount++;
+            successCount++;
+          } else {
+            failCount++;
+            failures.push({ spuId, error: result.error, name: result.spuName });
+          }
+          break; // Success or handled
+        } catch (err) {
+          retries++;
+          if (retries >= 3) {
+            failCount++;
+            failures.push({ spuId, error: err.message, name: item.spuName });
+          } else {
+            await new Promise(r => setTimeout(r, 200));
+          }
         }
+      }
 
-        // Live telemetry
-        if ((idx + 1) % 10 === 0 || idx === targets.length - 1) {
-          const elapsedSec = (Date.now() - runStartTime) / 1000;
-          const rate = Math.round(((idx + 1) / elapsedSec) * 60);
-          const avgDuration = Math.round(durations.reduce((a, b) => a + b, 0) / (durations.length || 1));
-          console.log(`[Progress ${idx + 1}/${targets.length}] Rate: ${rate} SPU/min | Avg: ${avgDuration}ms | Updated: ${updatedCount} | NoChange: ${noChangeCount} | Fail: ${failCount}`);
-        }
+      // Live telemetry
+      if ((idx + 1) % 10 === 0 || idx === targets.length - 1) {
+        const elapsedSec = (Date.now() - runStartTime) / 1000;
+        const rate = Math.round(((idx + 1) / elapsedSec) * 60);
+        const avgDuration = Math.round(durations.reduce((a, b) => a + b, 0) / (durations.length || 1));
+        console.log(`[Progress ${idx + 1}/${targets.length}] Rate: ${rate} SPU/min | Avg: ${avgDuration}ms | Updated: ${updatedCount} | NoChange: ${noChangeCount} | Fail: ${failCount} (补类目:${totalCategoriesFilled}, 补图:${totalDetailImagesFilled}, 补属性:${totalFallbacksFilled})`);
+      }
 
-        // Periodic checkpoint
-        if (Date.now() - lastCheckpointTime > 30000 || (idx + 1) % 100 === 0) {
-          lastCheckpointTime = Date.now();
-          await fs.writeFile(checkpointFile, JSON.stringify({
-            last_updated: new Date().toISOString(),
-            total_processed: processedSpuIds.size,
-            processed_spu_ids: Array.from(processedSpuIds)
-          }, null, 2), 'utf8');
-        }
-      } catch (err) {
-        failCount++;
-        failures.push({ spuId, error: err.message, name: item.spuName });
+      // Periodic checkpoint
+      if (Date.now() - lastCheckpointTime > 30000 || (idx + 1) % 100 === 0) {
+        lastCheckpointTime = Date.now();
+        await fs.writeFile(checkpointFile, JSON.stringify({
+          last_updated: new Date().toISOString(),
+          total_processed: processedSpuIds.size,
+          processed_spu_ids: Array.from(processedSpuIds)
+        }, null, 2), 'utf8');
       }
 
       await new Promise(r => setTimeout(r, 40));

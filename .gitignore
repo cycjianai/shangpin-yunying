@@ -6,3 +6,4 @@ runs/
 checkpoints/
 *.log
 node_modules/
+scratch/

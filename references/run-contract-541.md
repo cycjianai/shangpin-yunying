@@ -108,7 +108,7 @@ Checkpoint 必须在每次外部调用后立即落盘。`terminal`、`provider_u
 3. 每个字段记录 `expected_old`、`new_value`、证据类型、证据 URL/图片和处理路由。
 4. 跨食品、日百、家电、服饰抽取 5–10 条 PoC；全部 dry-run 通过后实际保存并回读。
 5. PoC 必须 100% 满足：业务成功、目标字段一致、非目标字段未清空、全部门店覆盖、编辑标签已关闭。
-6. PoC 通过后默认单热页；只有同量 canary 更快且资源余量持续通过才按不同 SPU `1→2→4` 扩量；同一 SPU 始终串行执行读详情→合并→保存→回读。
+6. PoC 通过后，批量执行严格启用 QNH 黄金标准【启动即满速：4 Tabs + 12 并发 Workers】全速推进；同一 SPU 始终串行执行读详情→合并→保存→回读。
 
 ## 5. 保存与审核反馈闭环
 
@@ -137,7 +137,7 @@ materialized_waiting_review → exited_unavailable
 - QNH 写意图至少按 `tenant + store + SPU + field/picture_type + expected_old + new_hash` 持久化，跨 run-dir 查重。
 - Provider claim 至少按 `tenant + SPU + picture_type + prompt_hash + reference_hash` 持久化，跨 output-dir 查重。
 - HTTP 结果未知但可能已受理时只回读，不重复 final save。
-- 字段保存默认一个可复用热 writer；同量端到端 canary 更快且资源健康时才按不同 SPU `1→2→4` 升档，4 为硬上限。遇到 429、403、登录失效、回读不一致或资源压力立即粘滞降窗/暂停。
+- 字段保存严格启用 QNH 黄金标准【启动即满速：4 Tabs + 12 并发 Workers】全速推进，严禁退回单热 writer 或 1→2→4 保守低速模式；遇到 429、403、登录失效、回读不一致或资源压力立即按断点保存暂停。
 - OCR/Tesseract 每账号最多 4 workers，同机多账号推荐串行；长扫描按 10 SPU 小分片落盘。
 - 外部图片 provider 默认小并发，任何业务键都只 submit 一次。
 - 单商品保存吞吐按整批墙钟/商品数统计，平台审核等待不计入 10 秒目标。

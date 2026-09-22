@@ -45,7 +45,10 @@ python3 scripts/route_skill.py \
 - [统一业务成功合同](references/unified-business-success-contract-v1.md)：保存受理不等于成功；只有独立回读、非目标保护和
   适用集合复扫通过，才进入统一终态。
 - [渠道属性与详情图全量治理合同](references/channel-attribute-contract-v2.md)：
-  * **核心铁律 1（属性拉满）**：只填写必填是不对的！所有渠道属性（必填 + 非必填）必须全量回填（官方推荐 ➔ 事实继承 ➔ 语义提取 ➔ 规则库兜底），做到页面 0 空白。
+  * **核心铁律 1（属性拉满与官方推荐第一优先级）**：
+    - **平台推荐优先**：凡涉及美团（100）与饿了么（200）渠道属性，必须第一步调用官方动态推荐接口 `queryRecommendDynamicInfoAndWeight`。只要官方返回了属性推荐（包括品牌、备案编号/注册证号、商品类别、适用部位、特殊化妆品等），必须 100% 优先采纳写入 `customValue`！严禁跳过推荐直接使用通用兜底（如将品牌填成“其他”、备案号填成“1”属于严重违规）；
+    - **剩余空白二次补齐**：官方推荐写入完成后，再检查未被推荐覆盖的剩余空白属性（`!isPropertyValid(prop)`），通过商品标题语义提取、数值单位解析（Type 10 结构体）及通用安全枚举规则进行兜底输入，做到页面 0 空白；
+    - **全门店同步生效**：保存请求必须携带 `coverageRequest: { fieldCoverageInfoList: [ { field: 'mt_channel_category_property', coverToStore: 1 }, { field: 'elm_channel_category_property', coverToStore: 1 }, { field: 'jd_channel_category_property', coverToStore: 1 } ] }`，确保全店同步生效。
   * **核心铁律 2（详情图兜底）**：详情图缺失会导致多渠道审核不过。若 `picContentList` 为空，自动补齐 2 张合规详情图并覆盖 `picture` 字段保存。
   * **核心铁律 3（渠道类目三级语义兜底与属性联动）**：严禁渠道类目留空！当批量推荐接口未返回（尤其饿了么因标题规格噪音或类目库缺失细分类目）时，必须执行三级兜底（标题降噪二次推荐 ➔ 美团/京东跨渠道类目映射 ➔ 饿了么全量 2,415 叶子树语义倒排匹配）。新挂载类目后，必须立即拉取属性骨架并全量填满，严禁“只填类目留下属性空白”！
 - [美团不可售一次过 16 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略11-大治理规则)：
@@ -66,11 +69,13 @@ python3 scripts/route_skill.py \
       3. 生成完成后下载图片，通过牵牛花官方接口（`/api/v1/image/uploadImageFullType`）上传至美团 CDN，提取 `fileUrl`；
       4. 严格将图片 URL 字符串数组写入 `mtSpecialPictureList` / `elmSpecialPictureList` 对应槽位；
       5. 调用 `update/v2` 提交保存并携带 `fieldCoverageInfoList` 触发 `coverToStore: 1` 强制全门店同步提审。
+    - **成本控制与用户授权边界**：生图接口每次请求均产生直接成本，严禁擅自大面积调用！当用户明确指令“图片不需要生成”时，必须 100% 严禁调用任何生图 API，外部图片预算固定为 0；仅当用户有明确授权且需要修复资质图质检驳回时，方可按需小范围验证调用。
   * **规则 13（品牌与标题前缀严格对齐与未备案品牌兜底）**：若标题以未在美团备案的品牌开头，审核会报“商品名称: 缺少品牌”。先调 `attrValueSug` 查品牌，若无匹配项，必须将品牌设置为“通用”（valueId: 2436552）或“无品牌”，在 `categoryAttrValueMap` 注入选中项，并同步将标题前缀修改为“通用 ”保持完全一致。
   * **规则 14（结构体复合属性与标题/规格全量一致性）**：针对 `抽数`、`保质期`、`容量` 等 `render.type: 7` 属性，选项必须注入 `valueExtend: { value, unitCode, unitName }`，且商品标题、SKU 规格名（`sku.spec`/`specName`）与类目属性数值必须 100% 严格一致，严禁标题与规格数量冲突。
   * **规则 15（建议类目迁移与属性骨架全量重构）**：审核提示“请将商品类目改为：...”时，必须立即变更 `categoryId`/`categoryName`/`categoryPath`，并调 `api.iE` 重新加载新类目的属性骨架，全量补齐新类目的必填属性（如商品类别、国产/进口、适用年龄、材质等）。
   * **规则 16（主图主体完整展示与居中留白 Pad 规范）**：针对“商品图片: 商品主体未完整展示”，严禁用顶格裁切图或纯营销宣传图充当主图。必须使用 1:1 白色画布居中绘制，四周预留 10%~15% 留白，确保瓶盖、挂孔、包装底部等完整呈现且无任何外部平台水印框。
-- [资源合同](references/runtime-resource-contract-v1.md)：遵守当前项目受控入口与内存规则；默认单热 writer，本包现有执行器支持 `1→2→4`，按实测决定是否升档。
+- [资源合同](references/runtime-resource-contract-v1.md)：
+  * **【牵牛花并发启动铁律：启动即满速】**：牵牛花（QNH）大批量商品治理与修改任务，**严禁使用单线程、保守低并发或多余的冷启动降级测试！必须从第一秒起直接启用最高基准：4 个浏览器标签页 + 12 并发 Workers（4 Tabs × 3 并发）满速推进**（分布式 H5guard 签名防竞争，吞吐达 250~300 SPU/分钟，单 SPU 约 1.8~2.5s，100% 成功）。保存必须携带 coverToStore: 1 全店覆盖。
 - [统一输出内容合同](references/core/output-contract.md) 与
   [Excel 精确 Schema](references/excel-schema-v1.md)：从第一条事件开始使用统一字段、状态和来源词汇。
 

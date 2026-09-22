@@ -112,23 +112,130 @@ function buildSaveExpression({
     const product = detail.productInfo || {};
     const changes = [];
 
-    // 1. 属性通用选项
-    const attrs = [];
+    // 1. 覆盖 3C 认证证书编号 (规则10: 2021180709028479)
+    const val3C = '2021180709028479';
+    const optId3C = 'customized_attr_value_' + val3C;
+    const allAttrs = [];
     const seen = new Set();
     function addAttr(a) {
       if(!a || typeof a !== 'object') return;
       const name = String(a.attrName || a.name || a.propertyName || a.label || '').trim();
       const id = String(a.attrId ?? a.id ?? a.code ?? '');
       const k = id + ':' + name;
-      if(name && !seen.has(k)) { seen.add(k); attrs.push(a); }
+      if(name && !seen.has(k)) { seen.add(k); allAttrs.push(a); }
     }
     Object.values(product.categoryAttrValueMap || {}).forEach(addAttr);
     (product.categoryAttrList || []).forEach(addAttr);
 
-    for(const a of attrs) {
+    for (const a of allAttrs) {
+      const name = a?.name || a?.attrName || '';
+      if (name.includes('3C') || name.includes('3c') || name.includes('认证证书编号')) {
+        const curVal = a.options?.[0]?.value || a.value || '';
+        if (!curVal || String(curVal).length < 16 || String(curVal) === '6') {
+          const optObj = {
+            id: optId3C,
+            valueId: optId3C,
+            label: val3C,
+            value: val3C,
+            name: val3C,
+            isCustomized: true,
+            namePath: [val3C],
+            idPath: [],
+            sequence: 1,
+            isLeaf: false,
+            parentId: a.id,
+            parentName: a.name,
+            selected: true,
+            valueExtend: null
+          };
+          a.options = [optObj];
+          a.optionsMap = { [optId3C]: optObj };
+          changes.push({ field: name, type: '3c_number', value: val3C });
+        }
+      }
+    }
+    if (product.approvalNumber !== undefined) {
+      if (!product.approvalNumber || String(product.approvalNumber).length < 16) {
+        product.approvalNumber = val3C;
+        changes.push({ field: 'approvalNumber', type: '3c_number', value: val3C });
+      }
+    }
+
+    // 2. 复合输入型属性与通用选项 (规则8)
+    for(const a of allAttrs) {
+      const name = a?.name || a?.attrName || '';
       const isReq = Boolean(a.required || a.isRequired || a.mustFill || a.requiredFlag);
       const hasSelected = (a.options || []).some(opt => opt.selected);
-      if(isReq && !hasSelected && (a.options || []).length > 0) {
+
+      // 处理复合数值输入属性 (如电源线长、容量、保质期、包装规格、接口数量等)
+      if (name.includes('电源线长')) {
+        const valStr = '1.5m';
+        const optKey = 'customized_attr_value_1.5m';
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: { valueList: [[{ type: 4, value: '1.5' }, { unitCode: 606, type: 5, value: 'm' }]], inputRule: 1 }
+        }];
+        changes.push({ field: name, type: 'composite_attr', value: valStr });
+      } else if (name.includes('容量') && !hasSelected) {
+        let capVal = '1.5';
+        const m = (product.name || '').match(/(\d+(?:\.\d+)?)\s*(?:L|升|ml|毫升)/i);
+        if (m) capVal = m[1];
+        const valStr = capVal + 'L';
+        const optKey = 'customized_attr_value_' + valStr;
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: { valueList: [[{ type: 4, value: capVal }, { unitCode: 606, type: 5, value: 'L' }]], inputRule: 1 }
+        }];
+        changes.push({ field: name, type: 'composite_attr', value: valStr });
+      } else if (name.includes('保质期') && !hasSelected) {
+        const valStr = '36个月';
+        const optKey = 'customized_attr_value_36个月';
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: { valueList: [[{ type: 4, value: '36' }, { unitCode: 606, type: 5, value: '个月' }]], inputRule: 1 }
+        }];
+        changes.push({ field: name, type: 'composite_attr', value: valStr });
+      } else if (name.includes('包装规格') && !hasSelected) {
+        let specVal = '12';
+        const m = (product.name || '').match(/(\d+)\s*(?:只|片|包|个|袋|抽)/);
+        if (m) specVal = m[1];
+        const valStr = specVal + '只装';
+        const optKey = 'customized_attr_value_' + valStr;
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: { valueList: [[{ type: 4, value: specVal }, { unitCode: 606, type: 5, value: '只装' }]], inputRule: 1 }
+        }];
+        changes.push({ field: name, type: 'composite_attr', value: valStr });
+      } else if (name.includes('接口数量')) {
+        const valStr = '1个';
+        const optKey = 'customized_attr_value_1个';
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: { valueList: [[{ type: 4, value: '1' }, { unitCode: 606, type: 5, value: '个' }]], inputRule: 1 }
+        }];
+        changes.push({ field: name, type: 'composite_attr', value: valStr });
+      } else if (name.includes('面料成分') && !hasSelected) {
+        const valStr = '聚酯纤维';
+        const optKey = 'customized_attr_value_聚酯纤维';
+        a.options = [{
+          id: optKey, valueId: optKey, label: valStr, value: valStr, name: valStr,
+          isCustomized: true, namePath: [valStr], idPath: [], sequence: 1, isLeaf: false,
+          parentId: a.id, parentName: a.name, selected: true,
+          valueExtend: null
+        }];
+        changes.push({ field: name, type: 'text_attr', value: valStr });
+      } else if(isReq && !hasSelected && (a.options || []).length > 0) {
+        // 枚举单选类属性
         const preferred = ['通用', '其他', '其它', '常规', '标准', '否', '无', '均码', '适用'];
         let matched = null;
         for(const pref of preferred) {
@@ -143,7 +250,7 @@ function buildSaveExpression({
       }
     }
 
-    // 2. 条形码
+    // 3. 条形码 (规则9: 动态生成防冲突)
     if(arg.generated_barcode) {
       product.upcCode = arg.generated_barcode;
       for (const key of ['skuList', 'originSkuList', 'originSkus']) {
@@ -157,7 +264,7 @@ function buildSaveExpression({
       changes.push({ field: '条形码', type: 'barcode', value: arg.generated_barcode });
     }
 
-    // 3. 规格
+    // 4. 规格
     if(arg.extracted_spec) {
       for (const key of ['skuList', 'originSkuList', 'originSkus']) {
         for (const sku of product[key] || []) {
@@ -168,9 +275,9 @@ function buildSaveExpression({
       changes.push({ field: '规格', type: 'spec', value: arg.extracted_spec });
     }
 
-    // 4. 详情图
+    // 5. 详情图 (规则2: 默认注入规范双详情图)
     const curDetail = Array.isArray(product.pictureContentList) ? product.pictureContentList : [];
-    if(curDetail.length === 0 && (arg.detail_image_urls || []).length > 0) {
+    if(curDetail.length < 2 && (arg.detail_image_urls || []).length > 0) {
       product.pictureContentList = arg.detail_image_urls.map(u => u.split('?')[0] + '?w=1080&h=1080');
       changes.push({ field: '图片详情', type: 'detail_images', count: product.pictureContentList.length });
     }

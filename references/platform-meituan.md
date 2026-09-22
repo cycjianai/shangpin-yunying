@@ -112,8 +112,7 @@ jn（新鲜完整商品）
 
 - 默认不删除、不覆盖、不重排原 `pictureList`、详情图和 `cpvGuidePicMap/cpvGuidePicList`。
 - 一个 SPU 的字段、详情图和 CPV 先合并为最终快照，只执行一次 final save。
-- 无论本次是否修改专项图，每次保存都必须把完整 `cpvGuidePicMap` 重新序列化为 `cpvGuidePicList`；只在
-  `cpv_updates` 非空时序列化会把既有专项图清空。
+- 每次保存都必须显式构造完整数组 `product.cpvGuidePicList = [{ quaType, picUrl }]`，并镜像同步 `product.cpvGuidePicMap` 与 `product.approvalNumberPics`。严禁仅赋值 `cpvGuidePicMap`，否则 `form.$P` 会丢失资质图数组导致提交失败。
 - 保存前比较完整字段和图片摘要；非目标字段减少、主图顺序变化或 CPV 类型丢失时整条零保存。
 - final save 前持久化 write intent；请求已发送、已受理或结果未知后只回读，不自动再次保存。
 
@@ -257,7 +256,16 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
 
 在处理美团商家后台“无法售卖/审核未通过”商品时，严格遵循以下 11 项实战规则，确保在第一轮即可全要素识别并一次性闭环修复：
 
-1. **资质图策略**：对接项目已注册的资质图接口与 `meituan_writeback` 链路，对强监管类目（3C、食品配料、小金盾等）保持原件核验或接口生成，严禁用普通主图冒充。
+1. **资质图数组结构强约束与接口联动（CPV Guide Picture Array Enforcement）**：
+   - **底层序列化铁律**：逆向美团前端表单编译模块（`86925: form.$P`）证实，平台保存请求体中的资质图仅读取数组字段 `product.cpvGuidePicList`，严禁仅写对象字典 `product.cpvGuidePicMap`（若未序列化为数组，`form.$P` 会直接生成 `body.cpvGuidePicList = []`，导致资质图在物理层面未被打包上传而被平台二审驳回）；
+   - **全量数组注入标准**：保存前必须显式构造完整数组 `product.cpvGuidePicList = [{ quaType: 1, picUrl }, { quaType: 3, picUrl }, { quaType: 5, picUrl }, ...]`，同时兼容回填 `cpvGuidePicMap` 与 `approvalNumberPics`；
+   - **常用 quaType 编码对应**：
+     * `quaType: 1`：包装标签图（数码配件、日化用品必备）
+     * `quaType: 3`：3C 认证证书图 / 尺寸图（数码充电器、小家电、玩具必备）
+     * `quaType: 5`：食品配料 & 营养成分图（酒水、饮料、休闲零食必备）
+     * `quaType: 8`：农药生产许可证背签图（驱蚊花露水等卫生杀虫用品必备）
+     * `quaType: 15`：纺织品使用说明图（家纺床上用品、被子必备）
+   - **材料真实合规**：对接项目注册的资质图接口与美团 CDN 上传链路，严禁用普通主图冒充。
 2. **详情图缺失默认补齐**：重点类目强制要求 `pictureContentList` 非空。遇到详情图缺失时，默认上传经官方 CDN 审核的规范服务说明图（如 `http://p0.meituan.net/shangouproductapi/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 与 `http://p0.meituan.net/shangouproductapi/6f244c5f3cb8b26399bbf31116c40de81422507.png`），并带 `?w=1080&h=1080` 规范尺寸参数写入。
 3. **条形码自动生成与防碰撞**：当条形码无法核验、校验位错误或与库内商品冲突时，按标准 EAN-13 算法基于 SPU 唯一 Hash 动态生成合法 `69...` 校验码填入。
 4. **规格以标题解析为准**：以标题末尾解析出的净含量/规格/包装单位（如 `1套/盒`、`1个/件`、`1200ml/个` 等）为权威依据，同步至 SKU 的 `spec` 和 `specName`，防止标题与规格冲突。

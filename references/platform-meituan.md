@@ -112,7 +112,7 @@ jn（新鲜完整商品）
 
 - 默认不删除、不覆盖、不重排原 `pictureList`、详情图和 `cpvGuidePicMap/cpvGuidePicList`。
 - 一个 SPU 的字段、详情图和 CPV 先合并为最终快照，只执行一次 final save。
-- 每次保存都必须显式构造完整数组 `product.cpvGuidePicList = [{ quaType, picUrl }]`，并镜像同步 `product.cpvGuidePicMap` 与 `product.approvalNumberPics`。严禁仅赋值 `cpvGuidePicMap`，否则 `form.$P` 会丢失资质图数组导致提交失败。
+- 每次保存都必须显式构造完整 JSON 序列化字符串 `product.cpvGuidePicList = JSON.stringify([{ imgType, urlList: [url] }])`，并镜像同步 `product.cpvGuidePicMap` 与 `product.approvalNumberPics`。严禁直接传原始数组或对象字典，避免触发后端 Spring 参数解析失败或 NullPointerException。
 - 保存前比较完整字段和图片摘要；非目标字段减少、主图顺序变化或 CPV 类型丢失时整条零保存。
 - final save 前持久化 write intent；请求已发送、已受理或结果未知后只回读，不自动再次保存。
 
@@ -256,15 +256,16 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
 
 在处理美团商家后台“无法售卖/审核未通过”商品时，严格遵循以下 11 项实战规则，确保在第一轮即可全要素识别并一次性闭环修复：
 
-1. **资质图数组结构强约束与接口联动（CPV Guide Picture Array Enforcement）**：
-   - **底层序列化铁律**：逆向美团前端表单编译模块（`86925: form.$P`）证实，平台保存请求体中的资质图仅读取数组字段 `product.cpvGuidePicList`，严禁仅写对象字典 `product.cpvGuidePicMap`（若未序列化为数组，`form.$P` 会直接生成 `body.cpvGuidePicList = []`，导致资质图在物理层面未被打包上传而被平台二审驳回）；
-   - **全量数组注入标准**：保存前必须显式构造完整数组 `product.cpvGuidePicList = [{ quaType: 1, picUrl }, { quaType: 3, picUrl }, { quaType: 5, picUrl }, ...]`，同时兼容回填 `cpvGuidePicMap` 与 `approvalNumberPics`；
-   - **常用 quaType 编码对应**：
-     * `quaType: 1`：包装标签图（数码配件、日化用品必备）
-     * `quaType: 3`：3C 认证证书图 / 尺寸图（数码充电器、小家电、玩具必备）
-     * `quaType: 5`：食品配料 & 营养成分图（酒水、饮料、休闲零食必备）
-     * `quaType: 8`：农药生产许可证背签图（驱蚊花露水等卫生杀虫用品必备）
-     * `quaType: 15`：纺织品使用说明图（家纺床上用品、被子必备）
+1. **资质图 JSON 字符串序列化与 CpvGuidePicVO 强契约（CPV Guide Picture Serialization）**：
+   - **底层序列化铁律**：逆向美团后端 Java Spring 控制器（`com.sankuai.item.api.server.controller.vo.singleSaveOrUpdate.CpvGuidePicVO`）证实，平台保存接口要求 `product.cpvGuidePicList` 必须为 **JSON 序列化字符串**，且每个项必须包含 `imgType`（数字）与 `urlList`（字符串数组）。若传原始 JS 数组，URL-encoded 编码会导致 Spring 报 `Cannot invoke "Object.getClass()" because "value" is null`；若字段名为 `picUrl`，会导致 `CpvGuidePicVO.getUrlList().forEach(...)` 报空指针；
+   - **全量注入标准**：保存前必须显式构造完整 JSON 字符串 `product.cpvGuidePicList = JSON.stringify([{ imgType, urlList: [picUrl] }, ...])`，同时同步写入 `cpvGuidePicMap` 与 `approvalNumberPics`；
+   - **常用 imgType 编码对应**：
+     * `imgType: 3`：包装标签图（数码配件、小家电必备）
+     * `imgType: 4`：3C 认证证书图（数码充电器、移动电源、小家电必备）
+     * `imgType: 5`：食品配料 & 营养成分图（酒水、饮料、休闲零食必备）
+     * `imgType: 6`：纺织品使用说明图（家纺床上用品、被子必备）
+     * `imgType: 8`：化妆品备案/农药生产许可证背签图（驱蚊花露水等卫生杀虫/美妆护肤必备）
+     * `imgType: 13`：尺寸图（养生壶、被子等大件/尺寸敏感品类必备）
    - **材料真实合规**：对接项目注册的资质图接口与美团 CDN 上传链路，严禁用普通主图冒充。
 2. **详情图缺失默认补齐**：重点类目强制要求 `pictureContentList` 非空。遇到详情图缺失时，默认上传经官方 CDN 审核的规范服务说明图（如 `http://p0.meituan.net/shangouproductapi/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 与 `http://p0.meituan.net/shangouproductapi/6f244c5f3cb8b26399bbf31116c40de81422507.png`），并带 `?w=1080&h=1080` 规范尺寸参数写入。
 3. **条形码自动生成与防碰撞**：当条形码无法核验、校验位错误或与库内商品冲突时，按标准 EAN-13 算法基于 SPU 唯一 Hash 动态生成合法 `69...` 校验码填入。

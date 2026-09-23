@@ -51,7 +51,7 @@ python3 scripts/route_skill.py \
     - **全门店同步生效**：保存请求必须携带 `coverageRequest: { fieldCoverageInfoList: [ { field: 'mt_channel_category_property', coverToStore: 1 }, { field: 'elm_channel_category_property', coverToStore: 1 }, { field: 'jd_channel_category_property', coverToStore: 1 } ] }`，确保全店同步生效。
   * **核心铁律 2（详情图兜底）**：详情图缺失会导致多渠道审核不过。若 `picContentList` 为空，自动补齐 2 张合规详情图并覆盖 `picture` 字段保存。
   * **核心铁律 3（渠道类目三级语义兜底与属性联动）**：严禁渠道类目留空！当批量推荐接口未返回（尤其饿了么因标题规格噪音或类目库缺失细分类目）时，必须执行三级兜底（标题降噪二次推荐 ➔ 美团/京东跨渠道类目映射 ➔ 饿了么全量 2,415 叶子树语义倒排匹配）。新挂载类目后，必须立即拉取属性骨架并全量填满，严禁“只填类目留下属性空白”！
-- [美团不可售一次过 16 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略11-大治理规则)：
+- [美团不可售一次过 18 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略11-大治理规则)：
   * **规则 1（资质图 JSON 字符串序列化与 CpvGuidePicVO 强契约）**：美团后端 Java Spring（`CpvGuidePicVO`）强制要求 `cpvGuidePicList` 为 **JSON 序列化字符串**，且每个对象必须包含 `imgType`（数字类型）与 `urlList`（非空字符串数组，格式如 `JSON.stringify([{ imgType: 4, urlList: [url] }, { imgType: 3, urlList: [url] }])`）。严禁仅传对象字典或使用错误字段名（如 picUrl 会触发 NullPointerException），必须根据 `cpvGuidePicConfigList` 动态匹配：包装标签图（`imgType: 3`）、3C证书（`imgType: 4`）、食品配料（`imgType: 5`）、纺织品说明（`imgType: 6`）、化妆品/农药背签（`imgType: 8`）、尺寸图（`imgType: 13`）。
   * **规则 2-7（基础与一次过）**：双详情图兜底、69 码校验位生成、标题解析规格、通用属性优先、整单一次过提交、允许忽略活动告警强制保存。
   * **规则 8（复合输入属性构造）**：电源线长、容量、保质期、包装规格等 `valueType: 10` 属性初态 `options` 为空，严禁跳过，必须按复合结构完整注入数值与单位。
@@ -74,6 +74,8 @@ python3 scripts/route_skill.py \
   * **规则 14（结构体复合属性与标题/规格全量一致性）**：针对 `抽数`、`保质期`、`容量` 等 `render.type: 7` 属性，选项必须注入 `valueExtend: { value, unitCode, unitName }`，且商品标题、SKU 规格名（`sku.spec`/`specName`）与类目属性数值必须 100% 严格一致，严禁标题与规格数量冲突。
   * **规则 15（建议类目迁移与属性骨架全量重构）**：审核提示“请将商品类目改为：...”时，必须立即变更 `categoryId`/`categoryName`/`categoryPath`，并调 `api.iE` 重新加载新类目的属性骨架，全量补齐新类目的必填属性（如商品类别、国产/进口、适用年龄、材质等）。
   * **规则 16（主图主体完整展示与居中留白 Pad 规范）**：针对“商品图片: 商品主体未完整展示”，严禁用顶格裁切图或纯营销宣传图充当主图。必须使用 1:1 白色画布居中绘制，四周预留 10%~15% 留白，确保瓶盖、挂孔、包装底部等完整呈现且无任何外部平台水印框。
+  * **规则 17（SKU 笛卡尔积规格全生命周期同步）**：美团保存组件 `$P` 在打包 SKU 时，会依据售卖规格属性（`categoryAttrValueMap[1200004519]`）以及 SKU 上的 `__descates_key__` 逆向重新生成 `sku.spec` 与 `specName`。多规格商品若仅修改 `sku.spec`，表单序列化时会被旧笛卡尔积键强行覆盖还原。必须实现四维联动：同步更新 `sku.spec`、`sku.specName`、`sku.__descates_key__`（如 `1200004519_$$_28抽*10包/袋`）、`sku.categoryAttrList[0]` 以及 `categoryAttrValueMap[1200004519]`，彻底消除多规格描述冲突。
+  * **规则 18（食品类目机审 OCR 配料表与营养成分表合规引擎）**：美团食品饮料类目在保存后，机审系统（Odin）会自动运行机器 OCR 算法检测 `cpvGuidePicMap["5"]`（配料&营养成分图）。若仅传外观宣传图或缺失文字，会被机审秒退 `缺少配料&营养成分图，其中【配料表】、【营养成分图】缺失`。必须通过规范模板图或本地标准化 Canvas 绘制白底黑字清晰表格（顶部标明 `【配料表】`，底部嵌入包含能量、蛋白质、脂肪、碳水化合物、钠的 `【营养成分表】` 5 项标准表格），经美团 CDN 极速上传后绑定入库，做到机器 OCR 质检 100% 识别一次过。
 - [资源合同](references/runtime-resource-contract-v1.md)：
   * **【牵牛花并发启动铁律：启动即满速】**：牵牛花（QNH）大批量商品治理与修改任务，**严禁使用单线程、保守低并发或多余的冷启动降级测试！必须从第一秒起直接启用最高基准：4 个浏览器标签页 + 12 并发 Workers（4 Tabs × 3 并发）满速推进**（分布式 H5guard 签名防竞争，吞吐达 250~300 SPU/分钟，单 SPU 约 1.8~2.5s，100% 成功）。保存必须携带 coverToStore: 1 全店覆盖。
 - [统一输出内容合同](references/core/output-contract.md) 与

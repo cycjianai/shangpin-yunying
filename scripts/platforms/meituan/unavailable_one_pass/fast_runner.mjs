@@ -234,9 +234,12 @@ function buildSaveExpression({
           valueExtend: null
         }];
         changes.push({ field: name, type: 'text_attr', value: valStr });
-      } else if(isReq && !hasSelected && (a.options || []).length > 0) {
-        // 枚举单选类属性
-        const preferred = ['通用', '其他', '其它', '常规', '标准', '否', '无', '均码', '适用'];
+      } else if((isReq || (name.includes('赠') || name.includes('送'))) && !hasSelected && (a.options || []).length > 0) {
+        // 枚举单选类属性 (规则35: 凡涉及赠送/赠品，绝对禁止选“是/赠送”，强制选“否/不赠送/无/无赠品”)
+        let preferred = ['通用', '其他', '其它', '常规', '标准', '否', '无', '均码', '适用'];
+        if (name.includes('赠') || name.includes('送')) {
+          preferred = ['否', '不赠送', '无', '无赠品', '不送', '其他', '其它'];
+        }
         let matched = null;
         for(const pref of preferred) {
           matched = a.options.find(opt => label(opt).includes(pref));

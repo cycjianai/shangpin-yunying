@@ -257,8 +257,32 @@ export function fillProperty(prop, title = '') {
     return null;
   }
 
-  // 3. 品牌 (Type 4) —— 规则 4: 优先选择“其他”
+  // 3. 字典搜索项 (Type 4) —— 产地与品牌精准对齐
   if (type === '4') {
+    // 产地 / 原产地字典对齐（饿了么强制 27772: 中国大陆，美团 100000050: 中国）
+    if (/(?:产地|原产地|生产国)/.test(name)) {
+      const options = prop.attrValueList || prop.optionalValue || [];
+      const matched = options.find(o => /^(?:中国大陆|中国|国产)$/.test(o.attrValue || o.optionValue || ''));
+      if (matched) {
+        return [{
+          attrValueId: String(matched.attrValueId || matched.optionId || ''),
+          attrValue: String(matched.attrValue || matched.optionValue || ''),
+          douyinDiyType: null,
+          structAttrValueList: [],
+          childrenJson: null,
+          useFallbackValue: null,
+        }];
+      }
+      return [{
+        attrValueId: '27772',
+        attrValue: '中国大陆',
+        douyinDiyType: null,
+        structAttrValueList: [],
+        childrenJson: null,
+        useFallbackValue: null,
+      }];
+    }
+
     const options = prop.attrValueList || prop.optionalValue || [];
     let matched = options.find(o => {
       const optName = o.attrValue || o.optionValue || '';

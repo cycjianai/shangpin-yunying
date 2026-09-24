@@ -160,6 +160,14 @@ export function fillProperty(prop, title = '') {
     // 阶段 1: 常见关键业务属性精准语义匹配
     let matched = null;
 
+    // 规则 35: 赠品与附赠属性全量默认否定契约（严禁选择“是/赠送/有赠品”，强制选定“无赠品/不赠送/否/无/无餐具”）
+    if (/(?:赠品|赠送|附赠|是否赠|配赠|送)/.test(name)) {
+      matched = options.find(o => /^(?:无赠品|不赠送|否|无|无餐具|不送)$/.test((o.attrValue || o.optionValue || '').trim()));
+      if (!matched) {
+        matched = options.find(o => /(?:无|不|否)/.test(o.attrValue || o.optionValue || ''));
+      }
+    }
+
     // A. 包装方式 / 包装形式
     if (/(?:包装方式|包装形式|包装类型)/.test(name)) {
       if (/真空/.test(title)) matched = options.find(o => /真空/.test(o.attrValue || o.optionValue || ''));

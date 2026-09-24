@@ -204,6 +204,20 @@ async function processSingleSpu(page, spuItem) {
     detailImagesFilled = true;
   }
 
+  // 3.6 资质特殊图补齐 (3C证书, 包装标签, 配料图, 背签图)
+  let specialPicsFilled = false;
+  for (const listName of ['mtSpecialPictureList', 'elmSpecialPictureList']) {
+    for (const pic of (detail[listName] || [])) {
+      if (!pic.pictureUrl || pic.pictureUrl.length === 0 || (pic.pictureUrl[0] && pic.pictureUrl[0].includes('sgfn/010508'))) {
+        const example = (pic.pictureExample && pic.pictureExample.length > 0)
+          ? pic.pictureExample[0]
+          : (pic.pictureType === 4 ? 'https://p0.meituan.net/sgspyy/e850e82302d53bb398d6c3ecb4c47aaf1363997.jpg' : 'https://img.meituan.net/operatingtool/5385a7153c253f61c4c69af682b6a9ef111342.jpg');
+        pic.pictureUrl = [example];
+        specialPicsFilled = true;
+      }
+    }
+  }
+
   // 4. Remaining Properties Fallback (必填 + 非必填全量填满，做到 0 空白)
   const mtChannel = activeChannels.find(c => Number(c.channelId) === 100);
   const mtShelfProp = mtChannel?.categoryProperties?.find(p => p.attrName === '保质期');
@@ -318,7 +332,7 @@ async function processSingleSpu(page, spuItem) {
   }
 
   // 5. Save to QNH
-  if (modifiedChannels.size > 0 || detailImagesFilled) {
+  if (modifiedChannels.size > 0 || detailImagesFilled || specialPicsFilled) {
     const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({
       field: coverageField(cid),
       coverToStore: 1,
@@ -326,6 +340,10 @@ async function processSingleSpu(page, spuItem) {
 
     if (detailImagesFilled) {
       fieldCoverageInfoList.push({ field: 'picture', coverToStore: 1 });
+    }
+    if (specialPicsFilled) {
+      fieldCoverageInfoList.push({ field: 'mtSpecialPictureList', coverToStore: 1 });
+      fieldCoverageInfoList.push({ field: 'elmSpecialPictureList', coverToStore: 1 });
     }
 
     const updateRes = await page.evaluate(async ({ url, body }) => {

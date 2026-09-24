@@ -52,7 +52,7 @@ python3 scripts/route_skill.py \
     - **全门店同步生效**：保存请求必须携带 `coverageRequest: { fieldCoverageInfoList: [ { field: 'mt_channel_category_property', coverToStore: 1 }, { field: 'elm_channel_category_property', coverToStore: 1 }, { field: 'jd_channel_category_property', coverToStore: 1 } ] }`，确保全店同步生效。
   * **核心铁律 2（详情图兜底）**：详情图缺失会导致多渠道审核不过。若 `picContentList` 为空，自动补齐 2 张合规详情图并覆盖 `picture` 字段保存。
   * **核心铁律 3（渠道类目三级语义兜底与属性联动）**：严禁渠道类目留空！当批量推荐接口未返回（尤其饿了么因标题规格噪音或类目库缺失细分类目）时，必须执行三级兜底（标题降噪二次推荐 ➔ 美团/京东跨渠道类目映射 ➔ 饿了么全量 2,415 叶子树语义倒排匹配）。新挂载类目后，必须立即拉取属性骨架并全量填满，严禁“只填类目留下属性空白”！
-- [美团不可售一次过 35 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略35-大治理规则)：
+- [美团不可售一次过 36 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略36-大治理规则)：
   * **规则 1（资质图 JSON 字符串序列化与 CpvGuidePicVO 强契约）**：美团后端 Java Spring（`CpvGuidePicVO`）强制要求 `cpvGuidePicList` 为 **JSON 序列化字符串**，且每个对象必须包含 `imgType`（数字类型）与 `urlList`（非空字符串数组，格式如 `JSON.stringify([{ imgType: 4, urlList: [url] }, { imgType: 3, urlList: [url] }])`）。严禁仅传对象字典或使用错误字段名（如 picUrl 会触发 NullPointerException），必须根据 `cpvGuidePicConfigList` 动态匹配：包装标签图（`imgType: 3`）、3C证书（`imgType: 4`）、食品配料（`imgType: 5`）、纺织品说明（`imgType: 6`）、化妆品/农药背签（`imgType: 8`）、尺寸图（`imgType: 13`）。
   * **规则 2-7（基础与一次过）**：双详情图兜底、69 码校验位生成、标题解析规格、通用属性优先、整单一次过提交、允许忽略活动告警强制保存。
   * **规则 8（复合输入属性构造）**：电源线长、容量、保质期、包装规格等 `valueType: 10` 属性初态 `options` 为空，严禁跳过，必须按复合结构完整注入数值与单位。
@@ -99,6 +99,7 @@ python3 scripts/route_skill.py \
   * **规则 33（食品单包净含量与重量单位换算防冲契约 — Food Net Content & Unit Normalization）**：膨化食品、方便面强校验必填属性【单包净含量】（valueType: 10, `unitCode: 202, unitName: "g"`）；当商品标题包含 `1L`、`1kg` 等容积或千克单位时，必须由自动化引擎统一折算标准化（`1L ➔ 1000ml / 毫升(ml)`、`1kg ➔ 1000g / 克(g)`），彻底规避“未填写重量单位”或“重量不在合理范围”阻断。
   * **规则 34（平台敏感拼音与历史品牌拦截词清洗规则 — Sensitive Pinyin & Brand Blacklist Scrubbing）**：美团后端风控敏感词库对特定拼音与超范围词根执行硬拦截（如 `TIANSTON`/`TIAN`/`tian` 命中敏感词；`名门私厨` 命中 `名门`；`东鹏特饮` 命中超范围饮品词），提交直接报 99999999。前置治理流水线必须建立词根替换表，将 `TIANSTON` 清洗为合规品牌 `天顺通` 或 `通用`，`东鹏特饮` 规范化为 `东鹏`，`名门私厨` 规范为 `私厨`，并追加 SPU 末 3 位数字后缀彻底消除“已存在同名商品请勿重复创建”冲突。
   * **规则 35（赠品与附赠属性全量默认否定契约 — Gift & Giveaway Strict Non-Inclusion Rule）**：涉及“是否赠送吸管/开瓶器/餐具/赠品/附赠”等属性时，平台前端会直接向消费者透传展示。为杜绝门店履约无准备引发线上线下客诉纠纷，**严禁选择“是/赠送/有赠品”，必须强制选定“否/不赠送/无/无赠品”等否定项**；在标题前置清洗中同步剔除“送xx/赠xx”宣传词，坚决保护线下商户真实履约边界，做到 100% 零业务冲突。
+  * **规则 36（连包整箱多联装总重量乘积计算契约 — Multipack Total Weight Multiplier Contract）**：快消品、饮料酒水、休闲零食常以多连包、整排、整箱销售（如 `250ml*12包/箱`、`500ml/听*3`、`212ml*4瓶/排`）。美团 Odin 机审严格对标题乘积总重进行一致性校验；若仅提取单件规格（如将 250ml*12包 填为 250ml），机审直接下发驳回：`重量: 与商品名称描述不一致`。**标准解决方案**：流水线必须正则识别连包整箱模式并计算总重：`totalWeight = singleVal * multiplier`（如 250ml × 12 = 3000ml，500ml × 3 = 1500ml），将计算后的总重量注入 `sku.weight = { value: totalWeight, unit }`，消除机审连包总重核验驳回。
 - [资源合同](references/runtime-resource-contract-v1.md)：
   * **【牵牛花并发启动铁律：启动即满速】**：牵牛花（QNH）大批量商品治理与修改任务，**严禁使用单线程、保守低并发或多余的冷启动降级测试！必须从第一秒起直接启用最高基准：4 个浏览器标签页 + 12 并发 Workers（4 Tabs × 3 并发）满速推进**（分布式 H5guard 签名防竞争，吞吐达 250~300 SPU/分钟，单 SPU 约 1.8~2.5s，100% 成功）。保存必须携带 coverToStore: 1 全店覆盖。
 - [统一输出内容合同](references/core/output-contract.md) 与

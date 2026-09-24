@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { loadChromium } from '../../qnh_playwright_loader.mjs';
 
 async function main() {
-  console.log('=== 启动牵牛花 38,924 全店商品【零盲区二次严格复核】 ===');
+  console.log('=== 全店 38,924 个商品【最终闭环 0 残留验收】 ===');
   const chromium = await loadChromium();
   const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
   const context = browser.contexts()[0];
@@ -32,7 +32,6 @@ async function main() {
   const tStart = Date.now();
   let remainingAffirmativeGifts = [];
 
-  // Group pages by 4
   const groupSize = 4;
   for (let pageStart = 1; pageStart <= totalPages; pageStart += groupSize) {
     const pageNums = [];
@@ -62,16 +61,13 @@ async function main() {
       for (const s of list) {
         for (const ch of (s.spuChannelInfoList || [])) {
           for (const p of (ch.categoryProperties || [])) {
-            const name = p.attrName || '';
-            if (/(?:赠|送|附赠|配赠|礼品|礼赠)/.test(name)) {
-              const curVal = p.customValue?.[0]?.attrValue || '';
-              // Check if any affirmative gift is still selected!
-              if (/(?:礼盒包装|礼袋包装|赠礼袋|双瓶起赠|单瓶起赠|整箱配礼袋|赠封口夹|赠湿巾|赠一次性手套|赠一次性纸杯|赠一次性塑料杯|赠玻璃杯|赠开瓶器)/.test(curVal)) {
+            const val = String(p.customValue?.[0]?.attrValue || '');
+            if (/(?:赠|送|礼袋|礼盒)/.test(val)) {
+              if (!/(?:无赠品|不赠|无礼袋|无餐具|否|不送|不赠送|不赠杯子|普通包装|环保包装)/.test(val)) {
                 remainingAffirmativeGifts.push({
                   spuId: s.spuId,
                   spuName: s.spuName,
-                  attrName: name,
-                  curVal
+                  val
                 });
               }
             }
@@ -84,18 +80,17 @@ async function main() {
       const scanned = Math.min((pageStart + groupSize - 1) * pageSize, totalSpus);
       const elapsed = ((Date.now() - tStart) / 1000).toFixed(1);
       const speed = (scanned / (elapsed / 60)).toFixed(0);
-      console.log(`[复核进度] 页码: ${Math.min(pageStart + groupSize - 1, totalPages)}/${totalPages} | 扫描商品: ${scanned}/${totalSpus} | 发现违规残留: ${remainingAffirmativeGifts.length} | 跑速: ${speed} SPU/分`);
+      console.log(`[全盘复核] 页码: ${Math.min(pageStart + groupSize - 1, totalPages)}/${totalPages} | 扫描: ${scanned}/${totalSpus} | 违规残留: ${remainingAffirmativeGifts.length} | 跑速: ${speed} SPU/分`);
     }
   }
 
   console.log(`\n========================================`);
-  console.log(`全店 38,924 个商品零死角复核完成！`);
-  console.log(`违规赠送残留数: ${remainingAffirmativeGifts.length}`);
-  if (remainingAffirmativeGifts.length > 0) {
-    console.log('残留样本:', JSON.stringify(remainingAffirmativeGifts.slice(0, 10), null, 2));
-    await fs.writeFile('C:/Users/Administrator/AppData/Local/Temp/opencode/remaining_gifts_to_fix.json', JSON.stringify(remainingAffirmativeGifts, null, 2));
-  } else {
+  console.log(`全店 38,924 个商品零死角终极验收完成！`);
+  console.log(`最终违规赠送残留数: ${remainingAffirmativeGifts.length}`);
+  if (remainingAffirmativeGifts.length === 0) {
     console.log('🎉 验证确认：全店 38,924 个商品已 100% 清除所有赠送承诺！');
+  } else {
+    console.log('残留样本:', JSON.stringify(remainingAffirmativeGifts.slice(0, 10), null, 2));
   }
   console.log(`========================================\n`);
 

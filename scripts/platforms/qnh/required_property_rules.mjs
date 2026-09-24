@@ -160,11 +160,18 @@ export function fillProperty(prop, title = '') {
     // 阶段 1: 常见关键业务属性精准语义匹配
     let matched = null;
 
-    // 规则 35: 赠品与附赠属性全量默认否定契约（严禁选择“是/赠送/有赠品”，强制选定“无赠品/不赠送/否/无/无餐具”）
-    if (/(?:赠品|赠送|附赠|是否赠|配赠|送)/.test(name)) {
-      matched = options.find(o => /^(?:无赠品|不赠送|否|无|无餐具|不送)$/.test((o.attrValue || o.optionValue || '').trim()));
-      if (!matched) {
-        matched = options.find(o => /(?:无|不|否)/.test(o.attrValue || o.optionValue || ''));
+    // 规则 35: 赠品与附赠属性全量默认否定契约（有否定项必选，全为赠送项则坚决不填保持留白）
+    if (/(?:赠品|赠送|附赠|是否赠|配赠|礼品|礼赠|杯子|开瓶器|餐具|吸管)/.test(name)) {
+      matched = options.find(o => /(?:不赠|不送|无|否|普通包装|环保包装|不提供)/.test((o.attrValue || o.optionValue || '').trim()));
+      if (matched) {
+        return [{
+          attrValueId: String(matched.attrValueId || matched.optionId || ''),
+          attrValue: String(matched.attrValue || matched.optionValue || ''),
+          structAttrValueList: []
+        }];
+      } else {
+        // 候选全为肯定赠送（如只有“赠礼袋”、“礼盒包装”）时，坚决不选任何项，强制保持留白
+        return [];
       }
     }
 

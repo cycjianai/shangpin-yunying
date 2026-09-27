@@ -26,56 +26,72 @@ async function main() {
     return;
   }
   const context = browser.contexts()[0];
-  const page = context.pages().find(p => p.url().includes('qnh.meituan.com')) || context.pages()[0];
+  if (!context) {
+    console.log('[SKIPPED] No browser context found');
+    await browser.close().catch(() => {});
+    return;
+  }
+  const page = context.pages().find(p => p.url().includes('qnh.meituan.com'));
+  if (!page) {
+    console.log('[SKIPPED] No active qnh page found');
+    await browser.close().catch(() => {});
+    return;
+  }
 
-  const detail = JSON.parse(JSON.stringify(product.detail));
-  let modifiedChannels = new Set();
+  try {
+    const detail = JSON.parse(JSON.stringify(product.detail));
+    let modifiedChannels = new Set();
 
-  for (const ch of detail.spuChannelInfoList || []) {
-    for (const prop of ch.categoryProperties || []) {
-      if (prop.isRequired === 1) {
-        const vals = (prop.customValue || []).filter(v => v && (v.attrValue || (v.structAttrValueList && v.structAttrValueList.length)));
-        if (vals.length === 0) {
-          const filled = fillProperty(prop, product.title);
-          console.log('  Filling', prop.attrName, 'in channel', ch.channelId, '=>', JSON.stringify(filled));
-          if (filled) {
-            prop.customValue = filled;
-            modifiedChannels.add(ch.channelId);
+    for (const ch of detail.spuChannelInfoList || []) {
+      for (const prop of ch.categoryProperties || []) {
+        if (prop.isRequired === 1) {
+          const vals = (prop.customValue || []).filter(v => v && (v.attrValue || (v.structAttrValueList && v.structAttrValueList.length)));
+          if (vals.length === 0) {
+            const filled = fillProperty(prop, product.title);
+            console.log('  Filling', prop.attrName, 'in channel', ch.channelId, '=>', JSON.stringify(filled));
+            if (filled) {
+              prop.customValue = filled;
+              modifiedChannels.add(ch.channelId);
+            }
           }
         }
       }
     }
-  }
 
-  const coverageRequest = {
-    fieldCoverageInfoList: Array.from(modifiedChannels).map(chId => {
-      let field = '';
-      if (chId === 100) field = 'mt_channel_category_property';
-      if (chId === 200) field = 'elm_channel_category_property';
-      if (chId === 300) field = 'jd_channel_category_property';
-      return { field, coverToStore: 1 };
-    }).filter(f => f.field)
-  };
+    const coverageRequest = {
+      fieldCoverageInfoList: Array.from(modifiedChannels).map(chId => {
+        let field = '';
+        if (chId === 100) field = 'mt_channel_category_property';
+        if (chId === 200) field = 'elm_channel_category_property';
+        if (chId === 300) field = 'jd_channel_category_property';
+        return { field, coverToStore: 1 };
+      }).filter(f => f.field)
+    };
 
-  console.log('Sending update to QNH with coverageRequest:', JSON.stringify(coverageRequest));
+    console.log('Sending update to QNH with coverageRequest:', JSON.stringify(coverageRequest));
 
-  const result = await page.evaluate(async ({ url, body }) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (window.H5guard && typeof window.H5guard.sign === 'function') {
-      const signed = await window.H5guard.sign({ url, method: 'POST', data: JSON.stringify(body) });
-      Object.assign(headers, signed.headers || {});
-      if (signed.url) url = signed.url;
+    const result = await page.evaluate(async ({ url, body }) => {
+      const headers = { 'Content-Type': 'application/json' };
+      if (window.H5guard && typeof window.H5guard.sign === 'function') {
+        const signed = await window.H5guard.sign({ url, method: 'POST', data: JSON.stringify(body) });
+        Object.assign(headers, signed.headers || {});
+        if (signed.url) url = signed.url;
+      }
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        credentials: 'include'
+      });
+      return { status: resp.status, data: await resp.json() };
+    }, { url: UPDATE_V2_URL, body: { tenantSpu: detail, coverageRequest } });
+
+    console.log('Update response:', JSON.stringify(result, null, 2));
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
     }
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      credentials: 'include'
-    });
-    return { status: resp.status, data: await resp.json() };
-  }, { url: UPDATE_V2_URL, body: { tenantSpu: detail, coverageRequest } });
-
-  console.log('Update response:', JSON.stringify(result, null, 2));
+  }
 }
 
 main().catch(err => {

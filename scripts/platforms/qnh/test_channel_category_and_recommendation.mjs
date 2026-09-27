@@ -12,11 +12,13 @@ async function main() {
   const context = browser.contexts()[0];
   if (!context) {
     console.log('[SKIPPED] No browser context found');
+    await browser.close().catch(() => {});
     return;
   }
   const page = context.pages().find(p => p.url().includes('qnh.meituan.com'));
   if (!page) {
     console.log('[SKIPPED] No active qnh.meituan.com page found in browser');
+    await browser.close().catch(() => {});
     return;
   }
 
@@ -214,9 +216,12 @@ async function main() {
   });
 
     console.log('Update result:', JSON.stringify(updateRes));
-    process.exit(0);
   } catch (err) {
     console.log('[SKIPPED] Live test skipped:', err.message);
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 

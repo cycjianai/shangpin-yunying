@@ -2,7 +2,13 @@ import { loadChromium } from '../../qnh_playwright_loader.mjs';
 
 async function main() {
   const chromium = await loadChromium();
-  const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+  } catch (err) {
+    console.log('[SKIPPED] Live CDP not connected (127.0.0.1:9222):', err.message);
+    return;
+  }
   const context = browser.contexts()[0];
   const page = context.pages().find(p => p.url().includes('qnh.meituan.com')) || context.pages()[0];
 

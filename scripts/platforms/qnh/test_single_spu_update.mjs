@@ -6,13 +6,25 @@ const CDP_URL = 'http://127.0.0.1:9222';
 const UPDATE_V2_URL = 'https://qnh.meituan.com/qnh-gw3/api/product/tenant/update/v2?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
 
 async function main() {
-  const details = JSON.parse(await fs.readFile('runs/qnh-run-1/details-canary-20-20.json', 'utf8'));
+  let details;
+  try {
+    details = JSON.parse(await fs.readFile('runs/qnh-run-1/details-canary-20-20.json', 'utf8'));
+  } catch (err) {
+    console.log('[SKIPPED] Test run data file not found:', err.message);
+    return;
+  }
   // SPU 3 is index 2 (2090806008330149898)
   const product = details.products[2];
   console.log('Testing SPU:', product.spu_id, 'Title:', product.title);
 
   const chromium = await loadChromium();
-  const browser = await chromium.connectOverCDP(CDP_URL);
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(CDP_URL);
+  } catch (err) {
+    console.log('[SKIPPED] Live CDP not connected:', err.message);
+    return;
+  }
   const context = browser.contexts()[0];
   const page = context.pages().find(p => p.url().includes('qnh.meituan.com')) || context.pages()[0];
 

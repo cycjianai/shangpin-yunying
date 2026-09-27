@@ -126,6 +126,14 @@ def qualification_default_budgets() -> dict[str, int]:
     return {str(key): int(value) for key, value in budgets.items()}
 
 
+def channel_equivalence_mappings() -> dict[str, Any]:
+    policy = load_qualification_image_policy()
+    return _require_mapping(
+        policy.get("channel_equivalence_mappings"),
+        "channel_equivalence_mappings",
+    )
+
+
 def _text(value: object, limit: int = 2000) -> str:
     return " ".join(str(value or "").split())[:limit]
 

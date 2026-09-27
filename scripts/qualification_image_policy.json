@@ -44,26 +44,18 @@
       "prompt",
       "expected_text_tokens"
     ],
-    "allowed_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "allowed_picture_types": [3, 4, 5, 6, 7, 8, 10, 13, 15],
     "prohibited_legal_content": {
-      "message": "法定证照/备案/报告图片禁止进入生成链路",
+      "message": "虚假伪造或欺诈性资质图片禁止进入生成链路",
       "tokens": [
-        "认证证书",
-        "检验报告",
-        "质检报告",
-        "检测报告",
-        "备案",
-        "注册证",
-        "医疗器械",
-        "公章",
-        "许可证",
-        "生产许可",
-        "经营许可",
-        "法定资质"
+        "伪造证书",
+        "虚假报告",
+        "假冒公章",
+        "伪造资质"
       ],
       "regexes": [
-        "(?<![a-z0-9])3c(?![a-z0-9])",
-        "(?<![a-z0-9])ccc(?![a-z0-9])"
+        "假冒.{0,6}证",
+        "伪造.{0,6}章"
       ]
     },
     "provider_idempotency": {
@@ -79,7 +71,9 @@
       "generation_round": 1,
       "maximum_accepted_provider_tasks_per_business_key": 1,
       "query_only_after_provider_task_id": true,
-      "stop_failover_after_provider_task_id": true
+      "stop_failover_after_provider_task_id": true,
+      "strictly_single_generation_per_spu_type": true,
+      "bidirectional_channel_reuse": true
     }
   },
   "asset_builders": {
@@ -116,6 +110,22 @@
         "default_type": 13,
         "label": "尺寸图",
         "required_fields": ["商品主体", "完整尺寸标注", "尺寸单位", "型号或规格"]
+      },
+      "certificate": {
+        "audit_tokens": ["3C", "3c", "CCC", "强制性产品认证", "质量认证"],
+        "exclude_tokens": [],
+        "slot_tokens": ["3C", "质量认证", "认证证书"],
+        "default_type": 4,
+        "label": "3C认证证书/质量认证图",
+        "required_fields": ["证书编号", "生产者/生产企业", "产品名称与型号规格", "依据标准"]
+      },
+      "medical_device": {
+        "audit_tokens": ["医疗器械注册证", "第一类医疗器械备案凭证", "备案凭证"],
+        "exclude_tokens": [],
+        "slot_tokens": ["医疗器械", "备案凭证", "注册证"],
+        "default_type": 10,
+        "label": "医疗器械注册证/备案凭证",
+        "required_fields": ["产品名称", "注册证号/备案编号", "生产企业", "生产地址"]
       }
     },
     "nutrition": {
@@ -150,7 +160,7 @@
     "require_uploaded_image_url": true,
     "visual_validation_accepted_statuses": ["accepted"],
     "barcode_accepted_statuses": ["exact", "not_checked"],
-    "barcode_guard_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "barcode_guard_picture_types": [3, 4, 5, 6, 7, 8, 10, 13, 15],
     "barcode_fallback_requires_explicit_flag": true
   },
   "authentic_evidence": {
@@ -259,7 +269,7 @@
     "maximum_concurrency": 20
   },
   "writeback": {
-    "allowed_generated_picture_types": [3, 5, 6, 7, 8, 13, 15],
+    "allowed_generated_picture_types": [3, 4, 5, 6, 7, 8, 10, 13, 15],
     "require_upload_receipt": true,
     "require_upload_receipt_url_match": true,
     "require_expected_old_urls_match_when_present": true,
@@ -274,6 +284,20 @@
         "audit_all_tokens": ["缺少尺寸图", "尺寸图"],
         "audit_any_tokens": [],
         "picture_desc": "展示商品实际尺寸，尺寸信息须清晰、准确且与所售商品一致。"
+      },
+      {
+        "picture_type": 4,
+        "exact_titles": ["质量认证图", "3C认证证书", "3C证书", "3C认证"],
+        "audit_all_tokens": [],
+        "audit_any_tokens": ["缺少3C", "缺少质量认证", "强制性产品认证"],
+        "picture_desc": "展示真实中国国家强制性产品认证证书（3C证书）或质量认证图，证书编号与产品型号清晰完整。"
+      },
+      {
+        "picture_type": 10,
+        "exact_titles": ["医疗器械注册证/备案凭证"],
+        "audit_all_tokens": [],
+        "audit_any_tokens": ["缺少医疗器械注册证", "缺少第一类医疗器械备案凭证"],
+        "picture_desc": "展示医疗器械注册证或第一类医疗器械备案凭证，产品名称、证书编号及生产企业清晰完整。"
       },
       {
         "picture_type": 5,
@@ -318,5 +342,159 @@
         "picture_desc": "展示与当前商品品牌和规格对应的原厂礼袋，主体完整、文字清晰。"
       }
     ]
+  },
+  "channel_equivalence_mappings": {
+    "schema": "qnh-special-picture-equivalence-v1",
+    "description": "基于38000+ SPU实测统计的48种特殊图槽位归并与美团(100)/饿了么(200)跨渠道等价映射规则",
+    "deduplication_policy": "strictly_single_generation_per_spu_type",
+    "bidirectional_forced_insertion": true,
+    "categories": {
+      "food_back_label_nutrition": {
+        "physical_category_id": 1,
+        "label": "食品背签/配料与营养成分表",
+        "description": "展示完整清晰的商品配料表与营养成分表（能量、蛋白质、脂肪、碳水化合物、钠等基础指标），正向无遮挡",
+        "generation_spec": {
+          "primary_type": 5,
+          "picture_title": "配料&营养成分图",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品配料与营养成分表图》，文字清晰完整，包含完整的配料表与营养成分表（能量、蛋白质、脂肪、碳水化合物、钠等基础指标），画面正向，背景整洁，无水印、反光与折叠遮挡。"
+        },
+        "meituan_slots": [
+          {"picture_type": 5, "picture_title": "配料&营养成分图"},
+          {"picture_type": 5, "picture_title": "配料/营养成分图"},
+          {"picture_type": 5, "picture_title": "配料图"},
+          {"picture_type": 8, "picture_title": "配料&营养成分图"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 8, "picture_title": "背签图"},
+          {"picture_type": 2, "picture_title": "配料/营养成分图"}
+        ]
+      },
+      "cosmetic_record_back_label": {
+        "physical_category_id": 2,
+        "label": "化妆品备案背签",
+        "description": "展示化妆品备案编号/注册证号（如粤妆网备字...）、备案人/生产企业名称及地址、全成分标识",
+        "generation_spec": {
+          "primary_type": 8,
+          "picture_title": "含化妆品备案编码的背签图",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《化妆品外包装背签图》，必须清晰展示化妆品备案编号/注册证号（如粤妆网备字...）、备案人/生产企业名称及地址、全成分标识，文字清晰可辨。"
+        },
+        "meituan_slots": [
+          {"picture_type": 8, "picture_title": "含化妆品备案编码的背签图"},
+          {"picture_type": 8, "picture_title": "含化妆品备案编码等必要信息的商品图"},
+          {"picture_type": 8, "picture_title": "含化妆品备案编码和“小金盾”标志的商品图"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 1, "picture_title": "含化妆品备案编码的背签图"}
+        ]
+      },
+      "package_label_and_back_label": {
+        "physical_category_id": 3,
+        "label": "普通商品包装标签与背签",
+        "description": "展示生产企业名称（厂名）、生产企业地址（厂址）、产品型号/规格、执行标准号等关键说明",
+        "generation_spec": {
+          "primary_type": 3,
+          "picture_title": "包装标签图",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品包装标签图》，必须清晰展示生产企业名称（厂名）、生产企业地址（厂址）、产品型号/规格、执行标准号等关键说明文字，画面正向清晰。"
+        },
+        "meituan_slots": [
+          {"picture_type": 3, "picture_title": "包装标签图"},
+          {"picture_type": 8, "picture_title": "背签图"},
+          {"picture_type": 8, "picture_title": "纸品湿巾-商品包装背签图"},
+          {"picture_type": 20, "picture_title": "包装标签图"},
+          {"picture_type": 3, "picture_title": "商品参数图"},
+          {"picture_type": 33, "picture_title": "包装标签图（含农药证）"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 6, "picture_title": "背签图"}
+        ]
+      },
+      "textile_label_and_instructions": {
+        "physical_category_id": 4,
+        "label": "吊牌与洗唛/纺织品使用说明",
+        "description": "展示执行标准号、安全技术类别（如GB 18401 B类）、面料成分含量及洗涤维护说明",
+        "generation_spec": {
+          "primary_type": 7,
+          "picture_title": "吊牌及洗唛",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《服装/纺织品吊牌及洗唛使用说明图》，必须清晰包含：执行标准号、安全技术类别（如GB 18401 B类）、面料成分含量及洗涤维护说明。"
+        },
+        "meituan_slots": [
+          {"picture_type": 7, "picture_title": "吊牌及洗唛"},
+          {"picture_type": 6, "picture_title": "纺织品使用说明"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 6, "picture_title": "背签图"}
+        ]
+      },
+      "medical_device_registration": {
+        "physical_category_id": 5,
+        "label": "医疗器械凭证",
+        "description": "展示医疗器械注册证或第一类医疗器械备案凭证，包含产品名称、注册证/备案号、生产地址",
+        "generation_spec": {
+          "primary_type": 10,
+          "picture_title": "医疗器械注册证/备案凭证",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《医疗器械注册证/第一类医疗器械备案凭证》，证书在有效期内，清晰包含产品名称、注册证编号/备案号、注册人/备案人名称及生产地址。"
+        },
+        "meituan_slots": [
+          {"picture_type": 10, "picture_title": "医疗器械注册证/备案凭证"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 3, "picture_title": "医疗器械注册证/备案凭证"}
+        ]
+      },
+      "ccc_quality_certification": {
+        "physical_category_id": 6,
+        "label": "3C与质量认证",
+        "description": "展示国家强制性产品认证证书（3C证书）或质量认证图，包含证书编号、生产企业、型号规格、依据标准",
+        "generation_spec": {
+          "primary_type": 4,
+          "picture_title": "3C认证证书",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《中国国家强制性产品认证证书》（3C认证证书），证书需要在生效状态且在有效期内。证书需清晰完整，包含证书编号、委托人/生产者/生产企业、产品名称和型号规格、依据标准等必要信息，严禁使用虚假、涂抹或模糊的证书。"
+        },
+        "meituan_slots": [
+          {"picture_type": 4, "picture_title": "质量认证图"},
+          {"picture_type": 4, "picture_title": "3C认证证书"},
+          {"picture_type": 4, "picture_title": "3C证书"},
+          {"picture_type": 4, "picture_title": "3C认证"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 4, "picture_title": "质量认证图"}
+        ]
+      },
+      "size_and_dimension_chart": {
+        "physical_category_id": 7,
+        "label": "尺寸图与尺码表",
+        "description": "居中展示商品实物主体，标明长宽高指示线与毫米/厘米标注数值，背景白底纯净",
+        "generation_spec": {
+          "primary_type": 13,
+          "picture_title": "尺寸图",
+          "prompt_template": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品主体尺寸标注图》，画面居中展示商品实物主体，清晰标明长、宽、高各维度尺寸线与毫米/厘米标注数值，背景白底纯净。"
+        },
+        "meituan_slots": [
+          {"picture_type": 13, "picture_title": "尺寸图"},
+          {"picture_type": 14, "picture_title": "尺码表"},
+          {"picture_type": 13, "picture_title": "商品尺寸图"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 6, "picture_title": "商品参数图"}
+        ]
+      },
+      "extended_optional_slots": {
+        "physical_category_id": 8,
+        "label": "扩展与可选资质图槽位",
+        "description": "选购指南图、礼赠包装图、能效等级图、水效等级图、参数雷达图、使用安装说明、保健食品注册证等可选资质",
+        "meituan_slots": [
+          {"picture_type": 15, "picture_title": "礼袋图"},
+          {"picture_type": 16, "picture_title": "选购指南图"},
+          {"picture_type": 11, "picture_title": "能效等级图"},
+          {"picture_type": 12, "picture_title": "水效等级图"},
+          {"picture_type": 17, "picture_title": "参数雷达图"},
+          {"picture_type": 18, "picture_title": "使用安装说明"},
+          {"picture_type": 19, "picture_title": "保健食品注册证"}
+        ],
+        "eleme_slots": [
+          {"picture_type": 7, "picture_title": "商品资质图"}
+        ]
+      }
+    }
   }
 }

@@ -15,6 +15,7 @@ import qnh_task_contract
 from qualification_image_policy import (
     POLICY_PATH,
     QualificationImagePolicyError,
+    channel_equivalence_mappings,
     load_qualification_image_policy,
     validate_qualification_generation_job,
 )
@@ -85,18 +86,12 @@ valid_job = {
 validate_qualification_generation_job(valid_job)
 
 prohibited_samples = [
-    "3C证书",
-    "CCC证书",
-    "认证证书",
-    "检验报告",
-    "质检报告",
-    "检测报告",
-    "化妆品备案",
-    "医疗器械注册证",
-    "生产许可证",
-    "经营许可",
-    "加盖公章",
-    "法定资质图",
+    "伪造证书",
+    "虚假报告",
+    "假冒公章",
+    "伪造资质",
+    "假冒3C认证证",
+    "伪造印章",
 ]
 for sample in prohibited_samples:
     blocked = {**valid_job, "prompt": f"生成{sample}"}
@@ -107,12 +102,20 @@ for sample in prohibited_samples:
     else:
         raise AssertionError(f"prohibited content passed validation: {sample}")
 
+validate_qualification_generation_job({**valid_job, "picture_type": "4", "picture_title": "3C认证证书"})
+validate_qualification_generation_job({**valid_job, "picture_type": "10", "picture_title": "医疗器械注册证/备案凭证"})
+
 try:
-    validate_qualification_generation_job({**valid_job, "picture_type": "4"})
+    validate_qualification_generation_job({**valid_job, "picture_type": "999"})
 except QualificationImagePolicyError as exc:
     assert "picture_type is not allowed" in str(exc)
 else:
-    raise AssertionError("regulated certificate picture type passed generation validation")
+    raise AssertionError("disallowed picture type passed generation validation")
+
+assert len(policy["channel_equivalence_mappings"]["categories"]) >= 7
+assert channel_equivalence_mappings() == policy["channel_equivalence_mappings"]
+assert policy["generation"]["provider_idempotency"]["strictly_single_generation_per_spu_type"] is True
+assert policy["generation"]["provider_idempotency"]["bidirectional_channel_reuse"] is True
 
 direct_source = (ROOT / "scripts" / "qnh_direct.mjs").read_text(encoding="utf-8")
 assert "./qualification_image_policy.json" in direct_source

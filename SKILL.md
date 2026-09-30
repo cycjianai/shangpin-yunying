@@ -112,9 +112,19 @@ python3 scripts/route_skill.py \
     凡大批量商品治理与修改任务（>10 件），**严禁使用单线程串行、单步慢跑或多余的冷启动降级试探！必须从第一秒起直接启用最高工程基准：4 个浏览器常驻标签页 + 12 并发 Workers（4 Tabs × 3 并发异步流水线）满速推进**：
     1. **牵牛花（QNH）**：4 Tabs 作为分布式 `window.H5guard.sign` 防伪签名收银台，消除 V8 单线程签名锁竞争，吞吐达 250~300 SPU/分钟，保存必须携带 `coverToStore: 1` 全店覆盖；
     2. **美团直连（Meituan 无法售卖/商品信息优化）**：4 Tabs 作为分布式原生 Webpack 内存执行池（常驻预热 `/reuse/sc/product/page/detail/audit`），12 并发 Workers 轮询分发 SPU，直接调用原生 `DETAIL_MODULE: 42467`（`vP`）、`FORM_MODULE: 86925`（`$P`/`sI`/`$W`），严禁逐商品 `tab.goto`，严禁单线程低速循环，单 SPU 纯内存处理 < 800ms，整体吞吐稳定达 150~200 SPU/分钟，200+ 无法售卖商品 1~2 分钟内全部秒级提审清零！
-    3. **翱象直连（Aoxiang 批量修改与多规格治理）**：复用常驻 CDP 会话提取登录态 Cookie，通过 `scripts/aoxiang_high_concurrency_product_engine.mjs` 原生高并发流水线，**启动即拉满 12 ~ 14 路并发（无需多 Tab 签名锁）**，吞吐稳定达 400 ~ 600 SPU/分钟！修改前强制抓取 `relation/detail` 组装完整 `skus` 数组，彻底规避子规格覆盖降级；自动修正 0 重量及 `@` 编码兼容，每 50 笔自动增量落盘防丢失。
-    4. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
-    5. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
+    3. **翱象直连（Aoxiang 批量修改与多规格治理）**：复用常驻 CDP 会话提取登录态 Cookie，通过 `scripts/aoxiang_high_concurrency_product_engine.mjs` 原生高并发流水线，**启动即拉满 12 ~ 14 路并发（无需多 Tab 签名锁）**，吞吐稳定达 400 ~ 600 SPU/分钟！修改前强制抓取 `relation/detail` 组装完整 `skus` 数组，彻底规避子规格覆盖降级；若发生多规格降级为单规格，必须从商户总库主档（`@@` 母 SPU）反查全量兄弟规格，并通过 `batchDistributeGoods` 下发补齐（**严禁漏传 `checkBarcodeStoreUnique: 0`**，规避条码重复拦截），秒级恢复门店全规格在售；自动修正 0 重量及 `@` 编码兼容，每 50 笔自动增量落盘防丢失。
+    4. **【翱象商品信息优化与资质图治理标准闭环（Aoxiang Optimization & Qualification Pipeline）】**：
+       在翱象处理未铺品与渠道不可售治理时，严禁依赖前端 UI 逐个点击，必须遵循底层极速闭环规程：
+       - **主档更新极速通道**：通过 `POST /goods/master/update`（而非 `saveGoods` 避免表单跨域或表单校验报错），且必须强制剥离 `storeGoodsCustomFields/storeGoodsCustomFieldsJson`，并对主档与所有子 SKU 彻底执行 `delete sku.stockNum; delete sku.prepareStockNum;` 严防库存被硬编码篡改；
+       - **渠道批量发布/重提审**：通过 `POST /goods/task/batchPublishV3`（带 `channelCodeList: ['ELE']`、`updateSkuList`、`mergeMultiSpec: true`）秒级批量提审；
+       - **资质图挂载槽位标准**：
+         ① 食品/饮料：白底包含【配料表】与五项【营养成分表】标准方格矩阵图，挂载至 `specialPictures` slots `[2, 6]`，并必填属性 `售卖方式: 预包装`（`propertyId: 589735080`, `propertyValueId: 16418910`）；
+         ② 化妆品/个护：白底外包装背面实拍图，清晰展示全成分、厂名厂址、生产许可证编号（如粤妆20160001）与备案编号（如粤G妆网备字2023000000），挂载至 slots `[1, 6, 8]`（Type 1 为 ELE 核心机审槽位），并自动补充属性 `是否为特殊用途化妆品: 否`；
+         ③ 医疗器械：槽位对应 Type 3（医疗器械注册证/备案凭证），若渠道报错要求上传《第二类医疗器械经营备案证明》或《医疗器械经营许可证》，判定为门店/企业经营主体资质缺失，与商品级资质解耦并输出商户资质待办清单；
+       - **图文详情硬校验**：部分类目强制要求图文详情时，将主图与轮播图生成 `<img src="..." /><br />` 结构写入 `description` 与 `masterDescription`；
+       - **安全审计铁律**：每次批处理后运行全量审计，必须确保价格变动严格为 0、多规格组完整度 100%、库存字段零污染。
+    5. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
+    6. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
        在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口 `page-query?pageSize=100` 原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须通过 4 Tabs 分布式流式分页（每批 4 页 400 SPU 并行拉取），**纯内存扫描过滤**（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！
 - [统一输出内容合同](references/core/output-contract.md) 与
   [Excel 精确 Schema](references/excel-schema-v1.md)：从第一条事件开始使用统一字段、状态和来源词汇。

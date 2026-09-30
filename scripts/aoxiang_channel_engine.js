@@ -198,6 +198,12 @@
   function isValidScalar(definition, value, index = 0) {
     const text = valueName(value);
     if (!text) return false;
+    const child = definition?.valueType === "MULTI_INPUT_OPTION"
+      ? definition?.subCategoryPropertyList?.[index]
+      : definition;
+    if (child?.subValueType === "READ_ONLY_INPUT") {
+      return child.readOnlyValue != null && text === String(child.readOnlyValue);
+    }
     const constraint = scalarConstraint(definition, index);
     if (constraint.textMaxLength != null && text.length > constraint.textMaxLength) return false;
     if (!constraint.numeric) return true;
@@ -214,6 +220,7 @@
     if (!current.length) return false;
     const type = definition?.valueType;
     if (type === "SELECT" || type === "MULTI_SELECT") {
+      if (type === "SELECT" && current.length !== 1) return false;
       return current.every((value) => {
         if (!valueName(value)) return false;
         if (definition?.supportExtend === "1" && !optionList(definition).length) return true;
@@ -277,6 +284,23 @@
     return clone(found?.currentValue || definition?.currentValue || []);
   }
 
+  function contradictsExplicitProduct(definition, candidate, detail) {
+    const field = normalizeFieldName(definition.propertyName);
+    const title = String(detail?.skuName || "");
+    const names = (Array.isArray(candidate) ? candidate : []).map(valueName);
+    if (field === "是否含糖" && /无糖|零糖|0糖|不含糖/.test(title)) {
+      return names.includes("含糖");
+    }
+    if (field !== "包装方式" || (detail?.skus || []).length !== 1) return false;
+    const spec = String(detail.skus[0].specification || "");
+    const t = title.match(/\/(瓶|盒|袋|罐|杯|桶)/);
+    const s = spec.match(/[*×x]\s*1\s*(瓶|盒|袋|罐|杯|桶)\s*$/i);
+    if (!t || !s || t[1] !== s[1] || /套装|组合|礼盒|混合/.test(title)) return false;
+    const normalized = names.map(n => n.replace(/装$/, "").replace(/^听$/, "罐"));
+    if (normalized.includes("箱")) return true;
+    return normalized.includes("袋") && ["盒", "罐", "瓶"].includes(t[1]);
+  }
+
   function allEvidence(detail, matches, requiredFieldsByChannel = {}) {
     const evidence = [];
     for (const channel of TARGET_CHANNELS) {
@@ -286,7 +310,7 @@
         const diagnosedInvalid = requiredFieldsByChannel?.[channel]?.has?.(
           normalizeFieldName(definition.propertyName),
         );
-        if (!diagnosedInvalid && isValidValues(definition, current)) {
+        if (!diagnosedInvalid && isValidValues(definition, current) && !contradictsExplicitProduct(definition, current, detail)) {
           evidence.push({
             channel,
             field: normalizeFieldName(definition.propertyName),
@@ -295,7 +319,7 @@
           });
         }
         const matched = materializeValues(definition, definition.matchValue);
-        if (isValidValues(definition, matched)) {
+        if (isValidValues(definition, matched) && !contradictsExplicitProduct(definition, matched, detail)) {
           evidence.push({
             channel,
             field: normalizeFieldName(definition.propertyName),
@@ -898,7 +922,9 @@
         if (required && !isValidValues(definition, current)) {
           current = materializeValues(definition, definition.matchValue);
           source = "platform_match";
-          if (!isValidValues(definition, current) && (definition.matchValue || []).length) {
+          const recommendationConflict = contradictsExplicitProduct(definition, current, detail);
+          if (recommendationConflict) current = [];
+          if (!recommendationConflict && !isValidValues(definition, current) && (definition.matchValue || []).length) {
             current = valuesFromEvidence(definition, [{ values: definition.matchValue }]);
           }
           if (!isValidValues(definition, current)) {
@@ -946,6 +972,10 @@
             current = chooseSafeDefault(definition, definition.propertyName, text);
             source = "safe_non_regulated_default";
           }
+        }
+        if (contradictsExplicitProduct(definition, current, detail)) {
+          current = rawBefore;
+          blockers.push({ channel, fieldId: String(definition.propertyId), field: definition.propertyName, reason: "semantic_conflict_with_title_and_spec" });
         }
         if (required && !isValidValues(definition, current)) {
           blockers.push({

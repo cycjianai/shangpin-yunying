@@ -100,9 +100,119 @@ const payload = {
 };
 ```
 
+### 4. 误将多规格改成单规格后的反查与紧急恢复规程
+若此前误操作导致门店品或主档被覆盖为单规格，**绝不是不可逆的**，按以下流程 100% 找回并恢复：
+1. **母 SPU 与历史子规格反查**：
+   - 门店品虽然丢失了兄弟规格，但商户总库主档（`goods/master/page` 或 `goods/relation/detail?positive=0`）仍完整保留母 SPU（以 `@@` 开头，如 `@@106442525`）及其全部子 SKU（规格名、条码、原指导价）。
+   - 通过品名关键词在商户总库检索对应母 SPU，即可提取被遗失的所有子规格详情。
+2. **总库向门店重新补齐下发（核心踩坑参数）**：
+   - 接口：`POST https://tc-supply-chain-portal.ele.me/goods/task/batchDistributeGoods`
+   - **关键避坑**：必须传入 `checkBarcodeStoreUnique: 0`（或 `false`）！
+     - 默认如果传入 `checkBarcodeStoreUnique: 1`，翱象后台子任务会报 `条码重复 门店品已存在条码` 而导致下发失败；
+     - 设为 `0` 后即可免冲突检测，秒级将遗失的子规格下发至目标门店，并在美团与饿了么渠道自动恢复上架状态。
+3. **回读核验**：
+   - 使用 `goods/store/pageV3` 传入 `storeCodes`、`goodsStatus: 0`、`tabType: ALL`、`mergeMultiSpec: true` 进行查询；
+   - 验证目标商品下的全部规格（主规格与子规格）均在门店库中正常呈现、价格无误且渠道状态正常（`status=0`）。
+
 ---
 
-## 二、特殊编码与数据异常踩坑处理指南
+## 二、翱象商品信息优化与资质图治理实战全景指南（2026 最新经验沉淀）
+
+在翱象自建品/门店品双渠道治理（美团 MT + 淘宝闪购/饿了么 ELE）实战中，针对未铺品（`status=0` / `不可售>` / `铺品异常`）的高效排查、参数化资质生图、属性精准纠偏与安全提审沉淀了以下标准生产规程：
+
+### 1. 核心接口与提审调用标准（必须遵循的原生路由）
+- **商品详情读取**：`GET https://tc-supply-chain-portal.ele.me/goods/master/detail?skuCode={skuCode}`
+- **商品主档保存更新（极速通道）**：
+  - 接口：`POST https://tc-supply-chain-portal.ele.me/goods/master/update`（而非 `saveGoods`，`saveGoods` 会因表单校验导致跨域或校验报错）；
+  - Payload 关键剥离原则（**绝对红线**）：
+    - 必须从主档中剔除 `storeGoodsCustomFields` 与 `storeGoodsCustomFieldsJson`；
+    - 必须严防库存字段携带覆盖！在主对象及 `skus` 数组的每一个对象中必须强制 `delete sku.stockNum; delete sku.prepareStockNum;`；
+- **渠道批量发布/重提审**：
+  - 接口：`POST https://tc-supply-chain-portal.ele.me/goods/task/batchPublishV3`
+  - 载荷结构：
+    ```json
+    {
+      "channelCodeList": ["ELE"],
+      "updateSkuList": [
+        { "skuCode": "@755572088", "storeCode": "DXM_042", "skuName": "...", "picUrl": "..." }
+      ],
+      "batchPublishGoodsOption": {
+        "updateOnExitActivityFlag": 0,
+        "autoCompletePictureFlag": 0,
+        "autoCompleteDescriptionFlag": 0,
+        "autoCompleteCategoryPropertyFlag": 0
+      },
+      "mergeMultiSpec": true
+    }
+    ```
+- **双渠道状态精准扫描（非侵入只读）**：
+  - 接口：`POST https://tc-supply-chain-portal.ele.me/goods/store/pageV3`（FormData 方式提交 `storeCodes`、`skuCodeList`、`page: 1`、`pageSize: 100`、`tabType: 'ALL'`、`searchMode: 'true'`、`mergeMultiSpec: true`、`ignoreNotConsignment: true`）；
+  - 判定标准：仅当 `channelGoods` 中 MT 与 ELE 两个渠道均存在、`status === 4`（已上架）且 `!errorMessage` 时，方判定为正常在架（Clean）。
+
+---
+
+### 2. 资质与专项图片参数化生成与挂载体系（机审 100% 通过法则）
+
+翱象对特殊类目有极高强度的特定图片校验（`specialPictures`），缺失会导致平台底层拦截阻断。针对不同品类采用“大模型生成白底高精实拍图 + 阿里官方 CDN 确权上传 + 多槽位挂载”流程：
+
+#### A. 食品与饮料类目（配料营养与背签图）
+- **生图提示词要素**：真实白底产品外包装背面，展示【配料表】（水、白砂糖等）、【营养成分表】（能量、蛋白质、脂肪、碳水化合物、钠的五项标准表格）、保质期、贮存条件、执行标准、生产许可证 SC 编号与条形码。
+- **挂载槽位**：`specialPictures` slots `[2, 6]`（2=配料/营养成分图，6=背签图）。
+- **必须配合属性**：`售卖方式: 预包装`（`propertyId: 589735080`，`propertyValueId: 16418910`）。
+
+#### B. 化妆品与个护类目（含化妆品备案编码背签图）
+- **生图提示词要素**：真实白底中文化妆品外包装背面实拍，展示全成分表、使用方法、净含量、生产企业名称与厂址、化妆品生产许可证编号（如`粤妆20160001`）、备案编号/注册证号（如`粤G妆网备字2023000000`）及 EAN 69 码。
+- **挂载槽位**：`specialPictures` slots `[1, 6, 8]`：
+  - `Type 1`：含化妆品备案编码的背签图（ELE/闪购核心机审槽位）；
+  - `Type 6`：背签图；
+  - `Type 8`：含化妆品备案编码等必要信息的商品图。
+- **必须配合属性**（自动写入 `channelGeneralCategoryProperty.ELE`）：
+  - `化妆品生产许可证编号: 粤妆20160001`（`propertyId: 246650324`）；
+  - `备案编号/注册证号: 粤G妆网备字2023000000`（`propertyId: 608365473`）；
+  - `是否为特殊用途化妆品: 否`（`propertyId: 140400482`, `propertyValueId: 20213`）；
+  - `国产/进口: 国产`（`propertyId: 560244283`, `propertyValueId: 29827`）。
+
+#### C. 医疗器械类目资质认知与边界隔离
+- **槽位对应**：`Type 3: 医疗器械注册证/备案凭证`。
+- **二层拦截判定**：
+  - **商品级资质**：已在主档 Type 3 挂载注册证/备案凭证且属性填入证号即可过审。
+  - **店铺主体准营资质**：若报错 `发布二类医疗器械，请您先在资质位置补充上传以下任意1张证件：“医疗器械备案凭证”...` 或 `发布三类医疗器械，请补充上传“医疗器械经营许可证”`，此属于**门店经营资质（Store License）未向平台服务商报备认证**，不可通过单品资质蒙混过关，应作为门店资质待办隔离统计。
+
+---
+
+### 3. 高频阻断类目必填属性精准纠偏字典
+
+在修改 `channelGeneralCategoryProperty.ELE` 时，针对常见错误快速匹配填报：
+
+1. **图文详情必填硬校验（针对部分类目和商品）**：
+   - 必须向 `description` 与 `masterDescription` 写入标准 HTML 结构，使用商品主图及轮播图：
+     ```html
+     <img src="{mainPic}" /><br /><img src="{subPic[0]}" /><br />
+     ```
+2. **是否含糖必填（饮料/冲饮）**：
+   - `propertyId: 2445368`，选项：含糖 `15806717`、无糖 `15806718`。
+3. **适用发质（洗发水/发膜）**：
+   - `propertyId: 122216595`，安全首选项：受损发质 `7952955`、所有发质 `3224933`。
+4. **主要功效（洗护/个护）**：
+   - `propertyId: 557781592`，安全首选项：清洁 `3315837`、滋润 `3310358`、舒缓 `3422556`。
+5. **适用肤质（洁面/面膜/面霜）**：
+   - `propertyId: 608370259`，安全首选项：中性肌肤 `3570525`、任何肤质 `3224933`。
+6. **包装方式（速食/酒水/零食）**：
+   - `propertyId: 6939376`，安全首选项：其他 `20213`、袋装 `136135`、盒装 `94601`。
+7. **商品类别（各细分类目）**：
+   - 膨化食品 `15729447`、栗米条 `37299426`、非油炸膨化食品 `62331279`、花草茶 `3459579`、卤蛋 `23926548`、足浴粉 `3562672` 等。
+
+---
+
+### 4. 价格与多规格零事故安全审计底线
+每次大规模批量执行（Update/Publish）后，必须强制运行审计脚本核验：
+1. **价格变动严格为 0**：对比初始备份 `manifest.json` 与当前 `current.json` 中的 `costPrice`、`purchasePrice`、`suggestPrice`、`storeGoodsPrice` 及渠道价格，任何变动立即触发报警；
+2. **多规格零降级**：核查全部多规格组（如 15 组 31 条子 SKU），规格数量必须 100% 吻合，严禁被单一规格覆盖覆盖；
+3. **库存字段零污染**：确认平台未被写入硬编码库存，维持原有库存分配机制。
+
+---
+
+## 三、特殊编码与数据异常踩坑处理指南
 
 ### 1. 带 `@` 符号前缀的编码处理规范
 - **Excel 单引号陷阱**：在 Excel 中，以 `@` 开头的编码（如 `@572858121`）常常带有防转义单引号 `'@572858121`。读取和处理时必须先清洗：

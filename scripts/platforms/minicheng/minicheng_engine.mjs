@@ -95,24 +95,157 @@ function extractBrandCandidates(title) {
   return candidates;
 }
 
-// Semantic helper: extract net content from title
-function extractNetContent(title) {
-  const volMatch = title.match(/(\d+(?:\.\d+)?)\s*(ml|毫升|L|升|g|克|kg|千克)/i);
+// Category helper: detect clothing / textiles
+function isClothingCategory(title, catPath = '') {
+  return /服装|内衣|睡衣|外套|卫衣|裤|袜|T恤|裙|泳衣|保暖衣|文胸|毛衣|大衣|风衣|服饰|家纺|床单|被套|毛巾/i.test(title + ' ' + catPath);
+}
+
+// Rule 35: Detect attributes that involve gifts, giveaways, cups, openers, straws, packaging
+function isGiftOrGiveawayAttr(name) {
+  return /赠|送|附赠|开瓶器|杯子|吸管|餐具|封口夹|礼袋|礼盒|赠品|礼赠/i.test(name);
+}
+
+// Rule 35: Detect affirmative/gift values that must never be accepted
+function isGiftAffirmativeValue(val) {
+  if (!val) return false;
+  const s = String(val).trim();
+  return /^(是|有|赠送|赠开瓶器|赠一次性纸杯|赠封口夹|赠礼袋|带吸管|带餐具|带杯套|礼盒包装|礼盒装|定制礼盒装|礼盒|礼袋装)$/i.test(s) ||
+         /(?:赠开瓶器|赠一次性纸杯|赠封口夹|赠礼袋|礼盒装|定制礼盒装|礼袋装)/.test(s);
+}
+
+// Rule 35: Resolve explicit negative/non-gift option from option pool
+function resolveNegativeGiftOption(options, attrName) {
+  if (!options || !options.length) return null;
+  const getName = o => o.value || o.valueData || '';
+
+  if (/开瓶器/i.test(attrName)) {
+    const opt = options.find(o => /不赠送|不赠|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/杯子|杯/i.test(attrName)) {
+    const opt = options.find(o => /不赠杯子|不赠送|不赠|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/吸管/i.test(attrName)) {
+    const opt = options.find(o => /无吸管|不赠送|不带|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/餐具/i.test(attrName)) {
+    const opt = options.find(o => /无餐具|不配|不赠送|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/礼袋|原厂礼袋/i.test(attrName)) {
+    const opt = options.find(o => /无礼袋|不赠送|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/包装方式|包装形式/i.test(attrName)) {
+    const opt = options.find(o => !/礼盒|礼袋|定制/i.test(getName(o)) && /普通包装|普通装|普通|袋装|瓶装|盒装|罐装|散装/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/礼盒装|是否礼盒/i.test(attrName)) {
+    const opt = options.find(o => /非礼盒装|非礼盒|否|无/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/提供礼赠包装/i.test(attrName)) {
+    const opt = options.find(o => /普通包装|无礼袋包装|环保包装|无/i.test(getName(o)));
+    if (opt) return opt;
+  }
+
+  const negOpt = options.find(o => /不赠送|不赠|无赠品|无|普通包装|普通|非礼盒|常规|否/i.test(getName(o)));
+  if (negOpt) return negOpt;
+
+  return null;
+}
+
+// Semantic helper: extract net content & unit from title
+function extractNetContent(title, catPath = '') {
+  const volMatch = title.match(/(\d+(?:\.\d+)?)\s*(ml|毫升|L|升|g|克|kg|千克|斤)/i);
   if (volMatch) {
     let num = parseFloat(volMatch[1]);
     let unit = volMatch[2].toLowerCase();
     if (unit === 'l' || unit === '升') {
-      return `${num * 1000}ml`;
+      return { num: num * 1000, unit: 'ml', rawText: `${num * 1000}ml`, unitCode: 300, unitName: 'mL' };
     }
     if (unit === 'kg' || unit === '千克') {
-      return `${num * 1000}g`;
+      return { num: num * 1000, unit: 'g', rawText: `${num * 1000}g`, unitCode: 202, unitName: 'g' };
     }
-    if (unit === '毫升') return `${num}ml`;
-    if (unit === '克') return `${num}g`;
-    return `${num}${unit}`;
+    if (unit === '斤') {
+      return { num: num * 500, unit: 'g', rawText: `${num * 500}g`, unitCode: 202, unitName: 'g' };
+    }
+    if (unit === '毫升') return { num, unit: 'ml', rawText: `${num}ml`, unitCode: 300, unitName: 'mL' };
+    if (unit === '克') return { num, unit: 'g', rawText: `${num}g`, unitCode: 202, unitName: 'g' };
+    return { num, unit, rawText: `${num}${unit}`, unitCode: (unit === 'ml' ? 300 : 202), unitName: (unit === 'ml' ? 'mL' : 'g') };
+  }
+  const countMatch = title.match(/(\d+)\s*(抽|片|支|粒|双|对|只|个|包|袋|盒|桶|罐|瓶|份)/);
+  if (countMatch) {
+    return { num: parseInt(countMatch[1]), unit: countMatch[2], rawText: `${countMatch[1]}${countMatch[2]}` };
   }
   return null;
 }
+
+// Helper: Ensure net content has appropriate unit
+function ensureNetContentUnit(val, title, catPath = '') {
+  if (!val) {
+    const extracted = extractNetContent(title, catPath);
+    return extracted ? extracted.rawText : null;
+  }
+  const str = String(val).trim();
+  if (/^\d+(?:\.\d+)?$/.test(str)) {
+    const extracted = extractNetContent(title, catPath);
+    if (extracted && extracted.unit) {
+      return str + extracted.unit;
+    }
+    const isLiquid = /水|饮|酒|汁|液|露|乳|油|洗|喷雾|瓶|听|罐/i.test(title + ' ' + catPath);
+    return str + (isLiquid ? 'ml' : 'g');
+  }
+  return str;
+}
+
+// Helper: Extract wort concentration for beer
+function extractWort(title) {
+  const m = title.match(/(\d+(?:\.\d+)?)\s*(°P|度|P)/i);
+  if (m) return `${m[1]}°P`;
+  return '8°P';
+}
+
+// Helper: Extract alcohol by volume
+function extractAlcohol(title) {
+  const m = title.match(/(\d+(?:\.\d+)?)\s*(%vol|度|%|vol)/i);
+  if (m) {
+    const num = parseFloat(m[1]);
+    return `≥${num}%vol`;
+  }
+  return '≥4.3%vol';
+}
+
+// Helper: Extract length / cable length (0-5m range)
+function extractLength(title) {
+  const m = title.match(/(\d+(?:\.\d+)?)\s*(m|米)/i);
+  if (m) {
+    const val = parseFloat(m[1]);
+    const clamped = Math.min(val, 5);
+    return `${clamped}m`;
+  }
+  return '1.5m';
+}
+
+// Helper: Extract denier for hosiery
+function extractDenier(title) {
+  const m = title.match(/(\d+)\s*(d|D)/);
+  if (m) return `${m[1]}D`;
+  return '80D';
+}
+
+// Helper: Extract dimensions
+function extractDimensions(title) {
+  const m = title.match(/(\d+)\s*[*×xX]\s*(\d+)\s*(cm|mm|m)?/);
+  if (m) {
+    const unit = m[3] || 'cm';
+    return `${m[1]}${unit}*${m[2]}${unit}`;
+  }
+  return '150cm*200cm';
+}
+
 
 // Process a single product
 async function processProduct(token, productMeta, storeCode = '33280018') {
@@ -272,16 +405,37 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
     const attrName = attr.attrName;
     const attrValueType = Number(attr.attrValueType);
 
-    let val = mtAiMap.get(attrId);
+    const isGift = isGiftOrGiveawayAttr(attrName);
+    let val = null;
 
-    // Initial from recommendCat
-    if (!val && initialMtCatAttr.length) {
-      const init = initialMtCatAttr.find(x => String(x.attrId) === attrId);
-      if (init && init.valueList?.[0]?.value) val = init.valueList[0].value;
+    if (isGift) {
+      const negOpt = resolveNegativeGiftOption(attr.valueList || [], attrName);
+      if (negOpt) {
+        val = negOpt.value;
+      } else if (!attr.isRequired) {
+        val = null; // Strictly omit non-required gift fields if no negative option
+      } else {
+        const safe = (attr.valueList || []).find(v => !isGiftAffirmativeValue(v.value)) || attr.valueList?.[0];
+        if (safe) val = safe.value;
+      }
+    } else {
+      val = mtAiMap.get(attrId);
+      if (isGiftAffirmativeValue(val)) {
+        const negOpt = resolveNegativeGiftOption(attr.valueList || [], attrName);
+        val = negOpt ? negOpt.value : null;
+      }
+
+      // Initial from recommendCat
+      if (!val && initialMtCatAttr.length) {
+        const init = initialMtCatAttr.find(x => String(x.attrId) === attrId);
+        if (init && init.valueList?.[0]?.value && !isGiftAffirmativeValue(init.valueList[0].value)) {
+          val = init.valueList[0].value;
+        }
+      }
     }
 
     // Secondary fill
-    if (!val) {
+    if (!val && !isGift) {
       if (attrName === '品牌') {
         const matched = (attr.valueList || []).find(v => {
           if (!v.value || v.value.length < 2 || /^\d+$/.test(v.value)) return false;
@@ -294,25 +448,43 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         val = '中国';
       } else if (attrName === '国产/进口') {
         val = '国产';
-      } else if (attrName === '包装方式') {
+      } else if (attrName === '包装方式' || attrName === '包装形式') {
         if (isMultipack) val = '箱装';
         else if (isBottle) val = '瓶装';
         else if (isBag) val = '袋装';
         else {
-          const opt = (attr.valueList || []).find(v => /普通包装|单件|瓶装|袋装|盒装/i.test(v.value));
+          const opt = (attr.valueList || []).find(v => !/礼盒|礼袋|定制/i.test(v.value) && /普通包装|单件|瓶装|袋装|盒装/i.test(v.value));
           if (opt) val = opt.value;
+          else val = '普通包装';
         }
       } else if (attrName === '是否含糖') {
         if (/0糖|无糖|低糖/.test(productName)) val = '无糖';
         else val = '含糖';
-      } else if (attrName === '保质期') {
-        if (/食品|饮料|酒|零食/.test(mtCatPath)) val = '270';
-        else if (/日化|美妆|个护|洗护/.test(mtCatPath)) val = '1095';
-        else val = '365';
-      } else if (attrName === '单规格容量' || attrName === '净含量') {
-        if (netContent) val = netContent;
-      } else if (attrName === '面料成分' || attrValueType === 10) {
-        val = /棉/i.test(productName) ? '棉100%' : (/聚酯纤维|涤纶/i.test(productName) ? '聚酯纤维100%' : '棉100%');
+      } else if (/保质期/i.test(attrName)) {
+        if (/食品|饮料|酒|零食/.test(mtCatPath)) val = '270天';
+        else if (/日化|美妆|个护|洗护/.test(mtCatPath)) val = '1095天';
+        else val = '365天';
+      } else if (/麦汁浓度/i.test(attrName)) {
+        val = extractWort(productName);
+      } else if (/酒精度|酒精含量/i.test(attrName)) {
+        val = extractAlcohol(productName);
+      } else if (/单规格容量|单件容量|主杯容量|^容量$/i.test(attrName)) {
+        const netObj = extractNetContent(productName, mtCatPath);
+        val = netObj ? netObj.rawText : '500ml';
+      } else if (/单包净含量|单件净含量|^净含量$/i.test(attrName)) {
+        val = ensureNetContentUnit(val, productName, mtCatPath) || (isBottle ? '500ml' : '100g');
+      } else if (attrName === '面料成分') {
+        if (isClothingCategory(productName, mtCatPath)) {
+          val = /棉/i.test(productName) ? '棉100%' : (/聚酯纤维|涤纶/i.test(productName) ? '聚酯纤维100%' : '棉100%');
+        } else {
+          val = '常规';
+        }
+      } else if (/线长|电源线长|全长/i.test(attrName)) {
+        val = extractLength(productName);
+      } else if (/丹尼数/i.test(attrName)) {
+        val = extractDenier(productName);
+      } else if (/^尺寸$/i.test(attrName)) {
+        val = extractDimensions(productName);
       } else if (attrName === '适用季节') {
         val = /冬/.test(productName) ? '冬季' : (/夏/.test(productName) ? '夏季' : (/春秋/.test(productName) ? '春秋' : '四季'));
       } else if (attrName === '适用风格') {
@@ -323,16 +495,20 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         val = /连帽/.test(productName) ? '连帽' : '圆领';
       } else if (attrName === '提供礼赠包装') {
         val = '普通包装';
-      } else if (/赠品|礼品|附赠|吸管|餐具/i.test(attrName)) {
-        // Rule 35: Strict non-inclusion of gifts
-        const negOpt = (attr.valueList || []).find(v => /否|无|不赠送|普通包装/i.test(v.value));
-        if (negOpt) val = negOpt.value;
+      } else if (attrValueType === 10) {
+        if (/浓度|麦汁/.test(attrName)) val = extractWort(productName);
+        else if (/酒精|度数/.test(attrName)) val = extractAlcohol(productName);
+        else if (/容量|容积/.test(attrName)) val = '500ml';
+        else if (/线长|长度/.test(attrName)) val = '1.5m';
+        else if (/重量|净含/.test(attrName)) val = '100g';
+        else if (isClothingCategory(productName, mtCatPath)) val = '棉100%';
+        else val = '常规';
       }
 
       // Ultimate fallback: guarantee 0 empty attributes
       if (!val) {
         if (attr.valueList && attr.valueList.length) {
-          const validOpt = attr.valueList.find(v => v.value && !/^\d+$/.test(v.value)) || attr.valueList[0];
+          const validOpt = attr.valueList.find(v => v.value && !/^\d+$/.test(v.value) && !isGiftAffirmativeValue(v.value)) || attr.valueList[0];
           if (validOpt) val = validOpt.value;
         } else if (attrValueType === 3) {
           val = '常规';
@@ -343,36 +519,125 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
     if (val) {
       let valueList = [];
       if (attrValueType === 10 || attrName === '面料成分') {
-        const mat = /棉/i.test(String(val)) ? '棉' : (/聚酯纤维|涤纶/i.test(String(val)) ? '聚酯纤维' : '棉');
-        valueList = [{
-          value: `${mat}100%`,
-          valueId: '',
-          struct_attr_template: [{
-            format_type: 1,
-            struct_attr_module_values: [{
-              struct_attr_template_modules: [
-                { sequence: 1, module_value: mat, option_id: 0, option_value: '', type: 1 },
-                { sequence: 2, module_value: '100', option_id: 0, option_value: '', type: 4 },
-                { sequence: 3, module_value: '%', option_id: 604, option_value: '%', type: 5 }
-              ]
+        if (attrName === '面料成分' && isClothingCategory(productName, mtCatPath)) {
+          const mat = /棉/i.test(String(val)) ? '棉' : (/聚酯纤维|涤纶/i.test(String(val)) ? '聚酯纤维' : '棉');
+          valueList = [{
+            value: `${mat}100%`,
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: mat, option_id: 0, option_value: '', type: 1 },
+                  { sequence: 2, module_value: '100', option_id: 0, option_value: '', type: 4 },
+                  { sequence: 3, module_value: '%', option_id: 604, option_value: '%', type: 5 }
+                ]
+              }]
             }]
-          }]
-        }];
+          }];
+        } else if (/麦汁浓度/i.test(attrName)) {
+          const wortNum = String(val).replace(/[^0-9.]/g, '') || '8';
+          valueList = [{
+            value: `${wortNum}°P`,
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: wortNum, option_id: 0, option_value: '', type: 4 },
+                  { sequence: 2, module_value: '', option_id: 501, option_value: '°P', type: 5 }
+                ]
+              }]
+            }]
+          }];
+          val = `${wortNum}°P`;
+        } else if (/酒精度|酒精含量/i.test(attrName)) {
+          const alcNum = String(val).replace(/[^0-9.]/g, '') || '4.3';
+          valueList = [{
+            value: `${alcNum}%vol`,
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: alcNum, option_id: 0, option_value: '', type: 1 },
+                  { sequence: 2, module_value: '', option_id: 500, option_value: '%vol', type: 5 }
+                ]
+              }]
+            }]
+          }];
+          val = `≥${alcNum}%vol`;
+        } else if (/容量|主杯容量/i.test(attrName)) {
+          const netObj = extractNetContent(productName, mtCatPath) || { num: 500, unit: 'ml', unitCode: 300, unitName: 'mL' };
+          const uCode = (netObj.unit === 'l' || netObj.unit === '升') ? 301 : 300;
+          const uName = (netObj.unit === 'l' || netObj.unit === '升') ? 'L' : 'mL';
+          valueList = [{
+            value: String(netObj.num),
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: String(netObj.num), option_id: 0, option_value: '', type: 4 },
+                  { sequence: 2, module_value: '', option_id: uCode, option_value: uName, type: 5 }
+                ]
+              }]
+            }]
+          }];
+          val = `${netObj.num}${uName}`;
+        } else if (/净含量/i.test(attrName)) {
+          const netObj = extractNetContent(productName, mtCatPath) || { num: 100, unit: 'g', unitCode: 202, unitName: 'g' };
+          valueList = [{
+            value: String(netObj.num),
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: String(netObj.num), option_id: 0, option_value: '', type: 4 },
+                  { sequence: 2, module_value: '', option_id: netObj.unitCode || 202, option_value: netObj.unitName || 'g', type: 5 }
+                ]
+              }]
+            }]
+          }];
+          val = `${netObj.num}${netObj.unitName || 'g'}`;
+        } else if (/线长|电源线长|全长/i.test(attrName)) {
+          const lenNum = String(val).replace(/[^0-9.]/g, '') || '1.5';
+          valueList = [{
+            value: '702',
+            valueId: '',
+            struct_attr_template: [{
+              format_type: 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: [
+                  { sequence: 1, module_value: lenNum, option_id: 0, option_value: '', type: 4 },
+                  { sequence: 2, module_value: '', option_id: 702, option_value: 'm', type: 5 }
+                ]
+              }]
+            }]
+          }];
+          val = `${lenNum}m`;
+        } else {
+          valueList = [{ value: String(val), valueId: '' }];
+        }
       } else if (attrValueType === 1 || attrValueType === 2) {
         let opt = (attr.valueList || []).find(v => v.value == val || v.value.includes(val) || val.includes(v.value));
         if (!opt && attr.valueList && attr.valueList.length) {
-          opt = attr.valueList.find(v => v.value && !/^\d+$/.test(v.value)) || attr.valueList[0];
+          opt = attr.valueList.find(v => v.value && !/^\d+$/.test(v.value) && !isGiftAffirmativeValue(v.value)) || attr.valueList[0];
         }
         if (opt) {
           valueList = [{ value: opt.value, valueId: String(opt.valueId) }];
+          val = opt.value;
         } else {
           let fallbackId = '';
           if (attrName === '品牌') fallbackId = '2436552';
           else if (attrName === '产地') fallbackId = '100000050';
           valueList = [{ value: String(val), valueId: fallbackId }];
         }
-      } else if (attrValueType === 9) {
-        valueList = [{ value: '', valueId: '', structValue: { text: String(val).replace(/[^0-9]/g, ''), optionId: '100', optionValue: '天' } }];
+      } else if (attrValueType === 9 || /保质期/i.test(attrName)) {
+        const days = parseInt(String(val).replace(/[^0-9]/g, '')) || 270;
+        valueList = [{ value: '', valueId: '', structValue: { text: String(days), optionId: '100', optionValue: '天' } }];
+        val = `${days}天`;
       } else {
         valueList = [{ value: String(val), valueId: '' }];
       }
@@ -395,17 +660,38 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
   for (const prop of eleAttrs) {
     const propId = String(prop.propertyId);
     const propName = prop.propertyName;
+    const isGift = isGiftOrGiveawayAttr(propName);
 
-    let val = eleAiMap.get(propId);
+    let val = null;
 
-    // Initial from recommendCat
-    if (!val && initialEleCatAttr.length) {
-      const init = initialEleCatAttr.find(x => String(x.propId) === propId);
-      if (init && init.valueText) val = init.valueText;
+    if (isGift) {
+      const negOpt = resolveNegativeGiftOption(prop.propertyValues || [], propName);
+      if (negOpt) {
+        val = negOpt.valueData || negOpt.value;
+      } else if (!prop.required) {
+        val = null; // Strictly omit non-required gift fields if no negative option
+      } else {
+        const safe = (prop.propertyValues || []).find(v => !isGiftAffirmativeValue(v.valueData)) || prop.propertyValues?.[0];
+        if (safe) val = safe.valueData;
+      }
+    } else {
+      val = eleAiMap.get(propId);
+      if (isGiftAffirmativeValue(val)) {
+        const negOpt = resolveNegativeGiftOption(prop.propertyValues || [], propName);
+        val = negOpt ? (negOpt.valueData || negOpt.value) : null;
+      }
+
+      // Initial from recommendCat
+      if (!val && initialEleCatAttr.length) {
+        const init = initialEleCatAttr.find(x => String(x.propId) === propId);
+        if (init && init.valueText && !isGiftAffirmativeValue(init.valueText)) {
+          val = init.valueText;
+        }
+      }
     }
 
     // Secondary fill
-    if (!val) {
+    if (!val && !isGift) {
       if (propName === '品牌') {
         const matched = (prop.propertyValues || []).find(v => {
           if (!v.valueData || v.valueData.length < 2 || /^\d+$/.test(v.valueData)) return false;
@@ -419,22 +705,30 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         }
       } else if (propName === '产地') {
         val = '中国大陆';
-      } else if (propName === '包装方式') {
+      } else if (propName === '包装方式' || propName === '包装形式') {
         if (isMultipack) val = '箱装';
         else if (isBottle) val = '瓶装';
         else if (isBag) val = '袋装';
         else {
-          const opt = (prop.propertyValues || []).find(v => /普通包装|单件|瓶装|袋装|盒装/i.test(v.valueData));
+          const opt = (prop.propertyValues || []).find(v => !/礼盒|礼袋|定制/i.test(v.valueData) && /普通包装|单件|瓶装|袋装|盒装/i.test(v.valueData));
           if (opt) val = opt.valueData;
+          else val = '普通包装';
         }
       } else if (propName === '售卖方式') {
         val = '预包装';
-      } else if (propName === '单件净含量' || propName === '净含量') {
-        if (netContent) val = netContent;
-      } else if (propName === '保质期') {
+      } else if (/单包净含量|单件净含量|^净含量$/i.test(propName)) {
+        val = ensureNetContentUnit(val, productName, eleCatPath) || (isBottle ? '500ml' : '100g');
+      } else if (/保质期/i.test(propName)) {
         if (/食品|饮料|酒|零食/.test(eleCatPath)) val = '270天';
         else if (/日化|美妆|个护|洗护/.test(eleCatPath)) val = '1095天';
         else val = '365天';
+      } else if (/麦汁浓度/i.test(propName)) {
+        val = extractWort(productName);
+      } else if (/酒精度|酒精含量/i.test(propName)) {
+        val = extractAlcohol(productName);
+      } else if (/单规格容量|单件容量|主杯容量|^容量$/i.test(propName)) {
+        const netObj = extractNetContent(productName, eleCatPath);
+        val = netObj ? netObj.rawText : '500ml';
       } else if (propName === '是否为特殊用途化妆品' || propName === '是否商场同款' || propName === '是否加绒') {
         val = '否';
       } else if (propName === '适用人群') {
@@ -443,7 +737,17 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         else if (/童|儿童|宝宝/.test(productName)) val = '儿童';
         else val = '成人';
       } else if (propName === '面料成分' || propName === '面料') {
-        val = '棉';
+        if (isClothingCategory(productName, eleCatPath)) {
+          val = /棉/i.test(productName) ? '棉' : (/聚酯纤维|涤纶/i.test(productName) ? '聚酯纤维' : '棉');
+        } else {
+          val = '常规';
+        }
+      } else if (/线长|电源线长|全长/i.test(propName)) {
+        val = extractLength(productName);
+      } else if (/丹尼数/i.test(propName)) {
+        val = extractDenier(productName);
+      } else if (/^尺寸$/i.test(propName)) {
+        val = extractDimensions(productName);
       } else if (propName === '尺码') {
         val = /2xl|xxl/i.test(productName) ? '2XL' : (/3xl|xxxl/i.test(productName) ? '3XL' : (/xl/i.test(productName) ? 'XL' : '均码'));
       } else if (propName === '规格') {
@@ -464,16 +768,15 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         val = String(detail.price || '34.9');
       } else if (propName === '货号') {
         val = String(productCode || skuId);
-      } else if (/赠品|礼品|附赠|吸管|餐具/i.test(propName)) {
-        // Rule 35: Strict non-inclusion of gifts
-        const negOpt = (prop.propertyValues || []).find(v => /否|无|不赠送|普通包装/i.test(v.valueData));
-        if (negOpt) val = negOpt.valueData;
+      } else if (isGiftOrGiveawayAttr(propName)) {
+        const negOpt = resolveNegativeGiftOption(prop.propertyValues || [], propName);
+        if (negOpt) val = negOpt.valueData || negOpt.value;
       }
 
       // Ultimate fallback: guarantee 0 empty attributes
       if (!val) {
         if (prop.propertyValues && prop.propertyValues.length) {
-          const validOpt = prop.propertyValues.find(v => v.valueData && !/^\d+$/.test(v.valueData)) || prop.propertyValues[0];
+          const validOpt = prop.propertyValues.find(v => v.valueData && !/^\d+$/.test(v.valueData) && !isGiftAffirmativeValue(v.valueData)) || prop.propertyValues[0];
           if (validOpt) val = validOpt.valueData;
         } else if (prop.inputProp) {
           val = '常规';
@@ -482,6 +785,12 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
     }
 
     if (val) {
+      if (/单包净含量|单件净含量|^净含量$/i.test(propName)) {
+        val = ensureNetContentUnit(val, productName, eleCatPath) || val;
+      } else if (/保质期/i.test(propName) && !/天|月|年/.test(String(val))) {
+        val = `${String(val).replace(/[^0-9]/g, '') || '270'}天`;
+      }
+
       let propertyValues = [];
       let valId = -1;
       let valText = String(val);
@@ -491,7 +800,7 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         for (const itemVal of valArr) {
           let opt = prop.propertyValues.find(v => v.valueData == itemVal || v.valueData.includes(itemVal) || String(itemVal).includes(v.valueData));
           if (!opt) {
-            opt = prop.propertyValues.find(v => v.valueData && !/^\d+$/.test(v.valueData)) || prop.propertyValues[0];
+            opt = prop.propertyValues.find(v => v.valueData && !/^\d+$/.test(v.valueData) && !isGiftAffirmativeValue(v.valueData)) || prop.propertyValues[0];
           }
           if (opt) {
             propertyValues.push({ valueId: opt.valueId, valueData: opt.valueData, sortOrder: 0 });
@@ -506,9 +815,19 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         valText = String(val);
         if (prop.options && prop.options.length) {
           const num = String(val).replace(/[^0-9.]/g, '') || '1';
-          const unit = prop.options[0];
+          let unit = prop.options[0];
+          const matchedUnit = prop.options.find(u => String(val).toLowerCase().includes(u.toLowerCase()));
+          if (matchedUnit) {
+            unit = matchedUnit;
+          } else if (/g|克/.test(String(val)) && prop.options.includes('g')) {
+            unit = 'g';
+          } else if (/ml|毫升/.test(String(val)) && prop.options.includes('ml')) {
+            unit = 'ml';
+          } else if (/天/.test(String(val)) && prop.options.includes('天')) {
+            unit = '天';
+          }
           propertyValues.push({ valueData: num, valueId: '', sortOrder: 0, structValue: { text: num, unit } });
-          valText = num;
+          valText = `${num}${unit}`;
         } else {
           propertyValues.push({ valueId: '', valueData: String(val), sortOrder: 0 });
         }

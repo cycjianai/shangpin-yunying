@@ -14,7 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = Path(__file__).with_name("capability_registry.json")
 
-PLATFORMS = ("qnh", "meituan", "eleme", "aoxiang", "taobao_flash")
+PLATFORMS = ("qnh", "meituan", "eleme", "aoxiang", "taobao_flash", "minicheng")
 TASKS = (
     "watermark_scan",
     "channel_attributes_only",
@@ -88,17 +88,25 @@ def infer_platform(request_text: str, page_url: str) -> tuple[str | None, list[s
         candidates.add("eleme")
     if contains(text, r"淘宝闪购直连", r"淘宝闪购商家平台", r"taobao[_ -]?flash"):
         candidates.add("taobao_flash")
+    if contains(text, r"mini橙", r"minicheng", r"澜橙", r"guodongcheng\.cn", r"mini\.guodongcheng"):
+        candidates.add("minicheng")
 
-    # QNH/Aoxiang requests often name the downstream Meituan/Eleme channels.
+    # QNH/Aoxiang/MiniCheng requests often name the downstream Meituan/Eleme channels.
     # An explicit management-platform signal owns the session and adapter.
     if "aoxiang" in candidates:
         candidates.discard("eleme")
         candidates.discard("meituan")
+        candidates.discard("taobao_flash")
     # QNH may be hosted under a Meituan-owned domain and may manage Meituan/Eleme
     # channels, but it never uses either direct-platform adapter.
     if "qnh" in candidates:
         candidates.discard("meituan")
         candidates.discard("eleme")
+        candidates.discard("taobao_flash")
+    if "minicheng" in candidates:
+        candidates.discard("meituan")
+        candidates.discard("eleme")
+        candidates.discard("taobao_flash")
     ordered = [item for item in PLATFORMS if item in candidates]
     return (ordered[0] if len(ordered) == 1 else None, ordered)
 

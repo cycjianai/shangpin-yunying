@@ -22,6 +22,7 @@ writer、Cookie、回读器或成功捷径。
 | `eleme` | `planned` | `planned` | `planned` | `planned` | `planned` |
 | `aoxiang` | `implemented` | `planned` | `planned` | `planned` | `planned` |
 | `taobao_flash` | `planned` | `planned` | `planned` | `planned` | `planned` |
+| `minicheng` | `implemented` | `planned` | `planned` | `implemented` | `planned` |
 
 美团 `unavailable_one_pass` 可以调用其模块内已注册的真实资质资料导入，但不等于独立
 `qualification_images_only` 已实现。

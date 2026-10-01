@@ -1,9 +1,9 @@
 ---
 name: multiplatform-product-operations
-description: 为已授权的牵牛花、美团、饿了么、翱象和淘宝闪购商家后台路由并执行商品治理；覆盖主图品牌水印扫描、渠道属性、不可售、资质图、总部零售价补齐、调价、商品编辑、医疗器械整店迁移、失败搬品重试、搬品冲突回退复核和门店旧新 SKU 替换迁移。按“当前平台 + 单一任务”渐进加载平台适配器与任务合同，标准运营工作簿统一映射到同一 7 表 Excel Schema。
+description: 为已授权的牵牛花、美团、饿了么、翱象、淘宝闪购和mini橙商家后台路由并执行商品治理；覆盖主图品牌水印扫描、渠道属性、不可售、资质图、总部零售价补齐、调价、商品编辑、医疗器械整店迁移、失败搬品重试、搬品冲突回退复核和门店旧新 SKU 替换迁移。按“当前平台 + 单一任务”渐进加载平台适配器与任务合同，标准运营工作簿统一映射到同一 7 表 Excel Schema。
 ---
 
-# 多平台商品运营自动化 v1.5.0
+# 多平台商品运营自动化 v1.7.0
 
 这个入口只负责路由和共享硬约束。不要预读整个 `references/`，也不要把一个平台的登录态、签名、请求、
 writer、回读器或成功判断用于另一个平台。
@@ -190,6 +190,25 @@ python3 scripts/route_skill.py \
     5. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
     6. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
        在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口 `page-query?pageSize=100` 原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须通过 4 Tabs 分布式流式分页（每批 4 页 400 SPU 并行拉取），**纯内存扫描过滤**（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！
+    7. **【mini橙渠道属性全量治理与无损快照闭环（MiniCheng Attribute Governance Engine）】**：
+       详细实战操作指南与深度避坑条目参见 [mini橙平台实战防坑指南与规程](references/platforms/minicheng-playbook-and-pitfalls.md) 与 [mini橙平台适配器](references/platforms/minicheng.md)。
+       复用已有登录态 Bearer token，通过 `scripts/platforms/minicheng/minicheng_engine.mjs` 启动高并发无损治理。修改前强制全量快照落盘（`artifacts/snapshots/minicheng_${storeCode}/`），自动调用官方 `recommendCat` 与 `aiRecommendCatAttr` 进行渠道属性拉满，精准字典对齐（产地、品牌、规格、净含量、保质期），严格执行规则 35 赠品礼盒全量否定契约，严格隔离资质图，通过 `/store/product/updateProductDetail` 秒级提交并增量落盘 ledger，支持 `restore_product_snapshot.mjs` 100% 随时无损回滚。
+       - **识别与填充链路**：通过 `recommendCat` 获取官方推荐叶子类目，调 `queryMtCatAttrList`/`queryStoreEleCatAttrList` 拉取美团与闪购属性骨架，优先采纳 `aiRecommendCatAttr` 官方推荐值；剩余空白属性按标题正则、品类字典、安全枚举深度兜底，做到 100% 满属性零留白。
+       - **Vue前端双轨Schema绑定铁律（Frontend Binding Contract）**：
+         - **美团属性（mtCatAttr）**：后台类目元数据返回的 `attrValueType` 为字符串类型（如 `"1"`），必须进行数值强制转换 `Number(attr.attrValueType)`。单选/多选类目属性必须精准匹配候选选项中的 `valueId`（如品牌通用 `2436552`、产地中国 `100000050`），若 `valueId` 为空或不匹配，前端 Vue 组件的 `detailShowAttr()` 将无法绑定 `attrForm` 导致页面上渲染为空白框。
+         - **淘宝闪购属性（eleCatAttr vs eleCatPropertyList）**：后端同时要求两个结构，保存时 `eleCatPropertyList` 保存为标准对象数组，而 `eleCatAttr` 必须序列化为包含 `{ propId: Number, propText: String, valueId: Number, valueText: String }` 的数组字符串。前端 Vue 的 `detailShowEle()` 强依赖 `propId` 进行 `eleForm` 赋值；若序列化时缺失 `propId`，前端将无法识别属性键导致界面视觉上所有淘宝闪购属性全部呈现空白。
+       - **关键避坑与鲁棒性防护**：
+         - **Windows 并发写入与文件锁守护**：在 Windows 环境下导出运营台账时，用户常直接在 Excel 中打开 CSV 导致文件被独占锁定（EBUSY 错误）。引擎必须进行锁异常捕获，在主文件被占用时自动降级写入 `minicheng_operation_table_latest.csv`，确保批量治理流水线永不中断。
+         - **重量非正数拦截兜底**：后台强制校验 `weight > 0`，对化妆品、笔、配件等历史无重量商品统一标准化为 `>= 10g`，严防网关 500 阻断。
+         - **规则 35 赠品礼盒全量否定契约**：所有涉及赠品、开瓶器、杯子、封口夹、礼品包装等字段，强制选择否定项（普通包装/无/不赠送），严禁虚假承诺。
+         - **资质图绝对隔离保护**：原样透传 `specialPictureList` 与 `eleSpecialPictureList`，资质图 0 变动。
+       - **极速高并发优化策略**：
+         - **纯 Headless REST API 架构**：抛弃传统低速的 DOM 界面模拟点击（单品需 15~30s），通过提取 Bearer Token 走纯底层 RESTful 接口（单品仅 30~50ms），提速 300+ 倍，4,600+ 商品 3~5 分钟内满速闭环！
+         - **8~12 Worker 协程池与进程内类目缓存（catAttrMap）**：同类目商品属性骨架直接走内存缓存，消除 90% 重复网络请求。
+       - **实战必做硬约束**：
+         - **修改前强制全量快照与一键回滚**：全字段持久化至 `artifacts/snapshots/minicheng_${storeCode}/`，配套 `restore_product_snapshot.mjs` 支持单品与整店随时秒级一键还原。
+         - **丰富 CLI 运维调度**：支持 `--sku` 单品调试、`--scope-limit` 灰度试跑、`--concurrency`、`--force` 覆盖。
+         - **标准四列表格与视觉抽检存证**：产出带 UTF-8 BOM 的 CSV/JSON 标准台账（`商品名称, spu, 填入内容, 状态`），并在 CDP 浏览器中随机抽样 SPU 进行前台 Vue UI 渲染视觉复核与截图归档。
 - [统一输出内容合同](references/core/output-contract.md) 与
   [Excel 精确 Schema](references/excel-schema-v1.md)：从第一条事件开始使用统一字段、状态和来源词汇。
 

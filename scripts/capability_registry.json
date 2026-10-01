@@ -192,6 +192,49 @@
           "detail_references": []
         }
       }
+    },
+    "minicheng": {
+      "display_name": "mini橙",
+      "adapter_reference": "references/platforms/minicheng.md",
+      "tasks": {
+        "channel_attributes_only": {
+          "status": "implemented",
+          "task_reference": "references/tasks/channel-attributes.md",
+          "detail_references": [
+            "references/platforms/minicheng-playbook-and-pitfalls.md",
+            "references/platforms/minicheng.md"
+          ]
+        },
+        "plugin_attribute_fill": {
+          "status": "implemented",
+          "task_reference": "references/tasks/plugin-attribute-fill.md",
+          "detail_references": [
+            "references/platforms/minicheng-playbook-and-pitfalls.md",
+            "references/platforms/minicheng.md"
+          ]
+        },
+        "qualification_images_only": {
+          "status": "planned",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": []
+        },
+        "unavailable_one_pass": {
+          "status": "planned",
+          "task_reference": "references/tasks/unavailable-one-pass.md",
+          "detail_references": []
+        },
+        "price_push": {
+          "status": "planned",
+          "task_reference": "references/tasks/price-push.md",
+          "detail_references": []
+        },
+        "product_editing": {
+          "status": "planned",
+          "task_reference": "references/tasks/product-editing.md",
+          "detail_references": []
+        }
+      }
     }
   }
 }
+

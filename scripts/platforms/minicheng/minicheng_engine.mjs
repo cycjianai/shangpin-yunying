@@ -17,7 +17,7 @@ const JSON_FILE = path.join(ARTIFACTS_DIR, 'minicheng_operation_table.json');
 
 if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
 
-const FALLBACK_TOKEN = "Bearer mini_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzM4NCJ9.eyJkYXRhIjoie1wiYWNjb3VudFwiOlwiMTgyNjQ3NjU4MTJcIixcImxvZ0luV2F5XCI6XCJURU5BTlRfTE9HSU5cIixcInRlbmFudENvZGVcIjpcIjMzMjhcIixcInVzZXJJZFwiOjUwODg1LFwidXVpZFwiOlwiNDUyZDg1ZDctNjRiMC00ZGExLTljZmYtNWM3MzU4YWJlOTk2XCJ9IiwiaXNzIjoiY29tcGFueVVzZXIiLCJleHAiOjE3OTA4NTc4NjN9.qdsDYAuyx_sic7JhlevmQKMBzdnxXun92JT-uG5EykGTSfBVcbmG4CP8cv1G8vEi";
+const FALLBACK_TOKEN = "Bearer mini_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzM4NCJ9.eyJkYXRhIjoie1wiYWNjb3VudFwiOlwiMTgyNjQ3NjU4MTJcIixcImxvZ0luV2F5XCI6XCJURU5BTlRfTE9HSU5cIixcInRlbmFudENvZGVcIjpcIjMzMjhcIixcInVzZXJJZFwiOjUwODg1LFwidXVpZFwiOlwiYzA1ZTEyN2MtM2ZmZC00MjE1LTkxNWMtYWU2YzQ2MjBjYjdhXCJ9IiwiaXNzIjoiY29tcGFueVVzZXIiLCJleHAiOjE3OTA5MzkxMTJ9.Wq4xMHEURoIFnvbLTGKdsV0p0r_zwvIB3IR2AgwGmGnrd_ab-GeNmk-RGdigYBZh";
 
 async function getAuthToken() {
   if (process.env.MINICHENG_TOKEN) return process.env.MINICHENG_TOKEN;
@@ -495,14 +495,26 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         val = /连帽/.test(productName) ? '连帽' : '圆领';
       } else if (attrName === '提供礼赠包装') {
         val = '普通包装';
-      } else if (attrValueType === 10) {
+      } else if (attrValueType === 10 || (attr.structAttrTemplate && attr.structAttrTemplate.length)) {
         if (/浓度|麦汁/.test(attrName)) val = extractWort(productName);
         else if (/酒精|度数/.test(attrName)) val = extractAlcohol(productName);
         else if (/容量|容积/.test(attrName)) val = '500ml';
         else if (/线长|长度/.test(attrName)) val = '1.5m';
         else if (/重量|净含/.test(attrName)) val = '100g';
-        else if (isClothingCategory(productName, mtCatPath)) val = '棉100%';
-        else val = '常规';
+        else if (isClothingCategory(productName, mtCatPath) && /面料/.test(attrName)) val = '棉100%';
+        else {
+          const tpl = attr.structAttrTemplate?.[0];
+          const modules = tpl?.structAttrTemplateModules || [];
+          const unitMod = modules.find(m => m.inputType === 5 || (m.options && m.options.length));
+          const numMatch = productName.match(/(\d+(?:\.\d+)?)\s*(只|个|片|抽|支|袋|盒|桶|罐|瓶|份|套|双|对|包|条|顶|米|m|cm|mm|g|ml|l|度|°P|%vol)?/i);
+          const num = (numMatch && numMatch[1]) ? numMatch[1] : '1';
+          let unitStr = '';
+          if (unitMod && unitMod.options && unitMod.options.length) {
+            const matchedOpt = unitMod.options.find(o => productName.includes(o.optionValue)) || unitMod.options[0];
+            unitStr = matchedOpt ? matchedOpt.optionValue : '';
+          }
+          val = `${num}${unitStr}`;
+        }
       }
 
       // Ultimate fallback: guarantee 0 empty attributes
@@ -518,7 +530,7 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
 
     if (val) {
       let valueList = [];
-      if (attrValueType === 10 || attrName === '面料成分') {
+      if (attrValueType === 10 || (attr.structAttrTemplate && attr.structAttrTemplate.length) || attrName === '面料成分') {
         if (attrName === '面料成分' && isClothingCategory(productName, mtCatPath)) {
           const mat = /棉/i.test(String(val)) ? '棉' : (/聚酯纤维|涤纶/i.test(String(val)) ? '聚酯纤维' : '棉');
           valueList = [{
@@ -617,6 +629,45 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
             }]
           }];
           val = `${lenNum}m`;
+        } else if (attr.structAttrTemplate && attr.structAttrTemplate.length) {
+          const tpl = attr.structAttrTemplate[0];
+          const modules = tpl.structAttrTemplateModules || [];
+          const numMod = modules.find(m => m.inputType === 4 || m.inputType === 1) || modules[0];
+          const unitMod = modules.find(m => m.inputType === 5 || (m.options && m.options.length));
+
+          let num = '1';
+          const numMatch = String(val).match(/\d+(?:\.\d+)?/) || productName.match(/(\d+(?:\.\d+)?)\s*(只|个|片|抽|支|袋|盒|桶|罐|瓶|份|套|双|对|包|条|顶|米|m|cm|mm|g|ml|l|度|°P|%vol)?/i);
+          if (numMatch) {
+            num = numMatch[1] || numMatch[0];
+          }
+
+          let chosenOpt = null;
+          if (unitMod && unitMod.options && unitMod.options.length) {
+            chosenOpt = unitMod.options.find(o => productName.includes(o.optionValue) || String(val).includes(o.optionValue)) || unitMod.options[0];
+          }
+
+          const assembledModules = modules.map(mod => {
+            if (numMod && mod.sequence === numMod.sequence) {
+              return { sequence: mod.sequence, module_value: String(num), option_id: 0, option_value: '', type: mod.inputType || 4 };
+            }
+            if (unitMod && mod.sequence === unitMod.sequence && chosenOpt) {
+              return { sequence: mod.sequence, module_value: '', option_id: chosenOpt.optionId, option_value: chosenOpt.optionValue, type: 5 };
+            }
+            return { sequence: mod.sequence, module_value: '', option_id: 0, option_value: '', type: mod.inputType || 1 };
+          });
+
+          const unitStr = chosenOpt ? chosenOpt.optionValue : '';
+          val = `${num}${unitStr}`;
+          valueList = [{
+            value: `${num}${unitStr}`,
+            valueId: '',
+            struct_attr_template: [{
+              format_type: tpl.structAttrValueFormatTypes?.[0]?.formatType || 1,
+              struct_attr_module_values: [{
+                struct_attr_template_modules: assembledModules
+              }]
+            }]
+          }];
         } else {
           valueList = [{ value: String(val), valueId: '' }];
         }
@@ -768,6 +819,13 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         val = String(detail.price || '34.9');
       } else if (propName === '货号') {
         val = String(productCode || skuId);
+      } else if (prop.options && prop.options.length) {
+        const numMatch = productName.match(/(\d+(?:\.\d+)?)\s*(只|个|片|抽|支|袋|盒|桶|罐|瓶|份|套|双|对|包|条|顶|米|m|cm|mm|g|ml|l|度|°P|%vol)?/i);
+        const num = (numMatch && numMatch[1]) ? numMatch[1] : '1';
+        let unit = prop.options[0];
+        const matched = prop.options.find(u => productName.includes(u));
+        if (matched) unit = matched;
+        val = `${num}${unit}`;
       } else if (isGiftOrGiveawayAttr(propName)) {
         const negOpt = resolveNegativeGiftOption(prop.propertyValues || [], propName);
         if (negOpt) val = negOpt.valueData || negOpt.value;
@@ -814,9 +872,10 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
         valId = -1;
         valText = String(val);
         if (prop.options && prop.options.length) {
-          const num = String(val).replace(/[^0-9.]/g, '') || '1';
+          const numMatch = String(val).match(/\d+(?:\.\d+)?/) || productName.match(/\d+(?:\.\d+)?/);
+          const num = numMatch ? numMatch[0] : '1';
           let unit = prop.options[0];
-          const matchedUnit = prop.options.find(u => String(val).toLowerCase().includes(u.toLowerCase()));
+          const matchedUnit = prop.options.find(u => String(val).toLowerCase().includes(u.toLowerCase()) || productName.toLowerCase().includes(u.toLowerCase()));
           if (matchedUnit) {
             unit = matchedUnit;
           } else if (/g|克/.test(String(val)) && prop.options.includes('g')) {
@@ -825,6 +884,10 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
             unit = 'ml';
           } else if (/天/.test(String(val)) && prop.options.includes('天')) {
             unit = '天';
+          } else if (/只/.test(String(val)) && prop.options.includes('只')) {
+            unit = '只';
+          } else if (/个/.test(String(val)) && prop.options.includes('个')) {
+            unit = '个';
           }
           propertyValues.push({ valueData: num, valueId: '', sortOrder: 0, structValue: { text: num, unit } });
           valText = `${num}${unit}`;

@@ -176,6 +176,16 @@ function sanitizeAttrPair(k, v, title) {
       const extracted = extractNetContent(title);
       val = extracted || `${val}g`;
     }
+  } else if (/^数量$|^个数$|^片数$|^抽数$|^支数$|^包数$|^盒数$|^双数$|^条数$|^顶数$/i.test(key)) {
+    if (/^\d+(?:\.\d+)?$/.test(val)) {
+      const qm = title.match(/(\d+(?:\.\d+)?)\s*(只|个|片|抽|支|袋|盒|桶|罐|瓶|份|套|双|对|包|条|顶)/);
+      if (qm) {
+        val = `${val}${qm[2] === '份' ? (/袋/.test(title) ? '只' : '个') : qm[2]}`;
+      } else {
+        const defaultUnit = /片/.test(key) ? '片' : (/抽/.test(key) ? '抽' : (/支/.test(key) ? '支' : (/包/.test(key) ? '包' : (/盒/.test(key) ? '盒' : (/双/.test(key) ? '双' : (/条/.test(key) ? '条' : (/顶/.test(key) ? '顶' : (/袋/.test(title) ? '只' : '个'))))))));
+        val = `${val}${defaultUnit}`;
+      }
+    }
   }
 
   return `${key}=${val}`;

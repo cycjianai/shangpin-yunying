@@ -42,13 +42,25 @@ mini橙（澜橙数字 `mini.guodongcheng.cn`）是面向即时零售/外卖到�
    - **保质期/规格/包装方式**：根据品类与标题正则解析（如 500ml、箱装/瓶装/袋装、常温贮存）；
    - **铁律（规则 35 绝不虚假承诺赠品）**：涉及吸管/餐具/赠品/礼袋/礼品包装属性，**一律强制选择明确否定项（“否”、“无”、“不赠送”、“普通包装”）或保持留白**，坚决杜绝线下客诉。
 
-### 3.2 资质图隔离原则（Zero-Qualification Modification）
+### 3.2 单位标准化双轨铁律（Dual-Track Unit Enforcement）
+
+在 mini橙 治理中，单位存在**商品级与类目级双轨体系**，任何会话与批次均必须 100% 强制闭环，严禁裸数字与留白：
+1. **商品级销售单位（`skuList[i].unit`）**：
+   - 必须通过 `extractSkuUnit(title, spec)` 语义分析，从标题与规格中提取并回填 `袋/只/个/瓶/盒/套/份/支/条/双/罐/听/桶/箱`；
+   - 彻底消灭历史商品在后台表格中“单位”列空白问题。
+2. **美团复合属性单位（Type 10 `struct_attr_template`）**：
+   - 净含量、容量、数量、线长、保质期、麦汁浓度、酒精度等，必须在 sequence 2 绑定具体单位 Option；
+   - 确保美团 Vue 前端组件下拉列表 100% 渲染选中单位。
+3. **淘宝闪购属性单位（`eleCatPropertyList`）**：
+   - 必须在 `propertyValues.valueData` 中保留带单位文本（如 `5ml`、`1只`、`270天`），严禁剥离为裸数字。
+
+### 3.3 资质图隔离原则（Zero-Qualification Modification）
 
 - 当任务明确约束“只填写美团属性和淘宝闪购属性，不填写资质图”时：
   - 严禁调用任何外部商业生图模型或生成本地图；
   - 严格保留原始商品快照中的 `specialPictureList` 与 `eleSpecialPictureList`，原值透传，不作增删。
 
-### 3.3 全生命周期快照与随时回滚契约
+### 3.4 全生命周期快照与随时回滚契约
 
 - **前置强制快照**：修改任一 SPU/SKU 前，必须调用 `/store/product/queryProductDetail` 获取完整原始数据，以 `${productCode}_${skuId}.json` 落盘归档至 `artifacts/snapshots/minicheng_${storeCode}/`；
 - **秒级原位回滚**：提供 `restore_product_snapshot.mjs`，读取快照数据调用 `updateProductDetail`，100% 还原任意商品的全部历史字段。

@@ -246,6 +246,34 @@ function extractDimensions(title) {
   return '150cm*200cm';
 }
 
+// Helper: Extract SKU unit (e.g. 袋, 只, 个, 瓶, 盒, 罐, 包, 套, 支, 条, 双, 听, 桶, 份, 箱)
+function extractSkuUnit(title, spec = '') {
+  const combined = `${title} ${spec}`;
+  // 1. Explicit slash match e.g. 5ml/袋, 1个/份, /瓶, /盒
+  const slashMatch = combined.match(/\/([只个瓶袋盒罐包套支条双听桶份箱件])/);
+  if (slashMatch) return slashMatch[1];
+
+  // 2. Count + unit e.g. 1只, 2瓶, 10袋, 1套
+  const countUnitMatch = combined.match(/\d+\s*([只个瓶袋盒罐包套支条双听桶份箱件])/);
+  if (countUnitMatch) return countUnitMatch[1];
+
+  // 3. Keyword scan
+  if (/袋/i.test(combined)) return '袋';
+  if (/瓶/i.test(combined)) return '瓶';
+  if (/盒/i.test(combined)) return '盒';
+  if (/罐|听/i.test(combined)) return '罐';
+  if (/包/i.test(combined)) return '包';
+  if (/只/i.test(combined)) return '只';
+  if (/套/i.test(combined)) return '套';
+  if (/支/i.test(combined)) return '支';
+  if (/条/i.test(combined)) return '条';
+  if (/双/i.test(combined)) return '双';
+  if (/桶/i.test(combined)) return '桶';
+  if (/箱/i.test(combined)) return '箱';
+
+  return '份';
+}
+
 
 // Process a single product
 async function processProduct(token, productMeta, storeCode = '33280018') {
@@ -889,7 +917,7 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
           } else if (/个/.test(String(val)) && prop.options.includes('个')) {
             unit = '个';
           }
-          propertyValues.push({ valueData: num, valueId: '', sortOrder: 0, structValue: { text: num, unit } });
+          propertyValues.push({ valueData: `${num}${unit}`, valueId: '', sortOrder: 0, structValue: { text: num, unit } });
           valText = `${num}${unit}`;
         } else {
           propertyValues.push({ valueId: '', valueData: String(val), sortOrder: 0 });
@@ -936,7 +964,11 @@ async function processProduct(token, productMeta, storeCode = '33280018') {
     updatePayload.skuList = updatePayload.skuList.map(s => {
       let weight = parseFloat(s.weight);
       if (isNaN(weight) || weight <= 0) weight = 10;
-      return { ...s, weight };
+      let unit = s.unit;
+      if (!unit || unit.trim() === '') {
+        unit = extractSkuUnit(productName, s.skuSpec);
+      }
+      return { ...s, weight, unit };
     });
   }
 

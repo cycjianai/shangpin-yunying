@@ -284,6 +284,40 @@ const updatePayload = {
   建立严格的品类物理边界判定 `isClothingCategory(title, catPath)`：
   只有当品类或标题明确包含服装家纺（`服装|内衣|睡衣|外套|卫衣|裤|袜|T恤|裙|泳衣|保暖衣|文胸|毛衣|大衣|风衣|服饰|家纺|床单|被套|毛巾`）时，才允许注入棉/聚酯纤维；其他非服饰复合属性必须严格路由至专用结构体（麦汁浓度 `501 °P`、酒精度 `500 %vol`、容量 `300 mL`、线长 `702 m`）。
 
+### ⚠️ 避坑 10：商品级销售单位（SKU Unit）与类目属性单位双轨并存铁律
+- **现象**：
+  部分质检反馈“海飞丝 5ml/袋 仍缺单位”或“开学收纳袋 缺少单位 只/个”，但开发者只关注了美团或闪购的类目扩展属性。
+- **底层根因**：
+  在 mini橙系统中，“单位”存在**双层语义与双轨存储**：
+  1. **商品层/SKU级销售单位（`skuList[i].unit`）**：
+     商品基础信息表格中的“销售单位”列。在历史商品初始数据中，高达 4,687 个商品的 `unit` 字段完全为空字符串 `""`！当人工在界面查看或审核商品主信息时，该字段会直接显示为空白！
+  2. **平台类目扩展属性单位**：
+     - 美团：Type 10 结构体模板 `struct_attr_template` 中的 sequence 2 下拉选项（如 `数量` 绑定 `只`、`净含量` 绑定 `mL`）；
+     - 淘宝闪购：`eleCatPropertyList` 中的 `propertyValues.valueData` 必须包含单位后缀（如 `5ml`、`1只`），不能存纯数字 `5` 或 `1`。
+- **避坑解法**：
+  在 `updateProductDetail` 组装 payload 时，全面实施**双轨全自动推导与无死角绑定**：
+  ```javascript
+  // 1. 商品级 SKU 单位萃取并注入
+  function extractSkuUnit(title, spec = '') {
+    const combined = `${title} ${spec}`;
+    const slashMatch = combined.match(/\/([只个瓶袋盒罐包套支条双听桶份箱件])/);
+    if (slashMatch) return slashMatch[1];
+    const countUnitMatch = combined.match(/\d+\s*([只个瓶袋盒罐包套支条双听桶份箱件])/);
+    if (countUnitMatch) return countUnitMatch[1];
+    for (const u of ['袋','瓶','盒','罐','包','只','套','支','条','双','桶','箱']) {
+      if (combined.includes(u)) return u;
+    }
+    return '份';
+  }
+
+  // 2. 装配 skuList 时自动填补
+  updatePayload.skuList = updatePayload.skuList.map(s => ({
+    ...s,
+    weight: (parseFloat(s.weight) > 0) ? parseFloat(s.weight) : 10,
+    unit: (!s.unit || s.unit.trim() === '') ? extractSkuUnit(productName, s.skuSpec) : s.unit
+  }));
+  ```
+
 ---
 
 ## 五、如何达到最快速度处理填写任务（High-Throughput Optimization）

@@ -175,11 +175,13 @@ python3 scripts/route_skill.py \
   * **【全平台并发启动铁律：启动即满速（美团直连 + 牵牛花通用最高基准）】**：
     凡大批量商品治理与修改任务（>10 件），**严禁使用单线程串行、单步慢跑或多余的冷启动降级试探！必须从第一秒起直接启用最高工程基准：4 个浏览器常驻标签页 + 12 并发 Workers（4 Tabs × 3 并发异步流水线）满速推进**：
     1. **牵牛花（QNH）**：4 Tabs 作为分布式 `window.H5guard.sign` 防伪签名收银台，消除 V8 单线程签名锁竞争，吞吐达 250~300 SPU/分钟，保存必须携带 `coverToStore: 1` 全店覆盖；
-    2. **美团直连（Meituan 无法售卖/商品信息优化）**：4 Tabs 作为分布式原生 Webpack 内存执行池（常驻预热 `/reuse/sc/product/page/detail/audit`），12 并发 Workers 轮询分发 SPU，直接调用原生 `DETAIL_MODULE: 42467`（`vP`）、`FORM_MODULE: 86925`（`$P`/`sI`/`$W`），严禁逐商品 `tab.goto`，严禁单线程低速循环，单 SPU 纯内存处理 < 800ms，整体吞吐稳定达 150~200 SPU/分钟，200+ 无法售卖商品 1~2 分钟内全部秒级提审清零！
-    3. **翱象直连（Aoxiang 批量修改与多规格治理）**：复用常驻 CDP 会话提取登录态 Cookie，通过 `scripts/aoxiang_high_concurrency_product_engine.mjs` 原生高并发流水线，**启动即拉满 12 ~ 14 路并发（无需多 Tab 签名锁）**，吞吐稳定达 400 ~ 600 SPU/分钟！修改前强制抓取 `relation/detail` 组装完整 `skus` 数组，彻底规避子规格覆盖降级；若发生多规格降级为单规格，必须从商户总库主档（`@@` 母 SPU）反查全量兄弟规格，并通过 `batchDistributeGoods` 下发补齐（**严禁漏传 `checkBarcodeStoreUnique: 0`**，规避条码重复拦截），秒级恢复门店全规格在售；自动修正 0 重量及 `@` 编码兼容，每 50 笔自动增量落盘防丢失。
-    4. **【翱象商品信息优化与资质图治理标准闭环（Aoxiang Optimization & Qualification Pipeline）】**：
-       在翱象处理未铺品与渠道不可售治理时，严禁依赖前端 UI 逐个点击，必须遵循底层极速闭环规程：
-       - **主档更新极速通道**：通过 `POST /goods/master/update`（而非 `saveGoods` 避免表单跨域或表单校验报错），且必须强制剥离 `storeGoodsCustomFields/storeGoodsCustomFieldsJson`，并对主档与所有子 SKU 彻底执行 `delete sku.stockNum; delete sku.prepareStockNum;` 严防库存被硬编码篡改；
+    2. **美团直连（Meituan 无法售卖/商品信息优化）**：4 Tabs 作为分布式 Webpack 内存执行池。**【致命毒点防护：严禁硬编码】**：严禁死锁硬编码 Webpack Chunk ID（如 `42467`, `86925`），因每次发版必变且主页不加载！必须通过 Playwright 动态导航至 `/reuse/sc/product/...` 页面，拦截并遍历 `window.webpackJsonp`，通过 `.toString().includes('api.sI')` 等特征码**动态寻址**注入原生 `vP` 和 `$P` 模块！通过 12 并发 Workers 轮询分发 SPU，严禁单线程低速循环，单 SPU 纯内存处理 < 800ms，200+ 无法售卖商品 1~2 分钟内全部秒级提审清零！
+    3. **翱象直连（Aoxiang 批量修改与多规格治理）**：复用常驻 CDP 会话（自动兼容 9222/9223 端口）提取登录态 Cookie，采用纯 Node.js REST 直连流水线（带标准 Origin/Referer/User-Agent），**启动即拉满 12 ~ 14 路并发（无需多 Tab 签名锁，不卡顿浏览器 UI）**，吞吐稳定达 400 ~ 600 SPU/分钟！修改前强制抓取 `relation/detail` 组装完整 `skus` 数组，彻底规避子规格覆盖降级；若发生多规格降级为单规格，必须从商户总库主档（`@@` 母 SPU）反查全量兄弟规格，并通过 `batchDistributeGoods` 下发补齐（**严禁漏传 `checkBarcodeStoreUnique: 0`**，规避条码重复拦截），秒级恢复门店全规格在售；自动修正 0 重量及 `@` 编码兼容，每 50 笔自动刷新 Cookie 并追加增量 Checkpoint（JSONL）防丢失。
+    4. **【翱象商品信息优化、主图套框与资质图治理标准闭环（Aoxiang Optimization & Qualification Pipeline）】**：
+       在翱象处理未铺品、营销套框与渠道不可售治理时，严禁依赖前端 UI 逐个点击，必须遵循底层极速闭环规程：
+       - **主档更新极速通道**：通过 `POST /goods/master/update`（而非 `saveGoods` 避免表单跨域或表单校验报错），且必须强制从顶层以及每一个子 SKU 中彻底剥离 `storeGoodsCustomFields/storeGoodsCustomFieldsJson` 与 `stockNum/prepareStockNum`，严防表单字段校验拦截与库存被硬编码篡改；
+       - **主图批量套框与图床上传**：通过 `POST /media/image`（multipart/form-data 传 Blob）获取全新阿里图床地址；营销边框提取严禁全局粗暴抠图，必须通过物理几何边界对顶部文字/挂旗实施 100% 绝对保护；换新时执行**轮播图无损承接策略**：`newSubPic = [oldMainPic, ...oldSubPic.filter(u => u !== oldMainPic && u !== newUrl)].slice(0, 9)`，原图自动转为第一副图；
+       - **全量目录高速检索**：`POST /goods/master/page` 强制使用 `pageSize=100`，千级商品仅需数十次网络请求，秒级加载整店目录；
        - **渠道批量发布/重提审**：通过 `POST /goods/task/batchPublishV3`（带 `channelCodeList: ['ELE']`、`updateSkuList`、`mergeMultiSpec: true`）秒级批量提审；
        - **资质图挂载槽位标准**：
          ① 食品/饮料：白底包含【配料表】与五项【营养成分表】标准方格矩阵图，挂载至 `specialPictures` slots `[2, 6]`，并必填属性 `售卖方式: 预包装`（`propertyId: 589735080`, `propertyValueId: 16418910`）；
@@ -189,14 +191,14 @@ python3 scripts/route_skill.py \
        - **安全审计铁律**：每次批处理后运行全量审计，必须确保价格变动严格为 0、多规格组完整度 100%、库存字段零污染。
     5. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
     6. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
-       在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口 `page-query?pageSize=100` 原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须通过 4 Tabs 分布式流式分页（每批 4 页 400 SPU 并行拉取），**纯内存扫描过滤**（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！
+       在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口（如 `/api/v1/tenant/product/page-query?pageSize=100`，需携带 header `x-csrf-token`）原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须配合 `window.H5guard.sign` 防伪签名池（4 Tabs 空闲轮询分发，突破单线程锁），纯内存扫描过滤（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！
     7. **【mini橙渠道属性全量治理与无损快照闭环（MiniCheng Attribute Governance Engine）】**：
        详细实战操作指南与深度避坑条目参见 [mini橙平台实战防坑指南与规程](references/platforms/minicheng-playbook-and-pitfalls.md) 与 [mini橙平台适配器](references/platforms/minicheng.md)。
        复用已有登录态 Bearer token，通过 `scripts/platforms/minicheng/minicheng_engine.mjs` 启动高并发无损治理。修改前强制全量快照落盘（`artifacts/snapshots/minicheng_${storeCode}/`），自动调用官方 `recommendCat` 与 `aiRecommendCatAttr` 进行渠道属性拉满，精准字典对齐（产地、品牌、规格、净含量、保质期），严格执行规则 35 赠品礼盒全量否定契约，严格隔离资质图，通过 `/store/product/updateProductDetail` 秒级提交并增量落盘 ledger，支持 `restore_product_snapshot.mjs` 100% 随时无损回滚。
        - **识别与填充链路**：通过 `recommendCat` 获取官方推荐叶子类目，调 `queryMtCatAttrList`/`queryStoreEleCatAttrList` 拉取美团与闪购属性骨架，优先采纳 `aiRecommendCatAttr` 官方推荐值；剩余空白属性按标题正则、品类字典、安全枚举深度兜底，做到 100% 满属性零留白。
        - **Vue前端双轨Schema绑定铁律（Frontend Binding Contract）**：
          - **美团属性（mtCatAttr）**：后台类目元数据返回的 `attrValueType` 为字符串类型（如 `"1"`），必须进行数值强制转换 `Number(attr.attrValueType)`。单选/多选类目属性必须精准匹配候选选项中的 `valueId`（如品牌通用 `2436552`、产地中国 `100000050`），若 `valueId` 为空或不匹配，前端 Vue 组件的 `detailShowAttr()` 将无法绑定 `attrForm` 导致页面上渲染为空白框。
-         - **淘宝闪购属性（eleCatAttr vs eleCatPropertyList）**：后端同时要求两个结构，保存时 `eleCatPropertyList` 保存为标准对象数组，而 `eleCatAttr` 必须序列化为包含 `{ propId: Number, propText: String, valueId: Number, valueText: String }` 的数组字符串。前端 Vue 的 `detailShowEle()` 强依赖 `propId` 进行 `eleForm` 赋值；若序列化时缺失 `propId`，前端将无法识别属性键导致界面视觉上所有淘宝闪购属性全部呈现空白。
+         - **淘宝闪购属性（eleCatAttr vs eleCatPropertyList）**：后端同时要求两个结构，保存时 `eleCatPropertyList` 保存为标准对象数组，而 `eleCatAttr` 必须序列化为包含 `{ propId: Number, propText: String, valueId: Number, valueText: String }` 的数组字符串。前端 Vue 的 `detailShowEle()` 强依赖 `propId` 进行 `eleForm` 赋值；**【致命毒点防护】**若由于脏数据导致 `valueText` 缺失，执行序列化时极易变成 null 进而导致前端解析白屏。必须强制降级序列化：`valueText: String(val || '')`，确保界面视觉不崩溃。
        - **关键避坑与鲁棒性防护**：
          - **Windows 并发写入与文件锁守护**：在 Windows 环境下导出运营台账时，用户常直接在 Excel 中打开 CSV 导致文件被独占锁定（EBUSY 错误）。引擎必须进行锁异常捕获，在主文件被占用时自动降级写入 `minicheng_operation_table_latest.csv`，确保批量治理流水线永不中断。
          - **重量非正数拦截兜底**：后台强制校验 `weight > 0`，对化妆品、笔、配件等历史无重量商品统一标准化为 `>= 10g`，严防网关 500 阻断。
@@ -302,6 +304,34 @@ Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 
 #### 方案 D：优先复用用户日常 Chrome 标签页（`chrome_extension_current_tab`）
 最高优先级：通过 Chrome 扩展程序直接挂载用户已在正常 Chrome 打开并登录的标签页（取得 scoped CDP），不拉起任何新浏览器进程，天然具备 100% 真实用户指纹，彻底免除登录受限。
+
+
+## Chrome 插件开发与 SaaS 逆向注入核心经验 (Chrome Extension RPA)
+
+开发针对美团、牵牛花等复杂 SaaS 的增强插件时，必须严格遵守以下 5 大实战避坑与架构原则。凡涉及 DOM 劫持与接口逆向，**强制应用此规范**：
+
+1. **WAF 拦截与 Content Script 跨域逃逸 (403 Forbidden 陷阱)**
+   - **红线坑位**：绝对不要在插件的 Content Script（隔离环境）中直接 `fetch` 核心业务接口（如牵牛花的 `/querystock`）。这会带上 `Origin: chrome-extension://...` 请求头，立刻触发防火墙 403 拦截并暴露插件特征。
+   - **架构解法**：必须通过 `manifest.json` 将底层探测脚本（如 `qnhDetailCaptureBootstrap.js`）注入到 `world: "MAIN"`（页面原生上下文）。所有敏感的网络请求（以及高权限属性读取）必须在 MAIN 脚本中发起，并通过 `CustomEvent('yd:request', payload)` 与 Content Script 建立双向异步通信桥梁，彻底伪装成页面原生行为。
+
+2. **React Fiber 深度状态窃取法 (无损穿透 UI 层)**
+   - **红线坑位**：Ant Design 等复杂页面 DOM 结构多变且只渲染视图文本，纯靠正则匹配或 `innerText` 抓取 SKU 极易发生截断或漏取。
+   - **架构解法**：绕过 DOM，直取数据模型。寻找表格 `<tr>` 节点上挂载的 `__reactFiber$...` 或 `__reactInternalInstance$...`。顺着 `return` 链向上回溯 10~20 层，截获 `pendingProps.record`。
+   - **多渠道兼容**：提取关键标识时必须全面防御不同渠道的数据嵌套格式（如：`skuId || goodsSkuId || targetStoreSku.skuId || storeSkuList[0].skuId`）。
+
+3. **复杂业务模型的隐性降级（共享仓 vs 普通门店）**
+   - **红线坑位**：想当然地滥用页面 URL 中的门店 ID（POI ID）来请求。在共享仓场景下，主店的 POI ID 根本没有真实库存与库位，直接提交会导致接口返回空数组或静默无效。
+   - **架构解法**：从 Fiber 数据中优先探测 `shareableWarehouseId` 或 `warehouseId`。一旦命中仓库 ID，接口组装时的 `repositoryType` 必须动态切换（如门店常为 `3`，仓库则为 `1`），并针对查询策略做全排列适配。
+
+4. **SPA 动态渲染无缝注入与防重屏障 (React 重绘对抗)**
+   - **红线坑位**：SPA 切换路由或翻页时，DOM 被销毁重建。盲目使用全局定时器 `setInterval` 无条件 `appendChild` 会造成元素无限叠加或事件监听丢失。
+   - **架构解法**：基于 `dataset.ydInjected = "1"` 的自毁式防重机制。注入自定义 UI 时给父容器打上标识。一旦 React 重绘销毁了旧 DOM，标识自然丢失，定时扫描器发现缺少标识再触发下一次独立挂载。
+
+5. **CDP 实时黑科技调试流 (Playwright 伴随诊断)**
+   - **红线坑位**：在控制台手动改代码需要不断刷新页面，不但破坏业务执行连贯性，更无法隔离插件环境和主环境的跨域限制。
+   - **架构解法**：本地开发遇到死局时，直接利用 Playwright 连接当前存活浏览器的 `9222` CDP 端口。
+     - **无损嗅探**：通过 `page.evaluate()` 向原生 MAIN 环境投递高亮探针（红色/蓝色边框），瞬间验证数据读取的可行性。
+     - **极速热更新**：直接通过 CDP 打开 `chrome://extensions/` 操控扩展刷新按钮，随后驱动目标页面热重载，全程无需手动介入。
 
 ## 表格交付
 

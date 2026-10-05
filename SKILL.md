@@ -306,9 +306,9 @@ Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 最高优先级：通过 Chrome 扩展程序直接挂载用户已在正常 Chrome 打开并登录的标签页（取得 scoped CDP），不拉起任何新浏览器进程，天然具备 100% 真实用户指纹，彻底免除登录受限。
 
 
-## Chrome 插件开发与 SaaS 逆向注入核心经验 (Chrome Extension RPA)
+## Chrome 插件开发与 牵牛花/美团 SaaS 逆向注入核心经验 (Chrome Extension RPA)
 
-开发针对美团、牵牛花等复杂 SaaS 的增强插件时，必须严格遵守以下 5 大实战避坑与架构原则。凡涉及 DOM 劫持与接口逆向，**强制应用此规范**：
+开发针对【牵牛花】（Qianniuhua）、【美团】、【饿了么】等复杂 SaaS 的扩展插件时，必须严格遵守以下 5 大实战避坑与架构原则。凡涉及 DOM 劫持与接口逆向，**强制应用此规范**：
 
 1. **WAF 拦截与 Content Script 跨域逃逸 (403 Forbidden 陷阱)**
    - **红线坑位**：绝对不要在插件的 Content Script（隔离环境）中直接 `fetch` 核心业务接口（如牵牛花的 `/querystock`）。这会带上 `Origin: chrome-extension://...` 请求头，立刻触发防火墙 403 拦截并暴露插件特征。

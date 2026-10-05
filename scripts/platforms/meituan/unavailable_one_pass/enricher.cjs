@@ -14,6 +14,62 @@ function cleanSensitiveWords(text) {
   return s;
 }
 
+function isGiftOrGiveawayAttribute(attrName) {
+  const n = String(attrName || '').trim();
+  return /赠|送|附赠|配赠|开瓶器|杯子|吸管|餐具|封口夹|礼袋|礼盒|赠品|礼赠|提供礼品包装|提供礼赠包装/i.test(n);
+}
+
+function isGiftAffirmativeValue(val) {
+  if (!val) return false;
+  const s = String(val).trim();
+  if (/^(?:是|有|赠送|赠开瓶器|赠一次性纸杯|赠封口夹|赠礼袋|带吸管|带餐具|带杯套|礼盒包装|礼盒装|定制礼盒装|礼盒|礼袋装)$/i.test(s)) return true;
+  if (/(?:赠|送|带|配|礼袋|礼盒)/.test(s) && !/(?:不|无|非|普通|常规|环保|免)/.test(s)) return true;
+  return false;
+}
+
+function resolveNegativeGiftOption(options, attrName) {
+  if (!options || !options.length) return null;
+  const getName = o => String(o?.name || o?.label || o?.value || '').trim();
+
+  if (/开瓶器/i.test(attrName)) {
+    const opt = options.find(o => /不赠送|不赠|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/杯子|杯/i.test(attrName)) {
+    const opt = options.find(o => /不赠杯子|不赠送|不赠|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/吸管/i.test(attrName)) {
+    const opt = options.find(o => /无吸管|不赠送|不带|不送|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/餐具/i.test(attrName)) {
+    const opt = options.find(o => /无餐具|不配|不赠送|不送|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/礼袋|原厂礼袋/i.test(attrName)) {
+    const opt = options.find(o => /无礼袋|不赠送|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/包装方式|包装形式/i.test(attrName)) {
+    const opt = options.find(o => !/礼盒|礼袋|定制/i.test(getName(o)) && /普通包装|普通装|普通|袋装|瓶装|盒装|罐装|散装/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/礼盒装|是否礼盒/i.test(attrName)) {
+    const opt = options.find(o => /非礼盒装|非礼盒|否|无/i.test(getName(o)));
+    if (opt) return opt;
+  }
+  if (/提供礼赠包装|提供礼品包装|礼品包装/i.test(attrName)) {
+    const opt = options.find(o => /普通包装|普通装|无礼袋包装|环保包装|无|否/i.test(getName(o)));
+    if (opt) return opt;
+  }
+
+  const negOpt = options.find(o => /不赠送|不赠|无赠品|无|普通包装|普通|非礼盒|常规|否|不送|不提供|不配/i.test(getName(o)));
+  if (negOpt) return negOpt;
+
+  return null;
+}
+
 function enrichProductInfo(p) {
   let name = p.name || '';
   name = cleanSensitiveWords(name);
@@ -344,10 +400,13 @@ function enrichProductInfo(p) {
       }
     }
 
-    // 铁律：否定赠品
-    if (attrName.includes('赠') || attrName.includes('附带')) {
+    // 规则 35 铁律：严格否定赠品与礼品包装（凡涉及赠品/开瓶器/吸管/餐具/杯子/礼袋/礼盒/封口夹等属性，坚决选定否定项；若无否定项则保持留白）
+    const isGiftAttr = isGiftOrGiveawayAttribute(attrName);
+    const hasAffirmative = (a.options || []).some(o => o.selected && isGiftAffirmativeValue(o.name || o.label || o.value));
+    if (isGiftAttr || hasAffirmative) {
+      const negOpt = resolveNegativeGiftOption(a.options || [], attrName);
       for (const opt of (a.options || [])) {
-        if (['否', '无', '不赠送', '无赠品', '无餐具', '无吸管', '普通包装'].includes(opt.name || opt.label)) {
+        if (negOpt && opt === negOpt) {
           opt.selected = true;
         } else {
           opt.selected = false;

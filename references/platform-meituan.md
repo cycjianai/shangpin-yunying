@@ -74,6 +74,9 @@ QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 
    或任务标签页内取得 scoped CDP，不启动新浏览器、不重复弹远程调试授权。
 2. `managed_cdp`：仅当插件不可用时使用。端点必须是本机 loopback、浏览器处于任务专用/空闲状态，并完成门店、
    域名、登录态和目标集合身份校验；禁止把未知 9222/9272 端口当成用户当前浏览器。
+   - **反风控启动规范**：启动美团测试浏览器必须调用 `bash scripts/start_test_browser.sh --url "https://waimaie.meituan.com/" --cdp-port 9222`；
+   - **红线**：严禁携带 `--enable-automation`；必须携带 `--disable-blink-features=AutomationControlled` 与独立 `--user-data-dir`；
+   - 若由外部自动化工具已拉起，必须在页面加载前通过 CDP `Page.addScriptToEvaluateOnNewDocument` 注入 `delete Object.getPrototypeOf(navigator).webdriver; Object.defineProperty(navigator, 'webdriver', { get: () => undefined });` 并刷新页面，否则美团 Yoda 安全风控将直接返回 `{"status":0,"data":null,"error":{"code":121056,"message":"请求异常,拒绝操作"}}` 阻断验证码与登录。
 3. 两者都不可用时失败关闭；UI 视觉控制只用于登录、验证码或没有正式接口的人工确认，不作为批量 reader/writer。
 
 页面识别不能只看顶层标题。美团商品管家通常是顶层商家页 + `hashframe`，审核编辑又会打开 `iframe-modal`。

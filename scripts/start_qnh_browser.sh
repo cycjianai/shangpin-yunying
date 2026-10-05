@@ -22,9 +22,11 @@ novnc_port="6092"
 profile_dir=""
 log_dir=""
 chrome_bin=""
+target_url="https://qnh.meituan.com/"
 
 while (($#)); do
   case "$1" in
+    --url) target_url="${2:?missing --url value}"; shift 2 ;;
     --display) display_number="${2:?missing --display value}"; shift 2 ;;
     --cdp-port) cdp_port="${2:?missing --cdp-port value}"; shift 2 ;;
     --vnc-port) vnc_port="${2:?missing --vnc-port value}"; shift 2 ;;
@@ -104,12 +106,13 @@ if [[ "$host_os" == "Darwin" ]]; then
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port="$cdp_port" \
     --remote-allow-origins='*' \
+    --disable-blink-features=AutomationControlled \
     --disable-extensions \
     --no-first-run \
     --no-default-browser-check \
     --window-size=1600,1000 \
     --start-maximized \
-    https://qnh.meituan.com/ >>"$log_dir/chrome.log" 2>&1 &
+    "$target_url" >>"$log_dir/chrome.log" 2>&1 &
   pids+=("$!")
 
   ready=0
@@ -147,6 +150,7 @@ env DISPLAY=":${display_number}" "$chrome_bin" \
   --user-data-dir="$profile_dir" \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port="$cdp_port" \
+  --disable-blink-features=AutomationControlled \
   --disable-extensions \
   --no-first-run \
   --no-default-browser-check \
@@ -160,7 +164,7 @@ env DISPLAY=":${display_number}" "$chrome_bin" \
   --use-gl=swiftshader \
   --window-size=1600,1000 \
   --start-maximized \
-  https://qnh.meituan.com/ >>"$log_dir/chrome.log" 2>&1 &
+  "$target_url" >>"$log_dir/chrome.log" 2>&1 &
 pids+=("$!")
 
 ready=0

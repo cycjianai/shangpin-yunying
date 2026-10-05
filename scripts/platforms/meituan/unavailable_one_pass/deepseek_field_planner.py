@@ -19,7 +19,8 @@ SYSTEM = """你是美团闪购商品审核修复规划器。只根据给出的�
 3. 名称修复必须保留原商品身份，只能补入输入中已有的品牌/品名/规格/重量或移除明确冲突片段。
 4. 属性值必须逐字来自该属性 options；没有明确证据不得猜。
 5. 不规划商品类目修改，不规划资质、备案、证书或图片内容。
-6. plan 中没有动作时返回空对象。"""
+6. 规则35（零赠送铁律）：凡属性涉及赠品/开瓶器/吸管/餐具/杯子/礼袋/礼盒/封口夹/提供礼品包装等，绝对严禁选择'是/赠送/有赠品/赠开瓶器/赠礼袋'等肯定赠送项，必须强制选择明确否定项（'否/不赠送/无/普通包装'等）；若候选项全部为赠送含义，则绝对不规划该属性。
+7. plan 中没有动作时返回空对象。"""
 
 
 def call_deepseek(items: list[dict]) -> dict:
@@ -63,7 +64,16 @@ def validate(item: dict, source: dict) -> tuple[dict, list[str]]:
         name = str(attr.get("attr_name") or "").strip()
         values = [str(value) for value in attr.get("values") or []]
         if name in source_attrs and values and all(value in source_attrs[name] for value in values):
-            attrs.append({"attr_name": name, "values": values})
+            is_gift_attr = bool(re.search(r"赠|送|附赠|配赠|开瓶器|杯子|吸管|餐具|封口夹|礼袋|礼盒|赠品|礼赠|提供礼品包装|提供礼赠包装", name, re.IGNORECASE))
+            has_affirmative = any(
+                re.search(r"^(?:是|有|赠送|赠开瓶器|赠一次性纸杯|赠封口夹|赠礼袋|带吸管|带餐具|带杯套|礼盒包装|礼盒装|定制礼盒装|礼盒|礼袋装)$", v) or
+                (re.search(r"赠|送|带|配|礼袋|礼盒", v) and not re.search(r"不|无|非|普通|常规|环保|免", v))
+                for v in values
+            )
+            if is_gift_attr and has_affirmative:
+                blocked.append(f"违反规则35零赠送铁律:{name}={values}")
+            else:
+                attrs.append({"attr_name": name, "values": values})
         else:
             blocked.append(f"属性候选不精确:{name}")
     if attrs:

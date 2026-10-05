@@ -100,6 +100,56 @@ function buildSaveExpression({
 }) {
   return `(async(arg)=>{
     function label(x){return String(x?.name??x?.label??x?.value??x?.attrValue??'').trim()}
+    function isGiftOrGiveawayAttribute(attrName) {
+      const n = String(attrName || '').trim();
+      return /赠|送|附赠|配赠|开瓶器|杯子|吸管|餐具|封口夹|礼袋|礼盒|赠品|礼赠|提供礼品包装|提供礼赠包装/i.test(n);
+    }
+    function isGiftAffirmativeValue(val) {
+      if (!val) return false;
+      const s = String(val).trim();
+      if (/^(?:是|有|赠送|赠开瓶器|赠一次性纸杯|赠封口夹|赠礼袋|带吸管|带餐具|带杯套|礼盒包装|礼盒装|定制礼盒装|礼盒|礼袋装)$/i.test(s)) return true;
+      if (/(?:赠|送|带|配|礼袋|礼盒)/.test(s) && !/(?:不|无|非|普通|常规|环保|免)/.test(s)) return true;
+      return false;
+    }
+    function resolveNegativeGiftOption(options, attrName) {
+      if (!options || !options.length) return null;
+      const getName = o => label(o);
+      if (/开瓶器/i.test(attrName)) {
+        const opt = options.find(o => /不赠送|不赠|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/杯子|杯/i.test(attrName)) {
+        const opt = options.find(o => /不赠杯子|不赠送|不赠|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/吸管/i.test(attrName)) {
+        const opt = options.find(o => /无吸管|不赠送|不带|不送|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/餐具/i.test(attrName)) {
+        const opt = options.find(o => /无餐具|不配|不赠送|不送|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/礼袋|原厂礼袋/i.test(attrName)) {
+        const opt = options.find(o => /无礼袋|不赠送|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/包装方式|包装形式/i.test(attrName)) {
+        const opt = options.find(o => !/礼盒|礼袋|定制/i.test(getName(o)) && /普通包装|普通装|普通|袋装|瓶装|盒装|罐装|散装/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/礼盒装|是否礼盒/i.test(attrName)) {
+        const opt = options.find(o => /非礼盒装|非礼盒|否|无/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      if (/提供礼赠包装|提供礼品包装|礼品包装/i.test(attrName)) {
+        const opt = options.find(o => /普通包装|普通装|无礼袋包装|环保包装|无|否/i.test(getName(o)));
+        if (opt) return opt;
+      }
+      const negOpt = options.find(o => /不赠送|不赠|无赠品|无|普通包装|普通|非礼盒|常规|否|不送|不提供|不配/i.test(getName(o)));
+      if (negOpt) return negOpt;
+      return null;
+    }
     let r;
     window.webpackChunkpackage_detail.push([[Math.random()],{},x=>{r=x}]);
     const api = r(${DETAIL_MODULE}), form = r(${FORM_MODULE});
@@ -234,19 +284,41 @@ function buildSaveExpression({
           valueExtend: null
         }];
         changes.push({ field: name, type: 'text_attr', value: valStr });
-      } else if((isReq || (name.includes('赠') || name.includes('送'))) && !hasSelected && (a.options || []).length > 0) {
-        // 枚举单选类属性 (规则35: 凡涉及赠送/赠品，绝对禁止选“是/赠送”，强制选“否/不赠送/无/无赠品”)
-        let preferred = ['通用', '其他', '其它', '常规', '标准', '否', '无', '均码', '适用'];
-        if (name.includes('赠') || name.includes('送')) {
-          preferred = ['否', '不赠送', '无', '无赠品', '不送', '其他', '其它'];
+      }
+
+      // 规则 35 铁律：涉及赠送/赠品/附赠/开瓶器/吸管/餐具/杯子/礼袋/礼盒/封口夹等属性，坚决选定否定项；
+      // 若当前已选或初态为赠送项，必须强制覆写取消；若无否定项则保持留白，严禁选“是/赠送/赠开瓶器/赠礼袋”
+      const isGiftAttr = isGiftOrGiveawayAttribute(name);
+      const hasAffirmativeSelected = (a.options || []).some(opt => opt.selected && isGiftAffirmativeValue(label(opt)));
+      if (isGiftAttr || hasAffirmativeSelected) {
+        const negOpt = resolveNegativeGiftOption(a.options || [], name);
+        if (negOpt) {
+          let wasDifferent = !negOpt.selected;
+          (a.options || []).forEach(opt => { opt.selected = (opt === negOpt); });
+          if (wasDifferent) {
+            changes.push({ field: name, type: 'attribute_negated', value: label(negOpt) });
+          }
+        } else {
+          // 候选全为肯定赠送（如只有“赠礼袋”、“礼盒包装”）时，坚决不选任何项，强制保持留白
+          let hadSelected = (a.options || []).some(opt => opt.selected);
+          (a.options || []).forEach(opt => { opt.selected = false; });
+          if (hadSelected) {
+            changes.push({ field: name, type: 'attribute_cleared_blank', value: '留白' });
+          }
         }
+      } else if (isReq && !hasSelected && (a.options || []).length > 0) {
+        // 普通必填单选类属性，优先通用选项
+        const preferred = ['通用', '其他', '其它', '常规', '标准', '否', '无', '均码', '适用'];
         let matched = null;
-        for(const pref of preferred) {
-          matched = a.options.find(opt => label(opt).includes(pref));
-          if(matched) break;
+        for (const pref of preferred) {
+          matched = a.options.find(opt => label(opt).includes(pref) && !isGiftAffirmativeValue(label(opt)));
+          if (matched) break;
         }
-        if(!matched && a.options.length > 0) matched = a.options[0];
-        if(matched) {
+        // 如果依然没有匹配，且 options[0] 不是肯定赠送项，才选 options[0]
+        if (!matched && a.options.length > 0 && !isGiftAffirmativeValue(label(a.options[0]))) {
+          matched = a.options[0];
+        }
+        if (matched) {
           matched.selected = true;
           changes.push({ field: a.attrName || a.name, type: 'attribute', value: label(matched) });
         }

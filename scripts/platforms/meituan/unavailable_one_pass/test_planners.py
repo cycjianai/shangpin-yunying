@@ -28,6 +28,18 @@ bad, blocked = validate(
 assert not bad
 assert blocked
 
+# 规则35 测试：赠送属性选择肯定项必须被阻断
+source_gift = {
+    "sku_list": [{"spec_name": "500ml"}],
+    "attrs": [{"attr_name": "开瓶器", "options": ["赠开瓶器", "不赠开瓶器"]}],
+}
+plan_gift, blocked_gift = validate(
+    {"confidence": "high", "plan": {"attributes": [{"attr_name": "开瓶器", "values": ["赠开瓶器"]}]}},
+    source_gift,
+)
+assert not plan_gift.get("attributes")
+assert any("违反规则35零赠送铁律" in b for b in blocked_gift)
+
 jobs = infer_jobs({"issues": [{"field_name": "商品图片", "comment": "商品缺少配料&营养成分图"}]})
 assert jobs[0]["img_type"] == 5
 assert score(5, "配料 水 白砂糖 营养成分表 能量 蛋白质 脂肪", jobs[0]["requirement"])[0]

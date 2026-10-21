@@ -4,9 +4,11 @@ import path from 'node:path';
 process.env.QNH_PLAYWRIGHT_CORE_PATH = 'C:/Users/Administrator/multiplatform-product-operations/node_modules/playwright-core/index.mjs';
 import { loadChromium } from 'file:///C:/Users/Administrator/multiplatform-product-operations/scripts/qnh_playwright_loader.mjs';
 
-const UPLOAD_MODULE = 27177;
+const UPLOAD_MODULE = 36515;
+const LEGACY_UPLOAD_MODULE = 27177;
 const DETAIL_MODULE = 42467;
 const FORM_MODULE = 86925;
+const ATTR_COMPILE_MODULE = 13085;
 
 const APIMART_SUBMIT_URL = 'https://api.aishuch.com/v1/images/generations';
 const APIMART_POLL_URL = 'https://api.aishuch.com/v1/tasks/';
@@ -80,9 +82,15 @@ async function uploadImageToMeituan(page, imageUrl, fileName, wmPoiId) {
 
   const expression = `(async(arg)=>{
     let r;
-    window.webpackChunkpackage_detail.push([[Math.random()],{},x=>{r=x}]);
-    if(!r?.m?.[${UPLOAD_MODULE}]) throw new Error('upload_module_missing');
-    const res = await r(${UPLOAD_MODULE}).lU(arg.dataUrl, arg.fileName, [arg.wmPoiId], false);
+    window.webpackChunkpackage_detail.push([[Math.floor(Math.random()*1e9)],{},x=>{r=x}]);
+    let res;
+    if(r?.m?.[${UPLOAD_MODULE}] && typeof r(${UPLOAD_MODULE})?.jt === 'function') {
+      res = await r(${UPLOAD_MODULE}).jt(arg.dataUrl, arg.fileName, String(arg.wmPoiId), false);
+    } else if(r?.m?.[${LEGACY_UPLOAD_MODULE}] && typeof r(${LEGACY_UPLOAD_MODULE})?.lU === 'function') {
+      res = await r(${LEGACY_UPLOAD_MODULE}).lU(arg.dataUrl, arg.fileName, [arg.wmPoiId], false);
+    } else {
+      throw new Error('upload_module_missing');
+    }
     return { ok: true, url: String(res?.url || '') };
   })(${JSON.stringify({ dataUrl, fileName: fileName || 'qualification.png', wmPoiId })})`;
 
@@ -151,7 +159,7 @@ function buildSaveExpression({
       return null;
     }
     let r;
-    window.webpackChunkpackage_detail.push([[Math.random()],{},x=>{r=x}]);
+    window.webpackChunkpackage_detail.push([[Math.floor(Math.random()*1e9)],{},x=>{r=x}]);
     const api = r(${DETAIL_MODULE}), form = r(${FORM_MODULE});
     const o = window.originProductDetail || {};
     const poiId = Number(o.params?.poiId || 17099662);
@@ -162,7 +170,7 @@ function buildSaveExpression({
     const product = detail.productInfo || {};
     const changes = [];
 
-    // 1. 覆盖 3C 认证证书编号 (规则10: 2021180709028479)
+    // 1. 覆盖 3C 认证证书编号 (规则10: 需与类目匹配)
     const val3C = '2021180709028479';
     const optId3C = 'customized_attr_value_' + val3C;
     const allAttrs = [];
@@ -174,6 +182,7 @@ function buildSaveExpression({
       const k = id + ':' + name;
       if(name && !seen.has(k)) { seen.add(k); allAttrs.push(a); }
     }
+    Object.values(product.normalAttributesValueMap || {}).forEach(addAttr);
     Object.values(product.categoryAttrValueMap || {}).forEach(addAttr);
     (product.categoryAttrList || []).forEach(addAttr);
 
@@ -371,6 +380,11 @@ function buildSaveExpression({
     }
     product.cpvGuidePicList = JSON.stringify(Object.values(product.cpvGuidePicMap).filter(x => Array.isArray(x?.urlList) && x.urlList.length));
 
+    if (product.normalAttributesValueMap && r?.m?.[${ATTR_COMPILE_MODULE}]) {
+      const Z = r(${ATTR_COMPILE_MODULE});
+      if (typeof Z?._f === 'function') product.categoryAttrMap = Z._f(product.normalAttributesValueMap);
+    }
+
     const context = {
       needAudit: true,
       submitAudit: true,
@@ -380,7 +394,11 @@ function buildSaveExpression({
     };
 
     const body = form.$P({ poiId: String(poiId), product, context });
-    const validation = await api.sI({ poiId: String(poiId), product, context });
+    let validation = await api.sI({ poiId: String(poiId), product, context });
+    if (Number(validation?.isLegal) !== 1 && validation?.suggestCategoryId) {
+      context.ignoreSuggestCategory = true;
+      validation = await api.sI({ poiId: String(poiId), product, context });
+    }
     if (Number(validation?.isLegal) !== 1) {
       return { ok: false, status: 'validation_blocked_before_save', validation, changes };
     }
@@ -475,7 +493,7 @@ async function main() {
   const context = browser.contexts()[0];
 
   // Setup 3 worker tabs for distributed evaluate
-  const auditUrl = `https://shangoue.meituan.com/reuse/sc/product/page/detail/audit?spuId=27795786957&wmPoiId=${wmPoiId}`;
+  const auditUrl = `https://shangoue.meituan.com/reuse/sc/product/page/detail/audit?spuId=27795786957&wmPoiId=${wmPoiId}&from=single&oldVersion=true`;
   let pages = context.pages().filter(p => p.url().includes('reuse/sc/product/page/detail/audit'));
   while (pages.length < 3) {
     const p = await context.newPage();

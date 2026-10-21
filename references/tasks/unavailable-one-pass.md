@@ -7,7 +7,7 @@
 
 - 牵牛花：读取 [541 合同](../run-contract-541.md)、[错误路由](../error-playbook.md) 和
   [字段安全](../field-safety.md)；出现历史槽位/物化反例时才加读 `thread-928-empirical-contract.md`。
-- 美团：读取 [美团直连不可售模块](../platform-meituan.md)。它使用美团官方运行时和完整表单，不能借用 QNH writer；严格遵循 11 大实战治理规则（资质图原件接口联动、默认客服说明详情图、69 码防冲突动态生成、标题解析规格、属性通用选项优先、整单一单一次过提交、活动告警强制保存、复合输入型属性全量构造注入、条码冲突强制加盐重刷、3C证书编号统一覆盖、首轮全要素穿透）。
+- 美团：读取 [美团直连不可售模块](../platform-meituan.md)。它使用美团官方运行时和完整表单，不能借用 QNH writer；严格遵循 40 大实战治理规则（审核页 `&oldVersion=true` 路由锁定、视图模型 `normalAttributesValueMap` 四段编译、前端 Walle `g0` 实时质检、分品类权威 3C 三码合一、类目品牌库 `attrValueSug` 动态检索、`ie.A_` 锁定类目迁移与 `ignoreSuggestCategory` 软拦截豁免、`effectType=5` 无法售卖与 `effectType=2` 影响流量双队列联合扫描、非必填 `required: false` 点名属性靶向修复与“其他”选项纠偏、动态 `valueType: 10` 结构化组装、按需 69 码修复及 `req(36515).jt` 资质图上传）。
 - 翱象、饿了么、淘宝闪购直连：能力表为 `planned` 时零写入。
 
 用户说“完成 N 条”时，N 是最终 `verified_cleared` 配额，不是计划、提交、上传、保存或字段回读数。监管材料缺失进入

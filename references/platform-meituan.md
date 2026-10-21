@@ -81,8 +81,10 @@ QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 
 
 页面识别不能只看顶层标题。美团商品管家通常是顶层商家页 + `hashframe`，审核编辑又会打开 `iframe-modal`。
 必须同时验证：顶层域名、商品管家 frame 域名/路由、`wmPoiId`、可见门店以及页面官方模块。审核编辑正式内容为
-`/reuse/sc/product/page/detail/audit`；同会话初始化一个 worker 后，可用当前原生
-`originProductDetail.params.options` 对 cohort SPU 调用 `vP`，无需为每个商品新开标签页。
+`/reuse/sc/product/page/detail/audit?spuId=${spuId}&wmPoiId=${wmPoiId}&from=single&oldVersion=true`（**必须显式携带 `&oldVersion=true`！** 若缺少 `&oldVersion=true`，现网前端路由会自动重定向至 `/reuse/sc/product/views/product/detail-v2/editNew`，该新版页面不加载 `window.webpackChunkpackage_detail`，导致所有 Webpack 模块注入报错 `detail_chunk_missing`）。同会话初始化一个 worker 后，可用当前原生
+`ie.vP({ spuId, poiId }, { noDefaultWeightUnit: true })` 对 cohort SPU 调用详情读取，无需为每个商品新开标签页。
+
+每次通过 `window.webpackChunkpackage_detail.push([[Math.floor(Math.random() * 1e9)], {}, r => { req = r; }])` 获取 `req` 时，**必须使用随机整数 Chunk ID**（严禁重复使用固定数字如 `999999`，否则 Webpack 5 会因 chunk 已注册而静默跳过回调导致 `req` 为 `undefined`）。
 
 导航后必须等待 `DOMContentLoaded` 和静默窗口，再确认 lazy chunk 已注册后只初始化一次。过早 require 模块会把空导出
 写入 webpack cache；该 worker 必须回收重建，不能在同一被污染页面反复轮询。
@@ -90,25 +92,37 @@ QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 
 ### 3.1 身份与读取
 
 - 当前页面必须是美团商家域，冻结 `wmPoiId + spuId + tab_id + document_epoch + fence`。
-- 列表接口只冻结 cohort 和问题摘要；详情事实来自当前官方商品详情运行时。
+- 列表接口在顶层页面 `#hashframe`（`fw.webpackChunkmrn_product_pc`）中调用 `req(69282).fetchList({ effectType, needAudit, pageNum, pageSize, searchWord: '' })`，同时扫描 `effectType: 5`（无法售卖）与 `effectType: 2`（影响流量）；详情事实来自审核页官方商品详情运行时。
 - 读取在少量已登录页面上下文内有界并发，不为每个商品累计一个永久标签页。
 - 任一门店、SPU、页面身份冲突时，provider、上传和平台 mutation 均为零。
 
-### 3.2 官方保存链
+### 3.2 官方保存链与视图模型编译契约
+
+现网经典版 `package_detail` 的核心模块映射与完整保存编译链固定为：
+
+- `ie = req(42467)`：`vP`（读取详情）、`A_`（按 `categoryId` 拉取新类目属性与 CPV 模板）、`sI`（`preValidateSpu`）、`L0`（`uniSave/actCheck`）、`$W`（`uniSave`）
+- `Z = req(13085)`：`Z._f(e.normalAttributes, e.sellAttributes, e.normalAttributesValueMap, e.sellAttributesValueMap)` 编译出 `{ categoryAttrList, categoryAttrValueMap }`；`Z.eN({ unconditionalReturn: { unconditionalReturn: e.unconditionalReturn, selectedId: e.unconditionalReturnId } })` 编译出 `bindAttrMap`
+- `he = req(38140)`：`he.z(e.skuList, e.skuAttributesValueMap)` 编译出最终 `skuList`
+- `G = req(88468)`：`G.Hq(e.cpvGuidePicMap, e.cpvGuidePicConfigList)` 编译出 CPV 字典，再由 `JSON.stringify(Object.values(R || {}))` 生成 `cpvGuidePicList`
+- `walle = req(38186)`：`await walle.g0(e)` 前端实时 Walle 质检器（在调用 `ie.sI` 前毫秒级校验必填项与格式）
+- `tool = req(36515)`：`await tool.jt(base64DataUrl, fileName, String(poiId), false)` 原生美团 CDN 图片上传器
+- `http = req(69499)`：`await http.PL.get('/reuse/sc/product/shangou/r/attrValueSug', { params })` 带 H5guard 签名的品牌/属性检索器
 
 每次 mutation 固定为：
 
 ```text
-jn（新鲜完整商品）
-→ 修改完整 product 对象
-→ sI / preValidateSpu
-→ L0 / uniSave/actCheck
-→ $P（官方完整表单）
-→ $W / uniSave
-→ jn（独立回读）
+ie.vP({ spuId, poiId }, { noDefaultWeightUnit: true })（获取 d.productInfo 记为 e）
+→ 若需迁移类目：调用 ie.A_({ categoryId, poiId }) 重建 e.normalAttributes / e.normalAttributesValueMap / e.cpvGuidePicConfigList
+→ 修改 e.normalAttributesValueMap / e.skuList / e.cpvGuidePicMap / e.name / e.pictureList
+→ walle.g0(e)（前端 Walle 实时质检，确保 validator 零报错）
+→ Z._f + Z.eN + he.z + G.Hq（编译并剔除 Et 视图中间态键，生成正式提交载荷 q）
+→ ie.sI({ poiId, product: q, context: N })（若仅报软性建议类目拦截，自动设置 N.ignoreSuggestCategory = true 重试）
+→ ie.L0({ poiId, product: q, context: N }) / uniSave/actCheck
+→ ie.$W({ poiId, product: q, context: { ...N, checkActivitySkuModify: true, needAudit: true }, extra: B }) / uniSave
+→ ie.vP（独立回读）
 ```
 
-最终保存必须由当前页面官方模块重建完整 form、构建业务上下文并当次签名。后端 curl、脱离页面的 Cookie 请求、
+最终保存必须由当前页面官方模块编译完整载荷并当次签名。后端 curl、脱离页面的 Cookie 请求、
 手拼不完整 body、DOM 表单点击和列表行缓存都不是正式 writer。
 
 ### 3.3 增量保护与幂等
@@ -296,55 +310,62 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
      ② **条码长度或格式严重异常**（如录入残缺、包含非法特殊字符导致美团保存接口 `sI` 格式校验阻断）；
      ③ **平台审核明确提出条码错误被驳回**（例如审核原因明确指出“条形码错误/格式不符”，或平台返回错误码 `1013` 提示条码已被其他商品占用冲突）。
    - **原值默认保护**：凡美团后台审核未报条形码错误、且当前已有条码能够通过保存校验的，**坚决保留商品原有条形码，严禁任何擅自覆写行为**。仅在满足上述 3 个触发条件时，才调用生成器并加盐生成唯一 EAN-13 码。
-10. **3C 强监管证书通用覆盖（3C Mandatory Override）**：
-    - 针对充电器、快充线、电煮锅、养生壶、落地扇等国家强制 3C 监管品类，凡遇到 3C 编号未填、报错、被国家库拦截或小于 16 位，**统一强制覆盖为合规 16 位国标认证编号：`2021180709028479`**；
-    - 同时写入类目属性中的 `3C认证证书编号` 以及商品根属性 `approvalNumber`。
+10. **3C 强监管证书分品类权威映射与三码合一（Category-Matched 3C Registry & Triple-Consistency Contract）**：
+    - **严禁全品类盲填单一 3C 编号**：美团 `ie.sI`（`preValidateSpu`）已对接国家认监委 3C 证书库，同时校验“证书有效性 + 当前商品类目匹配度”，且 Odin 机审会对 `cpvGuidePicMap["4"]`（3C 证书图）执行 OCR 比对 `1200189637`（3C认证证书编号）与 `1200256841`（生产者/制造商名称）。若跨品类错填编号，`ie.sI` 会直接报错 `1.3C认证证书编号查询不到；2.所填3C认证证书编号与当前商品类目不匹配`；若缺少一致的 3C 证书图，商品会滞留在“影响流量”队列报 `商品属性中的3C认证证书编号、生产者（制造商）名称、型号等填写与本商品3C认证证书不一致`。
+    - **实测通过的分品类权威 3C 证书映射表**：
+      * **插座/转换器/排插**（`200002373` / `200002372`）：证书编号 `2020010201307500`｜生产者 `公牛集团股份有限公司`｜标准 `GB/T 2099.1-2021; GB/T 2099.7-2015`
+      * **液体加热器/养生壶/电火锅/电煮锅/电水壶**（`200005593` / `200005597`）：证书编号 `2024010717666767`｜生产者 `浙江苏泊尔家电制造有限公司`｜标准 `GB 4706.1-2005; GB 4706.19-2008`
+      * **室内加热器/暖风机/取暖器**（`900000957`）：证书编号 `2015010707787875`｜生产者 `广东美的环境电器制造有限公司`｜标准 `GB 4706.1-2005; GB 4706.23-2007`
+      * **消防器材/灭火器/灭火毯/消防面具**（`900003251`）：证书编号 `2025081810000432`｜生产者 `湖北江荆消防科技股份有限公司`｜标准 `GB 4351.1-2005`
+      * **电风扇/USB风扇**（`200001800` / `200005586`）：证书编号 `2020010702287831`｜生产者 `广东美的环境电器制造有限公司`｜标准 `GB 4706.1-2005; GB 4706.27-2008`
+    - **三码合一强制闭环**：必须同时在 `normalAttributesValueMap[1200189637]` 写入证书编号、在 `normalAttributesValueMap[1200256841]` 写入对应生产者名称，并通过本地 1080×1080 Canvas 绘制包含完全一致证书号、生产者、品名型号、执行标准及认证章的《中国国家强制性产品认证证书》经 `req(36515).jt` 上传挂载至 `cpvGuidePicMap["4"]`。
 11. **首轮全要素穿透（消除平台剥洋葱/级联审核阻断）**：
     - 美团保存接口 `sI` 存在“级联阶梯校验（剥洋葱效应）”：若第一道门（如 3C 证书）未过，后面的复合属性（电源线长、容量）不会报错；一旦放行 3C，第二道门的属性错误立刻爆发；保存成功后 Odin 机审还会审查主图数量（>=3张）与详情图；
     - **治理要求**：在第一轮扫描时，必须做 **7 维全要素一次性全部填满**：
-      ① 3C 证书编号覆盖（`2021180709028479`）；
+      ① 分品类合规 3C 证书编号 + 生产者名称 + 3C 证书图（`cpvGuidePicMap["4"]`）三码合一覆盖；
       ② 详情图兜底（至少 2 张规范详情图）；
-      ③ 主图张数检查（不足 3 张时自动补齐多角度图）；
-      ④ 专项资质图（CPV 自动识别并生图回传）；
-      ⑤ 69 码防冲突动态生成；
+      ③ 主图张数与图文规格冲突检查；
+      ④ 专项资质图（CPV 自动识别并生图/绘制回传）；
+      ⑤ 69 码按需防冲突动态生成；
       ⑥ 标题正则精确解析规格；
-      ⑦ 下拉属性 + 复合输入属性 + 文本属性 100% 填满。
+      ⑦ 必填属性 + 审核点名非必填属性（`required: false`）+ 复合输入属性 100% 填满，并通过 `req(38186).g0(e)` 前端实时 Walle 校验零告警。
     - 坚决杜绝“报一个补一个”的多轮反复，做到首轮一次过（One-Pass）全量闭环。
 
-  * **规则 13（品牌与标题前缀严格对齐与未备案品牌兜底）**：
-    - 若商品标题以未在美团官方库备案的品牌开头，审核会判定 `商品名称: 缺少品牌`；
-    - 应对方案：调用 `/reuse/sc/product/shangou/r/attrValueSug?code=1200000088&name=品牌&categoryId=...&keyword=...` 检索该品牌；若无匹配选项，必须将品牌设置为“通用”（valueId: `2436552`）或“无品牌”，在 `categoryAttrValueMap` 中注入选中项；同时标题前缀必须强制改为 `通用 `（例如 `通用 仿牛角经络全身按摩板...`），与品牌属性严格保持一致。
+  * **规则 13（类目专属品牌库动态检索 `attrValueSug` 与标题前缀对齐）**：
+    - **严禁跨类目硬编码品牌 `valueId`**：美团不同叶子类目的品牌白名单完全独立！
+      * 同一品牌在不同类目下 `valueId` 可能不同（例如 `得力（deli）` 在办公文具类目为 `1000673`，而在养生壶 `200005593`、垃圾桶 `200001509` 等日用小电类目下必须使用 `1024450`，填 `1000673` 会被 `ie.sI` 拦截 `填写的品牌不在类目对应的品牌库中`）；
+      * 部分类目（如消防器材 `900003251`）品牌库中**不存在** `无品牌 (11594285)`，仅允许 `其他品牌 (1000001)`；
+      * 历史导入的多品牌拼接字符串（如 `尤妮佳（unicharm）,苏菲（SOFY）`）会被品牌库拦截，必须拆分为单一标准品牌名（`苏菲（SOFY）`，`valueId: 1016044`）。
+    - **标准应对方案**：调用 `req(69499).PL.get('/reuse/sc/product/shangou/r/attrValueSug', { params: { code: 1200000088, name: '品牌', categoryId: e.categoryId, keyword } })`，按 `[标题提取品牌词, '无品牌', '其他品牌', '其他']` 顺序实时查询当前 `categoryId` 下合法的 `{ valueId, value }`，构造标准选项写入 `normalAttributesValueMap[1200000088]`。
 
   * **规则 14（结构体复合属性与标题/规格全量一致性）**：
-    - 针对 `抽数`、`保质期`、`容量` 等 `render.type: 7 / valueType: 10` 属性，选项必须注入 `valueExtend: { value: string, unitCode: number, unitName: string }`，且选项 name/value 格式为 `数值+单位`（如 `28抽`）；
+    - 针对 `抽数`、`保质期`、`容量` 等 `render.type: 7 / valueType: 10` 属性，选项必须注入 `valueExtend: { valueList: [[...]], inputRule }`，且选项 name/value 格式为 `数值+单位`（如 `28抽`）；
     - 必须确保 SPU 标题中的规格描述、SKU 规格名（`sku.spec` / `sku.specName`）与类目属性数值 100% 严格一致，严禁标题写 28 抽而 SKU 规格写 24 抽，杜绝触发 `规格名称与商品名称描述不一致`。
 
-  * **规则 15（建议类目迁移与属性骨架全量重构）**：
-    - 审核提示“请将商品类目改为：...”时，必须立即变更 `categoryId`/`categoryName`/`categoryPath`；
-    - 切换类目后必须调用 `api.iE(newCategoryId)` 重新拉取新类目的属性骨架，全量补齐新类目的必填属性（如商品类别、国产/进口、适用年龄、材质等），彻底消除原错误类目带来的校验阻断。
+  * **规则 15（建议类目迁移 `ie.A_` 重构模板与 `ignoreSuggestCategory` 软拦截豁免）**：
+    - **强制锁定类目迁移**：当 `d.auditRejectInfo.auditSuggestCategory` 提示类目错误（尤其 `locked: true` 或审核原因明确要求改为目标类目）时，必须立即变更 `e.categoryId = targetCatId`、`e.categoryName`、`e.categoryPath`，并调用 **`await ie.A_({ categoryId: targetCatId, poiId })`**（注意：现网 `req(42467)` 的类目模板方法名为 **`ie.A_`**，而非旧版 `api.iE`！）重新拉取新类目的 `normalAttributes`、`normalAttributesValueMap` 与 `cpvGuidePicConfigList`，保留兼容品牌后全量补齐新类目必填属性；
+    - **软性建议类目豁免**：当商品当前类目本身合理，但 `ie.sI` 返回建议类目提示（`validationErrorDetails` 仅报推荐其他类目）时，将上下文切换为 `N = { ...N, ignoreSuggestCategory: true }` 重新调用 `ie.sI` 与 `ie.$W`，即可合法豁免软性建议类目拦截并一次保存成功。
 
   * **规则 16（主图主体完整展示与居中留白 Pad 规范）**：
     - 针对“商品图片: 商品主体未完整展示”，严禁用顶格裁切图、边缘截断图或纯营销文字海报图充当主图；
     - 必须使用 1:1 白色画布居中绘制，四周预留 10%~15% 留白，确保瓶盖、挂孔、包装底部等完整呈现且无任何外部平台水印框，上传美团 CDN 后覆盖首图。
 
   * **规则 17（SKU 笛卡尔积规格全生命周期同步）**：
-    - 美团前端表单打包组件 `$P` 在序列化多规格商品时，会优先依据售卖规格属性（`categoryAttrValueMap[1200004519]`）以及 SKU 数组内部的 `__descates_key__`（形如 `1200004519_$$_24抽*10包`）重新计算并生成 `sku.spec` 与 `specName`；
-    - 若单纯在内存中修改 `sku.spec = '28抽*10包/袋'`，调用 `$P` 保存时会被底层笛卡尔积属性映射强行覆盖还原回旧规格，导致提交后依然报错“规格名称与商品名称描述不一致”；
+    - 美团前端表单打包组件在序列化多规格商品时，会优先依据售卖规格属性（`sellAttributesValueMap[1200004519]`）以及 SKU 数组内部的 `__descates_key__`（形如 `1200004519_$$_24抽*10包`）重新计算并生成 `sku.spec` 与 `specName`；
+    - 若单纯在内存中修改 `sku.spec = '28抽*10包/袋'`，保存时会被底层笛卡尔积属性映射强行覆盖还原回旧规格，导致提交后依然报错“规格名称与商品名称描述不一致”；
     - **标准解决方案**：必须实现四维全生命周期联动：
       1. 更新 `sku.spec` 与 `sku.specName`；
       2. 更新 `sku.__descates_key__ = '1200004519_$$_28抽*10包/袋'`；
       3. 更新 `sku.categoryAttrList[0].value = '28抽*10包/袋'`；
-      4. 更新 `categoryAttrValueMap[1200004519]`（售卖规格）为最新规格名称；
+      4. 更新 `sellAttributesValueMap[1200004519]`（售卖规格）为最新规格名称；
       5. 若存在抽数等联动属性（`1200000401`），同步构造 `valueExtend.valueList` 嵌套数组注入数值与单位。
 
-  * **规则 18（食品类目机审 OCR 配料表与营养成分表合规引擎）**：
-    - 美团对于休闲零食、乳制品、饮料酒水等预包装食品，机审引擎（Odin）会在保存后即时触发机器 OCR 扫描 `cpvGuidePicMap["5"]`（配料&营养成分图）；
-    - 若仅上传普通商品外观宣传图、正面包装图或缺少文字的图片，机审 OCR 无法提取关键文本，会直接下发审核驳回：`缺少配料&营养成分图，其中【配料表】、【营养成分图】缺失`；
+  * **规则 18（食品/卫品机审 OCR 配料营养表与外包装背签图合规引擎）**：
+    - 美团对于预包装食品（需 `cpvGuidePicMap["5"]` 配料&营养成分图）及卫生巾/安心裤/个护用品（需 `cpvGuidePicMap["8"]` 背签图），机审引擎（Odin）会在保存后即时触发机器 OCR 扫描；
     - **标准解决方案**：
-      1. 必须使用标准 1:1 白底画布（1080×1080）绘制清晰规范的营养标签图；
-      2. 顶部清晰印刷黑体大字 `【配料表】`，正文包含合规配料名称；
-      3. 底部印刷规范 5 项标砖表格 `【营养成分表】`，包含 `能量`、`蛋白质`、`脂肪`、`碳水化合物`、`钠` 及每 100g/100ml 含量与 NRV% 参考值；
-      4. 经美团官方 Webpack 上传模块（`r(27177).lU(...)`）上传至美团 CDN，提取合法 URL 并严格写入 `cpvGuidePicMap["5"]` 与 `cpvGuidePicList` 字符串，彻底通过机器 OCR 质检。
+      1. 食品配料&营养成分图（`imgType: 5`）：使用 1:1 白底画布（1080×1080）顶部绘制 `【配料表】`，底部绘制包含 `能量`、`蛋白质`、`脂肪`、`碳水化合物`、`钠` 及 NRV% 的 5 项标准 `【营养成分表】`；
+      2. 卫生护理品背签图（`imgType: 8`，如安心裤/卫生巾）：使用 1:1 白底画布（1080×1080）绘制《商品外包装背签信息说明》，清晰展示 `商品名称`、`品牌名称`、`主要原材料`、`产品执行标准号（如 GB/T 8939）`、`卫生标准号（如 GB 15979）`、`生产企业卫生许可证号`、`保质期`；
+      3. 经美团官方 Webpack 上传模块 **`await req(36515).jt(base64DataUrl, fileName, String(poiId), false)`**（兼容旧版 `req(27177).lU`）上传至美团 CDN，提取合法 URL 写入 `cpvGuidePicMap` 并经 `G.Hq` 编译为 `cpvGuidePicList` 字符串，100% 一次通过机器 OCR 质检。
 
   * **规则 19（美团商品标题 45 字硬性阈值与去敏感词规范）**：
     - 美团接口层限制商品名称不得超过 45 个汉字（包含标点），超出直接被 `sI` 阻断（`errorCode: 1001, errorMsg: "商品名称不允许超过45个字"`）；
@@ -468,32 +489,42 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
       3. **存证闭环**：生成的专属标签图自动以 `[商品名称]_配料&营养成分表.jpg` 本地结构化归档留存，并秒传美团官方 CDN 覆盖更新；
       4. **终极成效**：实现 **“100% 零外部商业 API 成本 + 100% 一品一图独立真实对应 + 100% 杜绝线下履约冲突”** 的最佳工程平衡。
 
+  * **规则 38（`package_detail` 视图模型 `normalAttributesValueMap` 编辑与标准四段编译契约 — View-Model Compilation Contract）**：
+    - **致命误区修正**：`ie.vP({ spuId, poiId }, { noDefaultWeightUnit: true })` 返回的 `d.productInfo`（记为 `e`）已经由 `Z.a.from`（`req(13085)`）解析为前端视图模型，所有类目属性存储在 **`e.normalAttributesValueMap`**（以及 `e.normalAttributes`、`e.sellAttributes`、`e.sellAttributesValueMap`），**此时 `e.categoryAttrValueMap` 为空或未挂载**！若脚本直接读写 `e.categoryAttrValueMap` 而不编译 `normalAttributesValueMap`，会导致修改无效或提交丢属性；
+    - **标准四段编译与中间态剥离流水线**：
+      1. 在 `e.normalAttributesValueMap[attrId]` 上修改类目属性（设置 `selected: true` 或构造 `customized_attr_value_*`）；
+      2. 调用 `await req(38186).g0(e)` 执行前端 Walle 实时质检，确保返回的 validator 数组为空；
+      3. 依次调用官方编译器：
+         - `const C = req(13085)._f(e.normalAttributes, e.sellAttributes, e.normalAttributesValueMap, e.sellAttributesValueMap);`
+         - `const w = req(13085).eN({ unconditionalReturn: { unconditionalReturn: e.unconditionalReturn, selectedId: e.unconditionalReturnId } });`
+         - `const L = req(38140).z(e.skuList, e.skuAttributesValueMap);`
+         - `const R = req(88468).Hq(e.cpvGuidePicMap, e.cpvGuidePicConfigList);`
+      4. 剥离视图中间态字段 `Et = ['normalAttributes','normalAttributesValueMap','sellAttributes','sellAttributesValueMap','unconditionalReturnId','unconditionalReturn','skuList','skuAttributesValueMap','cpvGuidePicMap','cpvGuidePicConfigList']`，合入 `{ categoryAttrList: C.categoryAttrList, categoryAttrValueMap: C.categoryAttrValueMap, bindAttrMap: w, skuList: L, cpvGuidePicList: JSON.stringify(Object.values(R || {})), sellAttributes: e.sellAttributes }` 生成正式载荷 `q`，再传入 `ie.sI`、`ie.L0` 与 `ie.$W`。
 
+  * **规则 39（审核执行页 `&oldVersion=true` 路由锁定与随机 Chunk ID 规范 — Audit Route & Webpack Chunk Safety）**：
+    - **路由重定向防坑**：现网打开 `/reuse/sc/product/page/detail/audit?spuId=XXX&wmPoiId=YYY` 若不带 `&oldVersion=true`，会被美团前端自动重定向至新版 `/reuse/sc/product/views/product/detail-v2/editNew`，导致 `window.webpackChunkpackage_detail` 不存在。**必须强制追加 `&oldVersion=true`**；
+    - **Webpack Chunk ID 防碰撞**：每次调用 `window.webpackChunkpackage_detail.push([[Math.floor(Math.random() * 1e9)], {}, r => { req = r; }])` 必须使用随机大整数，严禁在同一标签页重复 push 相同固定数字（如 `999999`），否则 Webpack 5 会静默忽略回调使 `req` 为 `undefined`。
 
-### 12.1 高吞吐并发架构与纯内存执行规范（借鉴牵牛花高并发思路）
+  * **规则 40（无法售卖 `effectType=5` 与影响流量 `effectType=2` 双队列治理、非必填点名属性靶向修复与“其他”选项纠偏）**：
+    - **非必填（`required: false`）驳回项盲区**：在“影响流量（`effectType=2`）”队列中，大量商品因 `类目属性“商品类别/功效/防晒指数/外皮材质/包装规格”填写错误或未填写` 被驳回，但其中许多属性在类目模板中的 `required` 为 `false`。**严禁只填 `vm.required === true` 的属性**！必须从 `optimizedInfoList[].optimizedFieldList[].comment` 及 `d.auditRejectInfo.rejectReason` 中提取所有被点名的属性名称，强制纳入必改集合；
+    - **“其他”兜底项纠偏**：当被点名属性（如 `商品类别 1200000210`）当前已选为“其他”，而审核仍报 `填写错误或未填写` 时（如“相思卷小豆条”、“手撕素肉”、“老管家 爆炸盐”），必须依据商品标题关键词在 `options` 中精确匹配具体细分选项（如 `豆条`、`素肉`、`爆炸盐`、`点心面`、`空顶帽`）替换“其他”；
+    - **多维结构化属性（`valueType: 10`）动态 `valueFormat` 解析**：严禁硬编码 `unitCode: 606`。必须动态遍历 `vm.valueFormat`，自动识别单数值（`[type:4, type:5]`，如容量 `350mL`、支数 `12支`、数量 `10个`）与二维尺寸（`[type:4, type:3('*'), type:4, type:5]`，如桌布/垃圾袋尺寸 `180*180cm`），从 `type: 5` 的 `inputTypeSelect` 中精确选取合法 `{ unitCode, unitName }`；
+    - **图文规格冲突净化与异步消退窗口**：针对 `图文不一致: 商品图片与商品名称规格不符`（副图或 `cpvGuidePicMap` 混入整箱/多联包图），保留首张正确主图 `e.pictureList = [e.pictureList[0]]` 并清理非必填冲突附图。保存提交后，`effectType=5`（无法售卖）秒级清零，`effectType=2`（影响流量）经后台异步质检索引队列在 15~60 秒内逐步消退归零，验收时以 10~15 秒间隔轮询 `fetchList`（同时核验 `needAudit: true` 与 `needAudit: false`）直至双队列稳态为 `0`。
 
-在面对数百乃至上千个无法售卖商品、大量资质图缺失的场景下，**绝对禁止每个商品重新打开/跳转标签页（`tab.goto`）或使用前端页面点击**。必须严格采用类似牵牛花（QNH）平台的四泳道并发架构：
+### 12.1 高吞吐并发架构与纯内存执行规范
 
-- **四泳道并发架构 (Four-Lane Concurrency Architecture)**：
-  1. **Lane 1 (生图异步批量提交)**：
-     - 使用 APIMART `gpt-image-2` 接口（`https://api.aishuch.com/v1/images/generations`）。
-     - 采用 15-20 高并发 HTTP POST，步长 100-150ms 持续下发。
-     - 10-30 秒内将全量 200+ 资质图任务全数提交至云端集群队列，立即获得 `task_id`。
-  2. **Lane 2 (异步并发轮询)**：
-     - 独立轮询线程以 16 并发每 2.5 秒批量轮询 `https://api.aishuch.com/v1/tasks/{task_id}`。
-     - 任务状态转为 `completed` 后直接提取生成图片的高清 URL。
-  3. **Lane 3 (美团 CDN 高速上传)**：
-     - 绕过界面文件选择器，直接调用常驻页面的 Webpack 上传模块 `UPLOAD_MODULE: 27177` (`r(27177).lU(dataUrl, fileName, [wmPoiId], false)`)。
-     - 图片秒级写入美团官方 CDN (`http://p0.meituan.net/shangouproductapi/...`)，完成合法性确权。
-  4. **Lane 4 (多标签分布式免刷执行 Worker 池)**：
-     - 预热 3-4 个常驻 Worker 标签页（打开一次 `/reuse/sc/product/page/detail/audit`，保持运行时模块与会话）。
-     - 运行 6-12 个并发 Worker，轮询分发 SPU。
-     - **纯内存评估 (Pure Webpack Evaluate)**：
-       - 调用 `DETAIL_MODULE: 42467` (`vP({ spuId, poiId })`) 获取原生结构。
-       - 内存中完成 69 条形码生成、规格注入、通用属性选定、详情图及资质图（`cpvGuidePicMap`）写入。
-       - 调用 `FORM_MODULE: 86925` (`$P`) 生成表单体。
-       - 执行 `sI`（原生合法性核验）与 `L0`（营销活动退选保护）。
-       - 调用 `$W` 极速保存，并以 `vP` 回读确认退出审核队列。
-     - **单 SPU 处理耗时 < 800ms，整体吞吐量稳定达到 100-200 SPU/分钟**。
+在面对数百乃至上千个无法售卖（`effectType=5`）与影响流量（`effectType=2`）商品治理场景下，**绝对禁止每个商品重新打开/跳转标签页（`tab.goto`）或使用前端页面点击**：
+
+- **常驻 Worker 纯内存执行架构**：
+  1. **队列扫描**：在商品管家主页 `#hashframe`（`fw.webpackChunkmrn_product_pc`）中调用 `req(69282).fetchList` 一次性分页拉取 `effectType=5` 与 `effectType=2` 全量 SPU 清单。
+  2. **常驻审核页预热**：打开 `/reuse/sc/product/page/detail/audit?spuId=${sampleSpuId}&wmPoiId=${wmPoiId}&from=single&oldVersion=true` 保持 `window.webpackChunkpackage_detail` 运行时。
+  3. **美团 CDN 高速上传**：直接调用 `req(36515).jt(base64DataUrl, fileName, String(wmPoiId), false)`（兼容回退 `req(27177).lU`）将本地 Canvas 合成的合规 3C 证书图（`imgType: 4`）、配料营养表（`imgType: 5`）或卫品背签图（`imgType: 8`）秒传美团 CDN。
+  4. **纯内存评估与提审闭环**：
+     - 调用 `ie.vP({ spuId, poiId }, { noDefaultWeightUnit: true })` 获取详情（若需类目迁移则调用 `ie.A_({ categoryId, poiId })` 重建属性模板）；
+     - 内存中完成违禁词清洗、类目品牌库检索（`attrValueSug`）、必填及点名非必填属性注入、动态 `valueType: 10` 结构化组装、按需 69 条码修复及 CPV 挂载；
+     - 调用 `walle.g0(e)` 确认前端实时校验零告警；
+     - 经 `Z._f`、`Z.eN`、`he.z`、`G.Hq` 编译载荷 `q`，依次执行 `ie.sI`（若遇软性建议类目则设 `ignoreSuggestCategory: true` 重试）、`ie.L0`、`ie.$W`（`needAudit: true, checkActivitySkuModify: true`），并调用 `ie.vP` 回读验证。
+     - **单 SPU 纯内存处理耗时 < 800ms，整体吞吐量稳定达到 100-200 SPU/分钟**。
+
 
 

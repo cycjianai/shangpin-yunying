@@ -9,7 +9,8 @@ import {
   saveQualificationPlan,
 } from '../unavailable_one_pass/engine.mjs';
 
-const UPLOAD_MODULE = 27177;
+const UPLOAD_MODULE = 36515;
+const LEGACY_UPLOAD_MODULE = 27177;
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -61,7 +62,7 @@ async function uploadReceipt({ cdp, runDir, item, wmPoiId }) {
     if (existing?.source_sha256 === actualSha && existing?.image_url) return existing;
   } catch {}
   const dataUrl = `data:${mimeFor(filePath)};base64,${bytes.toString('base64')}`;
-  const expression = `(async(arg)=>{const o=window.originProductDetail||{};const id=String(o.res?.id||o.res?.productSpu?.id||'');const wm=String(o.res?.wmPoiId||o.res?.productSpu?.wmPoiId||o.params?.poiId||'');if(id!==String(arg.spu_id)||wm!==String(arg.wm_poi_id))throw new Error('upload_identity_mismatch');let r;window.webpackChunkpackage_detail.push([[Math.random()],{},x=>{r=x}]);if(!r?.m?.[${UPLOAD_MODULE}])throw new Error('native_upload_module_missing');const result=await r(${UPLOAD_MODULE}).lU(arg.data_url,arg.file_name,[arg.wm_poi_id],false);const url=String(result?.url||'');if(!url)throw new Error('native_upload_url_missing');return{ok:true,url,poor_quality:Number(result?.poorQuality||0),low_white_rate:Number(result?.lowWhiteRate||0)}})(${JSON.stringify({ spu_id: item.spu_id, wm_poi_id: wmPoiId, file_name: item.file_name, data_url: dataUrl })})`;
+  const expression = `(async(arg)=>{const o=window.originProductDetail||{};const id=String(o.res?.id||o.res?.productSpu?.id||'');const wm=String(o.res?.wmPoiId||o.res?.productSpu?.wmPoiId||o.params?.poiId||'');if(id!==String(arg.spu_id)||wm!==String(arg.wm_poi_id))throw new Error('upload_identity_mismatch');let r;window.webpackChunkpackage_detail.push([[Math.floor(Math.random()*1e9)],{},x=>{r=x}]);let result;if(r?.m?.[${UPLOAD_MODULE}]&&typeof r(${UPLOAD_MODULE})?.jt==='function'){result=await r(${UPLOAD_MODULE}).jt(arg.data_url,arg.file_name,String(arg.wm_poi_id),false)}else if(r?.m?.[${LEGACY_UPLOAD_MODULE}]&&typeof r(${LEGACY_UPLOAD_MODULE})?.lU==='function'){result=await r(${LEGACY_UPLOAD_MODULE}).lU(arg.data_url,arg.file_name,[arg.wm_poi_id],false)}else{throw new Error('native_upload_module_missing')}const url=String(result?.url||'');if(!url)throw new Error('native_upload_url_missing');return{ok:true,url,poor_quality:Number(result?.poorQuality||0),low_white_rate:Number(result?.lowWhiteRate||0)}})(${JSON.stringify({ spu_id: item.spu_id, wm_poi_id: wmPoiId, file_name: item.file_name, data_url: dataUrl })})`;
   const response = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, { timeoutMs: 120000 });
   if (response?.exceptionDetails) throw new Error(`qualification_upload_exception:${response.exceptionDetails.text || 'unknown'}`);
   const value = response?.result?.value;

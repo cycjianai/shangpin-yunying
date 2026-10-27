@@ -270,25 +270,58 @@ const payload = {
 在连锁商户（如 `BJ_BJXBT_QQD` 下辖 `CGWJHDNL` 海淀南路店与 `CGWJCS` 塔园店）治理门店商品管理 `tabType: HAS_ERROR`（“不符合渠道规则”）时，必须严格遵守以下多门店与多规格防污染红线：
 
 ### 1. 多门店共享总部主档（`masterGoods`）防串店与库位保护铁律
-- **串店根因识别**：
-  - 连锁商户的门店商品大多为 `storeOnlyFlag: 0`（总部商品），通过 `GET /goods/master/goodsStoreQuery?skuCode=...` 可查看到同一总部主档同时发布到了多家兄弟门店（`publishStoreCodeList` 包含多个 `storeCode`，或 `sourceStoreCode` 指向另一家门店）。
-  - 直接调用 `POST /goods/master/update` 修改的是**全商户共享的总部商品主档**，其对 `skuName`（商品名称）、`frontCategoryIdList`（前台分类）、`skus`（多规格结构）的改动会自动同步至同商户下的所有其他门店！
-- **库位（`cabinetCode` / `cabinetCodeList`）防污染红线**：
-  - 调用 `GET /goods/master/detail?skuCode=...&storeCode=当前门店` 时，返回的 `skus[i].cabinetCode` 与 `skus[i].cabinetCodeList` 是当前门店的专属货架库位（而不带 `storeCode` 或调用 `relation/detail` 时该字段为 `null`）。
-  - 向 `POST /goods/master/update` 提交前，除剥离 `stockNum` / `prepareStockNum` 外，严禁将单店库位或 `null` 库位通过门店级覆写接口污染兄弟门店；不得无故截断 `skuName`（许多门店在商品名称后缀或扩展字段维护店内货架/规格标识，除非该商品在 MT 明确报 `name长度最多不能超过45个字符`）。
+- **串店根因识别（`sourceStoreCode` 与 `extendsAttributes` 隐式触发兄弟门店任务）**：
+  - 连锁商户的门店商品大多为 `storeOnlyFlag: 0`（总部商品），通过 `GET /goods/master/goodsStoreQuery?skuCode=...` 可查看到同一总部主档同时发布到了多家兄弟门店。
+  - 当总部主档最初由兄弟门店（如 `CGWJCS` 塔园店）建档导入时，主档详情 `master/detail` 返回的对象中会残留 `base.sourceStoreCode = "CGWJCS"` 以及 `base.extendsAttributes = { sourceStoreCode: "CGWJCS", channelGeneralCategoryProperty: "..." }`。
+  - 若不剥离这些字段直接调用 `POST /goods/master/update`，翱象后端会自动以 `sourceStoreCode`（塔园店）为目标生成异步子任务 `门店品维护供货关系&库存库位`（`bizTaskType: 14`），导致兄弟门店后台出现并非针对该店的更新记录！
+- **主档保存必剥离字段清单（零串店、零库位污染红线）**：
+  - 向 `POST /goods/master/update` 提交前，在主对象 `base` 及每个 `base.skus[i]` 上必须强制执行：
+    ```javascript
+    delete base.stockNum;
+    delete base.prepareStockNum;
+    delete base.cabinetCode;
+    delete base.cabinetCodeList;
+    delete base.storeGoodsCustomFields;
+    delete base.storeGoodsCustomFieldsJson;
+    delete base.sourceStoreCode;
+    delete base.sourceStoreName;
+    delete base.currentStoreCode;
+    delete base.extendsAttributes;
+    base.skipPublishStore = true;
+    ```
+  - 剥离 `sourceStoreCode` 与 `extendsAttributes` 并设置 `skipPublishStore: true` 后，可 100% 阻断向 `sourceStoreCode` 派发 `bizTaskType: 14` 库位/供货关系任务，同时防止 `extendsAttributes.channelGeneralCategoryProperty` 中缓存的旧品牌（如 `1746687` `其他（OTHER）`）反向覆盖新写入的渠道属性。
+  - 若 `base.customProperty` 或 `base.masterCustomProperty` 存在超过 5 项或重复属性名，会导致 `master/update` 报错 `商品属性最多5个，不可重复`，此时应清空或去重截断至 5 个以内。
 
 ### 2. 跨门店单/多规格视图差异防降级铁律
-- **视图差异陷阱**：
-  - 某个母 SPU（`@@...`）在总部主档或兄弟门店（如塔园店）可能是多规格商品，但若当前门店仅下发了其中 1 个子 SKU，当前门店 `pageV3` 列表可能显示为单规格或仅返回当前店子集。
-  - **强制判定规则**：绝对禁止仅凭当前门店列表 `row.goodsType === 1` 判断是否多规格！凡 `spuCode` 以 `@@` 开头、`originGoodsType === 1`、或 `relation/detail` 返回记录数 `> 1` 的商品，必须按完整母子规格全量装配 `skus`，严禁按单规格调用 `master/detail` 后直接提交 `master/update`。
+- **视图差异陷阱与 `relation/detail` 真实字段路径**：
+  - 某个母 SPU（`@@...`）在总部主档或兄弟门店可能是多规格商品，但若当前门店仅下发了其中 1 个子 SKU，当前门店 `pageV3` 列表可能显示为单规格或仅返回当前店子集。
+  - **强制判定规则**：绝对禁止仅凭当前门店列表 `row.goodsType === 1` 判断是否多规格！凡 `spuCode` 以 `@@` 开头、`originGoodsType === 1`、或 `relation/detail` 返回记录数 `> 1` 的商品，必须按完整母子规格全量装配 `skus`。
+  - **关键字段路径**：`GET /goods/relation/detail?skuCode=...&relationType=1&positive=1` 返回数组中，每个子规格的 SKU 详情存放在 `relItem.masterGoods.skus[0]`（而非 `relItem.skuInfo.skus[0]`），重构 `base.skus` 时必须读取 `relItem.masterGoods?.skus?.[0]`，并在 `rebuilt.length > 1` 时显式保持 `base.goodsType = 1; base.originGoodsType = 1;`。
 
 ### 3. 三渠道（ELE / MT / JD）高频规则报错闭环字典
 - **前台店铺分类映射失效（`不存在渠道前台类目映射` / `分类不存在`）**：
   - 通过 `GET /category/front/getFrontCategoryTree` 结合 `POST /category/front/compareDiffV2` 识别未同步至渠道的异常叶子分类，重映射至全渠道已同步的合规叶子分类（或调用 `POST /category/front/sync` 触发渠道前台分类树同步）。
 - **复合类目属性结构（`MULTI_INPUT_OPTION` / `INPUT_OPTION`）**：
   - 针对 ELE `材质成分`（如 `棉` + `100` + `%`）与 MT `商品尺寸`（长 `*` 宽 `*` 高 + `cm`），必须严格按照 `subCategoryPropertyList` 的子槽位顺序组装 `currentValue` 数组，保留 `READ_ONLY_INPUT` 分隔符（`*`）与单位下拉项 ID。
-- **京东（JD）品牌重写陷阱与两步保存法**：
-  - 当修改 JD 后台类目并绑定合规品牌（如 `其他品牌` `35247`）时，第一次调用 `POST /goods/master/update` 后翱象后端会根据商品标题关键词自动重算覆盖 JD 品牌；必须在同一流水线中紧接第二次写入 `channelGeneralCategoryProperty.JD` 并再次调用 `POST /goods/master/update` 锁定 `35247`。
-  - 多规格子 SKU 销售属性必须同时写入 `s.channelCategoryProperty.JD` 与 `s.masterChannelCategoryProperty.JD`（键名严禁误写为 `channelSaleProperty`），且规格值按 GBK 字节长度去重截断（`<= 28 bytes`）。
-- **已下架渠道异常挂起消除（`status = 3/4`）**：
-  - 对渠道侧已下架（`status = 3`）或平台驳回/禁售/超5000上限的历史挂起报错，调用 `POST /goods/task/batchUpdateStatusV3`（`operation: 0`）配合 `POST /goods/store/status`（`status: 3`，控制在 `<= 3 req/s` 避开限频）同步全量子 SKU 状态即可即时消除异常场景。
+- **京东（JD）类目/品牌校验与自动品牌重写根治方案**：
+  - **根因**：当主档 `base.brandId` 为 `null`、变更了 `brandId`、残留 `extendsAttributes`、或当 JD 后台类目（`channelBackCategoryList`）变更时，翱象后端会在 `POST /goods/master/update` 时根据主档品牌或商品标题关键词自动重算 JD 品牌（如标题含“尔木萄/苏泊尔/扬子”会被强制改写为受限品牌，或被改写为 `1746687` `其他（OTHER）`，触发 `品牌未关联此类目`、`该品牌暂不开放使用`、`该品牌平台限制销售`）。
+  - **彻底根治方案**：
+    1. 将主档品牌固定设为 `base.brandId = 2; base.brandName = "其它";`（**切勿设为 `null`**，因为 `brandId: null` 会触发后端按标题关键词自动识别品牌并覆盖 JD 品牌；而固定为 `2 / "其它"` 在第二次保存时因 `brandId` 未发生变动，后端不会重算覆盖 JD 品牌），并彻底 `delete base.extendsAttributes`；
+    2. 将 `base.channelBackCategoryList` 中 `channelCode === "JD"` 的类目映射至店铺营业执照经营范围内且支持无品牌的四级叶子类目（如文具/百货店通用合规类目 `53164`：`生活日用 > 冷暖防护 > 保暖用品 > 热水袋/暖手宝`，可同时消解 `此商品不在贵司营业执照的经营范围内` 与 `请挂载京东四级后台类目`）；
+    3. 将 `channelGeneralCategoryProperty.JD` 的品牌属性（`propertyId: "-20000"`）设为 `{ propertyValueId: "35247", propertyValueName: "无品牌", propertyValueType: null }`。**关键细节（防奇偶翻转陷阱）**：
+       - 翱象后端在 `POST /goods/master/update` 时会对 `channelGeneralCategoryProperty.JD` 做前后端 Diff：当数据库中当前 JD 品牌 `curBrandId !== "35247"`（如为 `1746687`）而传入 `"35247"` 时，后端识别为用户显式修改 JD 品牌并成功写入 `"35247"`；
+       - 但若数据库中当前 JD 品牌**已经是 `"35247"`**，再次调用 `POST /goods/master/update` 传入 `"35247"` 时，后端判定 `channelGeneralCategoryProperty.JD` 未变更，反而会用主档 `brandId: 2`（`其它` -> `1746687`）将其覆盖回 `1746687`！
+       - 因此，在第二次保存或重试前必须先检查 `det.data.channelGeneralCategoryProperty?.JD?.[0]?.currentValue?.[0]?.propertyValueId === "35247"`：若已为 `"35247"`，**严禁再次调用 `master/update`**，直接调用 `batchPublishV3` 即可；仅当其不为 `"35247"` 时才执行一次 `master/update`（保持 `channelBackCategoryList` 原样不动）。
+  - **多规格销售属性（`saleAttrValueName数据类型不正确`）**：
+    - 京东到家对多规格子 SKU 的销售属性值（`saleAttrValueName`）有严格字符与长度校验：必须清洗括号、斜杠等特殊符号，仅保留中文、字母、数字及连字符，且按 GBK 字节长度截断（`<= 28 bytes`）并保证同母品下各子规格值唯一；同时同步写入 `s.specification`、`s.masterSpecification`、`s.channelCategoryProperty.JD` 与 `s.masterChannelCategoryProperty.JD`。
+- **已下架渠道异常挂起消除（`status = 3/4`）与 5000 品容量上限识别**：
+  - 对渠道侧已铺品且处于下架/驳回状态（`status = 3` 或 `4`）的异常场景，调用 `POST /goods/store/status` 即可即时消除 `HAS_ERROR` 异常标签。注意其必填载荷结构为：
+    ```json
+    {
+      "storeCode": "CGWJHDNL",
+      "skuCode": "商品或子规格编码",
+      "items": [{ "channelCode": "ELE", "status": 3 }]
+    }
+    ```
+    （控制在 `600ms/req` 以避开 `SYSTEM_ERROR` 限流；切勿传入数组或扁平对象）。
+  - **京东到家 5000 品容量上限（`【京东铺品/更新异常】建品数量已达上限`）**：京东到家单店固定上限为 5000 个在库 SKU。对于从未在京东建品成功（`JD status = 0, outerSkuCode = null`）的商品，即便主档类目、品牌、规格属性已 100% 修复合规（不再报任何类目/品牌/属性错误），在店铺已满 5000 品时重推 JD 仍会返回 `建品数量已达上限`，且因 `status = 0` 无法通过 `/goods/store/status` 下架清除（会报 `店铺商品不存在，无法操作上下架`），需在交付报告中明确区分“商品自身规则属性已 100% 合规修复”与“渠道门店 5000 品容量上限限制”。

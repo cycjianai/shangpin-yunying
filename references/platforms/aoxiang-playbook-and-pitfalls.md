@@ -330,7 +330,8 @@ const payload = {
   - **定点修复步骤**：
     1. 若该商品真实品牌在京东当前类目下受限或未关联，可将主档品牌固定为 `base.brandId = 2; base.brandName = "其它";`（避免 `brandId: null` 触发标题关键词强制重写），并彻底 `delete base.extendsAttributes`；
     2. 仅针对明确报 `不在贵司营业执照的经营范围内` 或 `请挂载京东四级后台类目` 的商品，将其 `channelBackCategoryList` 中 `channelCode === "JD"` 的类目调整至店铺营业执照经营范围内的合规四级叶子类目；
-    3. 将受限品的 `channelGeneralCategoryProperty.JD` 品牌属性（`propertyId: "-20000"`）设为店铺已授权的对应品牌或 `{ propertyValueId: "35247", propertyValueName: "无品牌", propertyValueType: null }`。注意前后端 Diff 特性：若当前数据库内 JD 品牌已为目标值，无需重复调用 `master/update`。
+    3. 将受限品的 `channelGeneralCategoryProperty.JD` 品牌属性（`propertyId: "-20000"`）设为店铺已授权的对应品牌或 `{ propertyValueId: "35247", propertyValueName: "无品牌", propertyValueType: null }`。
+    4. **防 `t = 11s` 延迟队列回写无品牌机制（关键经验）**：当商品标题（`skuName`）含品牌词或原类目报 `该类目不支持经营无品牌商品` 时，若将 JD 品牌设为 `35247`（`无品牌`），翱象后端 `POST /goods/master/update` 触发的 11 秒延迟队列消费者会判定“未填真实品牌”并从标题自动识别品牌（或填入未关联类目的 `1746687` `其他（OTHER）`）覆盖回数据库并重推京东。此时应优先使用店铺在京东已提报关联的通用合规品牌 `{ propertyValueId: "1496148", propertyValueName: "OTHER/其他", propertyValueType: null }`（区别于未关联的 `1746687` `其他（OTHER）`）配合支持该品牌的合规叶子类目（如 `53164`），因 `1496148 !== "35247"`，延迟消费者不会覆盖该值，且可通过京东品牌类目关联校验。
   - **多规格销售属性（`saleAttrValueName数据类型不正确`）**：
     - 京东到家对多规格子 SKU 的销售属性值（`saleAttrValueName`）有严格字符与长度校验：必须清洗括号、斜杠等特殊符号，仅保留中文、字母、数字及连字符，且按 GBK 字节长度截断（`<= 28 bytes`）并保证同母品下各子规格值唯一；同时同步写入 `s.specification`、`s.masterSpecification`、`s.channelCategoryProperty.JD` 与 `s.masterChannelCategoryProperty.JD`。
 - **已下架渠道异常挂起消除（`status = 3/4`）与 5000 品容量上限识别**：

@@ -298,20 +298,39 @@ const payload = {
   - **强制判定规则**：绝对禁止仅凭当前门店列表 `row.goodsType === 1` 判断是否多规格！凡 `spuCode` 以 `@@` 开头、`originGoodsType === 1`、或 `relation/detail` 返回记录数 `> 1` 的商品，必须按完整母子规格全量装配 `skus`。
   - **关键字段路径**：`GET /goods/relation/detail?skuCode=...&relationType=1&positive=1` 返回数组中，每个子规格的 SKU 详情存放在 `relItem.masterGoods.skus[0]`（而非 `relItem.skuInfo.skus[0]`），重构 `base.skus` 时必须读取 `relItem.masterGoods?.skus?.[0]`，并在 `rebuilt.length > 1` 时显式保持 `base.goodsType = 1; base.originGoodsType = 1;`。
 
-### 3. 三渠道（ELE / MT / JD）高频规则报错闭环字典
+### 3. 防反向优化铁律：已有合规数据零篡改、非必填属性零冗余填充、真实品牌精准匹配（核心生命线）
+在批量治理“不符合渠道规则”商品时，最严重的事故是**“反向优化”**——将原本已正确填写且未报错的品牌（如“晨光（M&G）”、“得力（deli）”、“联想（Lenovo）”）、后台类目或非必填属性覆盖为“其他/无品牌”或乱填兜底默认值（如把音箱填上“十一喇叭、照明、线长100m”）。必须严格执行以下四条铁律：
+
+1. **未报错渠道与未报错已有属性 100% 原样保留（严禁重算覆盖）**：
+   - 每个商品在 `tabType: HAS_ERROR` 中都有明确的报错渠道与报错原因（`goodsErrorScene` 及 `channelGoods[].errorMessage`）。
+   - 若某渠道（如 `MT` 或 `JD`）当前**没有任何渠道规则报错**，其 `channelBackCategoryList`、`channelGeneralCategoryProperty` 及 `channelCategoryProperty` **必须 100% 保持原样**，严禁重新生成或覆盖！
+   - 即便某渠道存在部分属性缺失报错，对于该渠道下**原本已填写（`currentValue.length > 0`）且未被报错点名指出的属性（尤其是品牌）**，必须原封不动保留！
+   - **异步下拉属性防误判陷阱（`optionalValueGetType: "async"`）**：美团（`MT`）与饿了么（`ELE`）的“品牌”等大字典属性通常为异步检索属性（`optionalValue` 仅返回前几十条或为空）。**绝对禁止**用 `def.optionalValue.some(o => o.propertyValueId === existingId)` 去校验已有品牌是否合法，否则会把合法的“晨光（M&G）”（`1001818`）误判为不在列表内而覆盖成“其他”！
+2. **非必填属性（`needFlag === 0`）严禁主动填充**：
+   - 翱象类目属性定义中，`def.needFlag === 1` 为必填属性，`def.needFlag === 0` 为选填属性。
+   - 对于原本为空的选填属性（`needFlag === 0`），**必须保持为空数组 `[]`**，绝不允许拿 `optionalValue[0]` 去填满选填项（否则会产生“十一喇叭”、“线长100m”等荒谬虚假参数）。
+   - **唯一例外（联动条件必填）**：仅当渠道明确报错指出某条件属性必填（如饿了么化妆品当 `国产/进口 = 国产` 时，`化妆品生产许可证编号` 虽顶层 `needFlag: 0` 但联动必填），才按报错精准补齐该项。
+3. **基于 `matchChannelCategoryPropertyV3` 与跨渠道真实品牌字典精准匹配**：
+   - 获取类目属性模板时，必须优先调用 `POST /goods/master/matchChannelCategoryPropertyV3`（传入 `categoryId`、`channelCode`、`barcode`、`skuName`），接口会在每个属性定义上返回平台算法基于商品名和条码自动匹配的 `def.matchValue`。
+   - 当某渠道的“品牌”属性确实为空或明确报品牌错误时，按以下优先级精准匹配真实品牌：
+     1. 优先采用 `matchChannelCategoryPropertyV3` 返回的 `def.matchValue`（非“其他”）；
+     2. 结合商品标题（`skuName`）、主档 `brandName` 及兄弟渠道已有的正确品牌名称，在跨渠道真实品牌映射字典（如 `晨光 -> ELE: M＆G/晨光(11108589), MT: 晨光（M&G）(1001818), JD: 晨光（M&G）(18374)`）中精准匹配对应渠道的官方品牌 ID；
+     3. 仅当商品确属无品牌白牌商品且无任何品牌信息时，方可使用合规兜底（`其他/无品牌`）。
+4. **特定枚举语义防误选（如 `是否为特殊用途化妆品`）**：
+   - 在饿了么美妆/修容等类目下，`是否为特殊用途化妆品` 的候选项名称为 `["特殊化妆品", "非特殊化妆品"]`（而非简单的 `"是"/"否"`）。匹配普通化妆品时必须使用正则 `/非|否|不/.test(o.propertyValueName)` 选中 `"非特殊化妆品"`，严禁只匹配 `'否'` 失败后回退到 `opts[0]`（`"特殊化妆品"`，会触发特殊化妆品注册证号强校验）。
+
+### 4. 三渠道（ELE / MT / JD）高频规则报错闭环字典
 - **前台店铺分类映射失效（`不存在渠道前台类目映射` / `分类不存在`）**：
   - 通过 `GET /category/front/getFrontCategoryTree` 结合 `POST /category/front/compareDiffV2` 识别未同步至渠道的异常叶子分类，重映射至全渠道已同步的合规叶子分类（或调用 `POST /category/front/sync` 触发渠道前台分类树同步）。
 - **复合类目属性结构（`MULTI_INPUT_OPTION` / `INPUT_OPTION`）**：
   - 针对 ELE `材质成分`（如 `棉` + `100` + `%`）与 MT `商品尺寸`（长 `*` 宽 `*` 高 + `cm`），必须严格按照 `subCategoryPropertyList` 的子槽位顺序组装 `currentValue` 数组，保留 `READ_ONLY_INPUT` 分隔符（`*`）与单位下拉项 ID。
-- **京东（JD）类目/品牌校验与自动品牌重写根治方案**：
-  - **根因**：当主档 `base.brandId` 为 `null`、变更了 `brandId`、残留 `extendsAttributes`、或当 JD 后台类目（`channelBackCategoryList`）变更时，翱象后端会在 `POST /goods/master/update` 时根据主档品牌或商品标题关键词自动重算 JD 品牌（如标题含“尔木萄/苏泊尔/扬子”会被强制改写为受限品牌，或被改写为 `1746687` `其他（OTHER）`，触发 `品牌未关联此类目`、`该品牌暂不开放使用`、`该品牌平台限制销售`）。
-  - **彻底根治方案**：
-    1. 将主档品牌固定设为 `base.brandId = 2; base.brandName = "其它";`（**切勿设为 `null`**，因为 `brandId: null` 会触发后端按标题关键词自动识别品牌并覆盖 JD 品牌；而固定为 `2 / "其它"` 在第二次保存时因 `brandId` 未发生变动，后端不会重算覆盖 JD 品牌），并彻底 `delete base.extendsAttributes`；
-    2. 将 `base.channelBackCategoryList` 中 `channelCode === "JD"` 的类目映射至店铺营业执照经营范围内且支持无品牌的四级叶子类目（如文具/百货店通用合规类目 `53164`：`生活日用 > 冷暖防护 > 保暖用品 > 热水袋/暖手宝`，可同时消解 `此商品不在贵司营业执照的经营范围内` 与 `请挂载京东四级后台类目`）；
-    3. 将 `channelGeneralCategoryProperty.JD` 的品牌属性（`propertyId: "-20000"`）设为 `{ propertyValueId: "35247", propertyValueName: "无品牌", propertyValueType: null }`。**关键细节（防奇偶翻转陷阱）**：
-       - 翱象后端在 `POST /goods/master/update` 时会对 `channelGeneralCategoryProperty.JD` 做前后端 Diff：当数据库中当前 JD 品牌 `curBrandId !== "35247"`（如为 `1746687`）而传入 `"35247"` 时，后端识别为用户显式修改 JD 品牌并成功写入 `"35247"`；
-       - 但若数据库中当前 JD 品牌**已经是 `"35247"`**，再次调用 `POST /goods/master/update` 传入 `"35247"` 时，后端判定 `channelGeneralCategoryProperty.JD` 未变更，反而会用主档 `brandId: 2`（`其它` -> `1746687`）将其覆盖回 `1746687`！
-       - 因此，在第二次保存或重试前必须先检查 `det.data.channelGeneralCategoryProperty?.JD?.[0]?.currentValue?.[0]?.propertyValueId === "35247"`：若已为 `"35247"`，**严禁再次调用 `master/update`**，直接调用 `batchPublishV3` 即可；仅当其不为 `"35247"` 时才执行一次 `master/update`（保持 `channelBackCategoryList` 原样不动）。
+- **京东（JD）明确报类目/品牌受限时的定点修复方案（仅限明确报错品）**：
+  - **适用前提**：**仅当京东渠道明确报出** `品牌未关联此类目`、`该品牌暂不开放使用`、`该品牌平台限制销售`、`此商品不在贵司营业执照的经营范围内` 或 `请挂载京东四级后台类目` 时才对京东类目/品牌执行定点修复；若京东渠道未报上述错误，严禁改动其原有京东后台类目与京东品牌！
+  - **根因**：当主档 `base.brandId` 变更、残留 `extendsAttributes`、或京东报品牌/类目权限受限时，翱象后端会在 `POST /goods/master/update` 时根据主档品牌或商品标题关键词自动重算 JD 品牌。
+  - **定点修复步骤**：
+    1. 若该商品真实品牌在京东当前类目下受限或未关联，可将主档品牌固定为 `base.brandId = 2; base.brandName = "其它";`（避免 `brandId: null` 触发标题关键词强制重写），并彻底 `delete base.extendsAttributes`；
+    2. 仅针对明确报 `不在贵司营业执照的经营范围内` 或 `请挂载京东四级后台类目` 的商品，将其 `channelBackCategoryList` 中 `channelCode === "JD"` 的类目调整至店铺营业执照经营范围内的合规四级叶子类目；
+    3. 将受限品的 `channelGeneralCategoryProperty.JD` 品牌属性（`propertyId: "-20000"`）设为店铺已授权的对应品牌或 `{ propertyValueId: "35247", propertyValueName: "无品牌", propertyValueType: null }`。注意前后端 Diff 特性：若当前数据库内 JD 品牌已为目标值，无需重复调用 `master/update`。
   - **多规格销售属性（`saleAttrValueName数据类型不正确`）**：
     - 京东到家对多规格子 SKU 的销售属性值（`saleAttrValueName`）有严格字符与长度校验：必须清洗括号、斜杠等特殊符号，仅保留中文、字母、数字及连字符，且按 GBK 字节长度截断（`<= 28 bytes`）并保证同母品下各子规格值唯一；同时同步写入 `s.specification`、`s.masterSpecification`、`s.channelCategoryProperty.JD` 与 `s.masterChannelCategoryProperty.JD`。
 - **已下架渠道异常挂起消除（`status = 3/4`）与 5000 品容量上限识别**：

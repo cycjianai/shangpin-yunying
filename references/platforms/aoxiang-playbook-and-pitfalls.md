@@ -298,25 +298,37 @@ const payload = {
   - **强制判定规则**：绝对禁止仅凭当前门店列表 `row.goodsType === 1` 判断是否多规格！凡 `spuCode` 以 `@@` 开头、`originGoodsType === 1`、或 `relation/detail` 返回记录数 `> 1` 的商品，必须按完整母子规格全量装配 `skus`。
   - **关键字段路径**：`GET /goods/relation/detail?skuCode=...&relationType=1&positive=1` 返回数组中，每个子规格的 SKU 详情存放在 `relItem.masterGoods.skus[0]`（而非 `relItem.skuInfo.skus[0]`），重构 `base.skus` 时必须读取 `relItem.masterGoods?.skus?.[0]`，并在 `rebuilt.length > 1` 时显式保持 `base.goodsType = 1; base.originGoodsType = 1;`。
 
-### 3. 防反向优化铁律：已有合规数据零篡改、非必填属性零冗余填充、真实品牌精准匹配（核心生命线）
-在批量治理“不符合渠道规则”商品时，最严重的事故是**“反向优化”**——将原本已正确填写且未报错的品牌（如“晨光（M&G）”、“得力（deli）”、“联想（Lenovo）”）、后台类目或非必填属性覆盖为“其他/无品牌”或乱填兜底默认值（如把音箱填上“十一喇叭、照明、线长100m”）。必须严格执行以下四条铁律：
+### 3. 防反向优化铁律：“使用推荐”全量优先、标题语义事实提取、非推荐选填项零冗余填充（核心生命线）
+在批量治理“不符合渠道规则”商品时，最严重的事故是**“反向优化”**——将原本已正确填写且未报错的品牌（如“晨光（M&G）”、“得力（deli）”、“联想（Lenovo）”）、后台类目或属性覆盖为“其他/无品牌”，或忽略平台自带的“使用推荐”信息而乱填兜底默认值（如把音箱填上“十一喇叭、照明、线长100m”）。必须严格执行以下五条铁律：
 
-1. **未报错渠道与未报错已有属性 100% 原样保留（严禁重算覆盖）**：
-   - 每个商品在 `tabType: HAS_ERROR` 中都有明确的报错渠道与报错原因（`goodsErrorScene` 及 `channelGoods[].errorMessage`）。
-   - 若某渠道（如 `MT` 或 `JD`）当前**没有任何渠道规则报错**，其 `channelBackCategoryList`、`channelGeneralCategoryProperty` 及 `channelCategoryProperty` **必须 100% 保持原样**，严禁重新生成或覆盖！
-   - 即便某渠道存在部分属性缺失报错，对于该渠道下**原本已填写（`currentValue.length > 0`）且未被报错点名指出的属性（尤其是品牌）**，必须原封不动保留！
-   - **异步下拉属性防误判陷阱（`optionalValueGetType: "async"`）**：美团（`MT`）与饿了么（`ELE`）的“品牌”等大字典属性通常为异步检索属性（`optionalValue` 仅返回前几十条或为空）。**绝对禁止**用 `def.optionalValue.some(o => o.propertyValueId === existingId)` 去校验已有品牌是否合法，否则会把合法的“晨光（M&G）”（`1001818`）误判为不在列表内而覆盖成“其他”！
-2. **非必填属性（`needFlag === 0`）严禁主动填充**：
+1. **平台“使用推荐”（`def.matchValue`）全量第一优先级采纳（点亮 `已使用系统推荐信息 Y/Y`）**：
+   - 获取类目属性模板时，必须调用 `POST /goods/master/matchChannelCategoryPropertyV3`（传入 `categoryId`、`channelCode`、`barcode`、`skuName`），接口会在每个属性定义上返回平台算法基于商品名和条码自动匹配的 `def.matchValue`（对应翱象前端 UI 的“使用推荐”按钮）。
+   - 凡 `def.matchValue` 非空且非“其他”的属性（无论是必填项 `needFlag === 1` 还是选填项 `needFlag === 0`，如音箱的 `品牌: 联想（Lenovo）`、`商品类别: 电脑音箱`、`连接方式: 有线`、`适用场景: 桌面`），**一律第一优先级直接采纳 `def.matchValue`**，使翱象前端显示 `已使用系统推荐信息 (Y/Y)`。
+   - **`INPUT_OPTION` 复合属性推荐值拆分陷阱（防 `propertyValueId: "-1"` 报错）**：当属性 `def.valueType === "INPUT_OPTION"`（如 `包装数量`、`数量（支）`、`容量`、`净含量`、`长度（m）`）时，`matchChannelCategoryPropertyV3` 返回的 `def.matchValue` 为单元素组合对象 `[{ propertyValueId: "-1", propertyValueName: "1个" }]`。若直接原样提交给 `POST /goods/master/update`，饿了么会报错 `以下类目属性未更新：包装数量`。必须将 `propertyValueName`（如 `"1个"`）拆分为标准的 2 槽位数组后再提交：
+     ```json
+     [
+       { "propertyValueId": "", "propertyValueName": "1", "propertyValueType": "INPUT" },
+       { "propertyValueId": "20010", "propertyValueName": "个", "propertyValueType": "SELECT" }
+     ]
+     ```
+2. **无推荐值的非必填属性（`needFlag === 0`）严禁主动填充**：
    - 翱象类目属性定义中，`def.needFlag === 1` 为必填属性，`def.needFlag === 0` 为选填属性。
-   - 对于原本为空的选填属性（`needFlag === 0`），**必须保持为空数组 `[]`**，绝不允许拿 `optionalValue[0]` 去填满选填项（否则会产生“十一喇叭”、“线长100m”等荒谬虚假参数）。
+   - 对于 `def.needFlag === 0` 且平台无推荐值（`def.matchValue` 为空）的选填属性，**必须保持为空数组 `[]`**，绝不允许拿 `optionalValue[0]` 或固定数值去填满选填项（彻底杜绝“线长 100.00 m”、“提供礼赠包装：普通包装”、“是否有显示屏：无显示屏”、“功能特点：照明”等荒谬虚假参数）。
    - **唯一例外（联动条件必填）**：仅当渠道明确报错指出某条件属性必填（如饿了么化妆品当 `国产/进口 = 国产` 时，`化妆品生产许可证编号` 虽顶层 `needFlag: 0` 但联动必填），才按报错精准补齐该项。
-3. **基于 `matchChannelCategoryPropertyV3` 与跨渠道真实品牌字典精准匹配**：
-   - 获取类目属性模板时，必须优先调用 `POST /goods/master/matchChannelCategoryPropertyV3`（传入 `categoryId`、`channelCode`、`barcode`、`skuName`），接口会在每个属性定义上返回平台算法基于商品名和条码自动匹配的 `def.matchValue`。
-   - 当某渠道的“品牌”属性确实为空或明确报品牌错误时，按以下优先级精准匹配真实品牌：
-     1. 优先采用 `matchChannelCategoryPropertyV3` 返回的 `def.matchValue`（非“其他”）；
-     2. 结合商品标题（`skuName`）、主档 `brandName` 及兄弟渠道已有的正确品牌名称，在跨渠道真实品牌映射字典（如 `晨光 -> ELE: M＆G/晨光(11108589), MT: 晨光（M&G）(1001818), JD: 晨光（M&G）(18374)`）中精准匹配对应渠道的官方品牌 ID；
-     3. 仅当商品确属无品牌白牌商品且无任何品牌信息时，方可使用合规兜底（`其他/无品牌`）。
-4. **特定枚举语义防误选（如 `是否为特殊用途化妆品`）**：
+3. **已有合规数据 100% 保护与“其他”值语义纠偏**：
+   - 若某属性已有非“其他”的真实值（如品牌已填“晨光”、“得力”、“联想”），且未被渠道规则点名报错，必须保留真实值，严禁降级覆盖为“其他/无品牌”！
+   - **异步下拉属性防误判陷阱（`optionalValueGetType: "async"`）**：美团（`MT`）与饿了么（`ELE`）的“品牌”等大字典属性通常为异步检索属性（`optionalValue` 仅返回前几十条或为空）。**绝对禁止**用 `def.optionalValue.some(o => o.propertyValueId === existingId)` 去校验已有品牌是否合法，否则会把合法的“晨光（M&G）”（`1001818`）误判为不在列表内而覆盖成“其他”！
+4. **基于商品标题（`skuName`）与规格（`specification`）的深度语义事实提取**：
+   - 当某必填属性（`needFlag === 1`）无平台推荐值，或此前被错误填成了“其他”时，必须结合商品标题与规格做语义事实匹配：
+     - **真实品牌**：结合商品标题、主档 `brandName` 及兄弟渠道已有品牌，在跨渠道真实品牌映射字典（如 `晨光 -> ELE: M＆G/晨光(11108589), MT: 晨光（M&G）(1001818), JD: 晨光（M&G）(18374)`；`联想 -> MT/JD: 联想（Lenovo）`）中匹配对应渠道的官方品牌 ID；
+     - **数码/音箱属性**：如 `联想异能者音响电脑音箱有线迷你小型USB多媒体笔记本桌面台式S28 1个`，自动从标题中的 `有线`、`USB`、`桌面`、`电脑音箱` 语义匹配美团必填项 `供电方式: 外接电源`、`连接方式: usb`；
+     - **材质/品类/数量属性**：如 `晨光 ARL96178铝合金套尺直尺量角器直角三角尺四件套` 自动提取 `材质: 铝合金`、`品类: 套尺`、`包装数量: 4套/1套`。
+   - **三大高频正则与类型陷阱避坑**：
+     1. **精确判断“其他”**：严禁用模糊包含 `/other|其他|其它/i` 判断属性值是否为“其他”（会把合法品牌 `HICON（其它影音产品）` 误判为“其他”而覆盖！），必须使用首尾锚定 `/^(other|其他|其它|other\/其他|其他\/other|无品牌)$/i`。
+     2. **数量提取防小数误读**：从标题提取支数/个数时，严禁匹配小数点后的数字（如 `0.5mm` 中性笔不能被提取为 `5支` 或 `0.5支`），正则必须限定数字前非小数点：`/(?:^|[^.\d])(\d{1,4})\s*(支|只|个|套|本|张|页|包|盒|袋|卷|块|把|双|对|条|片|粒|枚|根)/`。
+     3. **美团 `valueType: null` 下拉属性识别**：美团部分枚举下拉属性的 `def.valueType` 为 `null`（但 `def.optionalValue.length > 0`），判定是否为下拉选择属性时必须判断 `def.optionalValue?.length > 0 || def.valueType === "SELECT" || def.valueType === "MULTI_SELECT"`，严禁因 `valueType === null` 落入 `INPUT` 文本分支填入纯数字 `"2"`。
+     4. **复合候选词反查防误匹配**：候选词含斜杠时（如 `一次性内裤/袜子`），若标题仅含“袜子”，切勿将斜杠切分后的首词 `"一次性内裤"` 当作匹配命中而填入单选其他项。
+5. **特定枚举语义防误选（如 `是否为特殊用途化妆品`）**：
    - 在饿了么美妆/修容等类目下，`是否为特殊用途化妆品` 的候选项名称为 `["特殊化妆品", "非特殊化妆品"]`（而非简单的 `"是"/"否"`）。匹配普通化妆品时必须使用正则 `/非|否|不/.test(o.propertyValueName)` 选中 `"非特殊化妆品"`，严禁只匹配 `'否'` 失败后回退到 `opts[0]`（`"特殊化妆品"`，会触发特殊化妆品注册证号强校验）。
 
 ### 4. 三渠道（ELE / MT / JD）高频规则报错闭环字典

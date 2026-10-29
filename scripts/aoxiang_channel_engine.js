@@ -256,6 +256,7 @@
       return current.every((value) => {
         if (!valueName(value)) return false;
         if (definition?.supportExtend === "1" && !optionList(definition).length) return true;
+        if (definition?.optionalValueGetType === "async" && valueId(value) && valueId(value) !== "-1") return true;
         if (!optionList(definition).length) return Boolean(valueId(value) || valueName(value));
         return Boolean(findOption(definition, value));
       });

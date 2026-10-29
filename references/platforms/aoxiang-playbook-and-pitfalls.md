@@ -12,8 +12,11 @@
 1. **主档详情 `master/detail?skuCode=...` 接口的静默截断**：
    - 翱象的 `goods/master/detail` 接口在传入父级或某一子规格编码时，返回的 `skus` 数组往往**只包含当前单个 SKU 节点**，甚至不包含其他兄弟子规格。
    - 如果直接使用 `master/detail` 的返回对象修改名称后直接 POST `master/update`，翱象后端会以传入的 `skus` 数组强行覆盖主档的全部规格，导致其他所有子规格被底层物理清空！
-2. **多规格关系的独立存储**：
+2. **多规格关系的独立存储与 `masterDetail.goodsType === 0` 陷阱（高危！）**：
    - 翱象将多规格关联关系独立存储于 `goods/relation/detail` 接口中，未在主档详情中自动平铺。
+   - **严禁以 `if (masterDetail.goodsType === 1 || String(skuCode).startsWith('@@'))` 作为是否调用 `relation/detail` 的前置判断条件！**
+   - **原因**：在 `goods/store/pageV3` 列表中，多规格商品返回的主行 `item.skuCode` 是首个子 SKU 编码（如 `691090469`），而 `item.spuCode` 才是母 SPU 编码（如 `@@113552033`）。当用子 SKU 编码请求 `goods/master/detail?skuCode=691090469` 时，接口返回的 `masterDetail.goodsType` 恒为 **`0`**（而非 `1`）！若错误地用 `masterDetail.goodsType === 1` 门控 `relation/detail`，会导致所有多规格商品跳过 `relation/detail` 重构，直接以单条 `skus` 提交 `master/update`，致使所有兄弟子规格从主档及门店被归档删除！
+   - **铁律**：每次调用 `master/update` 前，**必须无条件强制调用 `goods/relation/detail?skuCode=${encodeURIComponent(skuCode)}&relationType=1&positive=1`**（或同时校验 `masterDetail.spuCode` / 初始备份 `multiSubGoods`）。
 
 ### 2. 多规格安全修改的标准链路（三步法）
 

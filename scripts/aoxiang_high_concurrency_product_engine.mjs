@@ -189,28 +189,30 @@ export async function runAoxiangBatchTask(options) {
         });
       }
 
-      const storeGoodsCustomFields = newSkus.map(s => ({
-        barcodes: s.barcodes,
-        skuCode: s.skuCode,
-        storeGoodsCustomSaleStartWithFlag: s.storeGoodsCustomSaleStartWithFlag,
-        saleStartWith: s.saleStartWith,
-        weightUnit: s.weightUnit,
-        weightForUnit: s.weightForUnit,
-        specification: s.specification,
-        channelCategoryProperty: s.channelCategoryProperty,
-        cabinetCodeList: s.cabinetCodeList || []
-      }));
+      for (const s of newSkus) {
+        delete s.stockNum;
+        delete s.prepareStockNum;
+        delete s.cabinetCode;
+        delete s.cabinetCodeList;
+      }
 
       const payload = {
         ...detail,
-        skuName: task.newTitle,
-        goodsType: newSkus.length > 1 ? 1 : detail.goodsType,
-        originGoodsType: newSkus.length > 1 ? 1 : detail.originGoodsType,
+        skuName: task.newTitle || detail.skuName,
+        goodsType: newSkus.length > 1 ? 1 : Number(detail.goodsType || 0),
+        originGoodsType: newSkus.length > 1 ? 1 : Number(detail.originGoodsType || 0),
         specification: newSkus[0]?.specification || detail.specification,
         skus: newSkus,
-        storeGoodsCustomFields,
-        storeGoodsCustomFieldsJson: JSON.stringify(storeGoodsCustomFields)
+        skipPublishStore: true,
+        updateOnExitActivityFlag: 0
       };
+      for (const k of [
+        "stockNum", "prepareStockNum", "cabinetCode", "cabinetCodeList",
+        "storeGoodsCustomFields", "storeGoodsCustomFieldsJson",
+        "sourceStoreCode", "sourceStoreName", "currentStoreCode", "extendsAttributes"
+      ]) {
+        delete payload[k];
+      }
 
       if (payload.skus.length < expectedSkuCount || (spuCode.startsWith("@@") && payload.skus.length <= 1)) {
         throw new Error(`FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED: 严禁将多规格商品 (${rawCode} / ${spuCode}) 覆盖为单规格 (skus.length=${payload.skus.length}, expected=${expectedSkuCount})`);

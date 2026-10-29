@@ -78,17 +78,32 @@
     return Array.isArray(definition?.optionalValue) ? definition.optionalValue : [];
   }
 
+  function isGenericOtherValue(val) {
+    const name = valueName(val).trim();
+    return /^(?:other\/其他|other|其他品牌|其它品牌|其他|其它|无品牌|无)$/i.test(name);
+  }
+
   function findOption(definition, wanted) {
     const options = optionList(definition);
     if (!options.length || wanted == null) return null;
     const wantedId = valueId(wanted);
-    const wantedName = normalizeText(typeof wanted === "object" ? valueName(wanted) : wanted);
-    if (wantedId) {
+    const rawWantedText = String(typeof wanted === "object" ? valueName(wanted) : wanted).trim();
+    const wantedName = normalizeText(rawWantedText);
+    if (wantedId && wantedId !== "-1") {
       const byId = options.find((option) => valueId(option) === wantedId);
       if (byId) return clone(byId);
     }
     if (!wantedName) return null;
     let found = options.find((option) => normalizeText(valueName(option)) === wantedName);
+    if (found) return clone(found);
+    // 支持按斜杠/括号全词段匹配（如 "M＆G/晨光"、"Deli/得力"）
+    const wantedSegments = rawWantedText.split(/[\/（()）]/).map((s) => normalizeText(s)).filter((s) => s.length >= 2);
+    found = options.find((option) => {
+      const rawOpt = valueName(option);
+      const optSegments = rawOpt.split(/[\/（()）]/).map((s) => normalizeText(s)).filter(Boolean);
+      if (optSegments.includes(wantedName)) return true;
+      return wantedSegments.some((ws) => optSegments.includes(ws));
+    });
     if (found) return clone(found);
     found = options.find((option) => {
       const name = normalizeText(valueName(option));
@@ -111,22 +126,39 @@
     const type = definition?.valueType;
     if (type === "SELECT" || type === "MULTI_SELECT") {
       const mapped = raw.map((value) => findOption(definition, value) || clone(value)).filter(Boolean);
-      if (definition?.supportExtend !== "1" && optionList(definition).length) {
+      // 注意：optionalValueGetType === "async" 的大字典属性（如品牌），optionalValue 仅返回前几十条，已有真实 ID 不可被误过滤！
+      if (definition?.supportExtend !== "1" && definition?.optionalValueGetType !== "async" && optionList(definition).length) {
         return mapped.filter((value) => Boolean(findOption(definition, value)));
       }
       return mapped;
     }
     if (type === "INPUT") {
       const name = valueName(raw[0]);
-      return name ? [makeValue(name, "INPUT", raw[0]?.propertyValueId)] : [];
+      return name ? [makeValue(name, "INPUT", raw[0]?.propertyValueId === "-1" ? null : raw[0]?.propertyValueId)] : [];
     }
     if (type === "INPUT_OPTION") {
+      // 兼容 matchChannelCategoryPropertyV3 返回单元素组合值（如 [{ propertyValueId: "-1", propertyValueName: "1个" }]）
+      if (raw.length === 1 && valueName(raw[0])) {
+        const combined = valueName(raw[0]).trim();
+        const m = combined.match(/^(-?\d+(?:\.\d+)?)\s*(.+)$/);
+        if (m) {
+          const numStr = m[1];
+          const unitStr = m[2].trim();
+          const unitOpt = findOption(definition, unitStr) || optionList(definition)[0];
+          if (unitOpt) {
+            return [
+              makeValue(numStr, "INPUT", null),
+              makeValue(valueName(unitOpt), "SELECT", valueId(unitOpt) || null),
+            ];
+          }
+        }
+      }
       const first = raw[0];
       const unitRaw = raw[1];
       const unit = findOption(definition, unitRaw) || unitRaw;
       if (!valueName(first) || !valueName(unit)) return [];
       return [
-        makeValue(valueName(first), "INPUT", first?.propertyValueId),
+        makeValue(valueName(first), "INPUT", first?.propertyValueId === "-1" ? null : first?.propertyValueId),
         makeValue(valueName(unit), "SELECT", valueId(unit) || null),
       ];
     }
@@ -758,23 +790,55 @@
     if (COUNT_FIELD_RE.test(fieldName)) {
       const counted = chooseCount(definition, fieldName, text);
       if (counted.length) return counted;
+      // 未明确标注数量时默认填 1
+      if (definition.valueType === "INPUT") return [makeValue("1", "INPUT", null)];
+      if (definition.valueType === "INPUT_OPTION" && optionList(definition).length) {
+        const unit = optionList(definition)[0];
+        return [makeValue("1", "INPUT", null), makeValue(valueName(unit), "SELECT", valueId(unit))];
+      }
     }
     if (MEASURE_FIELD_RE.test(fieldName)) {
       const measured = chooseMeasurement(definition, fieldName, text);
       if (measured.length) return measured;
+      // 规则 2：长度/线长/尺寸/直径/厚度/高度/传输距离/续航未在标题明确标注时，一律默认填 0（或按 minValue 钳位），严禁乱填 100m！
+      if (/长度|线长|尺寸|直径|厚度|高度|传输距离|续航/.test(fieldName)) {
+        const constraint = scalarConstraint(definition, 0);
+        const safeNum = constraint.min != null && constraint.min > 0 ? String(constraint.min) : "0";
+        if (definition.valueType === "INPUT") return [makeValue(safeNum, "INPUT", null)];
+        if (definition.valueType === "INPUT_OPTION") {
+          const unit = findOption(definition, "m") || findOption(definition, "cm") || optionList(definition)[0];
+          if (unit) return [makeValue(safeNum, "INPUT", null), makeValue(valueName(unit), "SELECT", valueId(unit))];
+        }
+      }
     }
     if (definition.valueType === "SELECT" || definition.valueType === "MULTI_SELECT") {
+      // 规则 35：礼赠包装/赠品默认否定契约（最高优先级）
+      if (/礼赠|礼品包装|赠品|是否赠|附赠/.test(fieldName)) {
+        for (const neg of ["普通包装", "无礼袋", "无赠品", "不赠送", "无", "否", "非礼盒"]) {
+          const foundNeg = findOption(definition, neg);
+          if (foundNeg) return [foundNeg];
+        }
+        return [];
+      }
       const titleChoice = chooseOptionByTitle(definition, fieldName, text);
       if (titleChoice.length) return titleChoice;
       const preferences = /品牌/.test(fieldName)
         ? ["other/其他", "其他品牌", "无品牌", "其他"]
-        : /售卖方式/.test(fieldName) && /(?:\d+(?:\.\d+)?\s*(?:ml|mL|L|g|kg|克|千克|瓶|罐|袋|包|盒|箱))|预包装/.test(text)
-          ? ["预包装"]
-          : /是否|可否|支持/.test(fieldName) && /不支持|不可|不能|无|否/.test(text)
-            ? ["否", "不支持", "不可", "无"]
-            : /是否|可否|支持/.test(fieldName) && /支持|可以|可用|是/.test(text)
-              ? ["是", "支持", "可以"]
-              : [];
+        : /国产|进口/.test(fieldName)
+          ? ["国产", "中国大陆", "中国"]
+          : /产地/.test(fieldName)
+            ? ["中国大陆", "中国"]
+            : /是否有机/.test(fieldName)
+              ? ["非有机", "否"]
+              : /特殊用途化妆品|特殊化妆品/.test(fieldName)
+                ? ["否", "非特殊化妆品"]
+                : /形状|适用场景|适用人群/.test(fieldName)
+                  ? ["通用", "常规", "日常", "成人", "其他"]
+                  : /售卖方式/.test(fieldName)
+                    ? ["预包装", "其他"]
+                    : /是否|可否|支持|有无/.test(fieldName)
+                      ? ["否", "无", "不支持", "不带", "其他"]
+                      : ["其他", "其它", "通用", "常规", "普通", "标准"];
       for (const preference of preferences) {
         const option = optionList(definition).find((item) => {
           const label = normalizeText(valueName(item));
@@ -912,21 +976,38 @@
       const planned = [];
       for (const definition of definitions) {
         const required = isRequiredDefinition(definition, channel, requiredFieldsByChannel);
+        const fillTarget = required || !REGULATED_FIELD_RE.test(definition.propertyName);
         const before = currentByDefinition(detail, channel, definition);
         const rawBefore = rawCurrentByDefinition(detail, channel, definition);
         const diagnosedInvalid = requiredFieldsByChannel?.[channel]?.has?.(
           normalizeFieldName(definition.propertyName),
         );
-        let current = diagnosedInvalid ? [] : before;
+        // 第一梯队：优先检查官方“使用推荐” matchValue（过滤伪推荐 "other/其他" 防止覆盖真实品牌）
+        let matchedCandidate = materializeValues(definition, definition.matchValue);
+        if (!isValidValues(definition, matchedCandidate) && (definition.matchValue || []).length) {
+          matchedCandidate = valuesFromEvidence(definition, [{ values: definition.matchValue }]);
+        }
+        const matchIsGenericOther = matchedCandidate.length > 0 && matchedCandidate.every(isGenericOtherValue);
+        const beforeHasRealNonOther = !diagnosedInvalid && isValidValues(definition, before) && !before.every(isGenericOtherValue);
+        let current = [];
         let source = "existing_channel_value";
-        if (required && !isValidValues(definition, current)) {
-          current = materializeValues(definition, definition.matchValue);
+        if (
+          isValidValues(definition, matchedCandidate)
+          && !contradictsExplicitProduct(definition, matchedCandidate, detail)
+          && !(matchIsGenericOther && beforeHasRealNonOther)
+          && !matchIsGenericOther
+        ) {
+          current = matchedCandidate;
           source = "platform_match";
-          const recommendationConflict = contradictsExplicitProduct(definition, current, detail);
-          if (recommendationConflict) current = [];
-          if (!recommendationConflict && !isValidValues(definition, current) && (definition.matchValue || []).length) {
-            current = valuesFromEvidence(definition, [{ values: definition.matchValue }]);
-          }
+        } else if (beforeHasRealNonOther && !contradictsExplicitProduct(definition, before, detail)) {
+          // 第二梯队：保留原有真实非“其他”合规值
+          current = before;
+          source = "existing_channel_value";
+        } else if (!diagnosedInvalid && isValidValues(definition, before) && !contradictsExplicitProduct(definition, before, detail) && /品牌/.test(definition.propertyName) === false) {
+          current = before;
+          source = "existing_channel_value";
+        }
+        if (fillTarget && !isValidValues(definition, current)) {
           if (!isValidValues(definition, current)) {
             const crossCandidates = evidence.filter(
               (entry) => entry.channel !== channel && entry.field === normalizeFieldName(definition.propertyName),
@@ -1199,14 +1280,12 @@
       productNameSupplement: detail.productNameSupplement,
       pictureList: pictures,
       storeGoodsCustomPictureFlag: Number(detail.storeGoodsCustomPictureFlag || 0),
-      cabinetCodeList: clone(firstSku.cabinetCodeList || []),
-      storeGoodsCustomFields,
-      storeGoodsCustomFieldsJson: JSON.stringify(storeGoodsCustomFields),
       goodsStatus: Number(detail.goodsStatus || 0),
       videoUrls: clone(detail.videoUrls || []),
       videoIds: clone(detail.videoIds || []),
       channelGeneralCategoryProperty: clone(plannedProperties),
       channelAfterSaleRuleMap: clone(detail.channelAfterSaleRuleMap || {}),
+      skipPublishStore: true,
       updateOnExitActivityFlag: 0,
       purchaseUnit: detail.purchaseUnit || firstSku.purchaseUnit || firstSku.inventoryUnit,
       purchaseSpec: detail.purchaseSpec || firstSku.purchaseSpec || 1,

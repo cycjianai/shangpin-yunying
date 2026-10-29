@@ -76,31 +76,34 @@ if (relList && relList.length > 0) {
 }
 ```
 
-### 3. 多渠道自定义字段同步装配
-在 payload 中，`storeGoodsCustomFields` 与 `storeGoodsCustomFieldsJson` 必须同步映射全量子规格：
+### 3. 主档更新 Payload 组装与防串店/防库存库位污染剥离规范
+在组装 `POST /goods/master/update` 的 `payload` 时，除了必须传入全量重构后的 `skus: fullSkus` 并保持 `goodsType: fullSkus.length > 1 ? 1 : 0` 外，**必须强制剥离门店自定义残留字段、库存字段、库位字段及来源门店字段（防止触发 `bizTaskType: 14` 跨店污染或覆盖门店库存/库位）**：
 ```javascript
-const storeGoodsCustomFields = fullSkus.map(s => ({
-  barcodes: s.barcodes,
-  skuCode: s.skuCode,
-  storeGoodsCustomSaleStartWithFlag: s.storeGoodsCustomSaleStartWithFlag,
-  saleStartWith: s.saleStartWith,
-  weightUnit: s.weightUnit,
-  weightForUnit: s.weightForUnit,
-  specification: s.specification,
-  channelCategoryProperty: s.channelCategoryProperty,
-  cabinetCodeList: s.cabinetCodeList || []
-}));
-
 const payload = {
   ...masterDetail,
   skuName: newTitle,
-  goodsType: fullSkus.length > 1 ? 1 : masterDetail.goodsType,
-  originGoodsType: fullSkus.length > 1 ? 1 : masterDetail.originGoodsType,
+  goodsType: fullSkus.length > 1 ? 1 : Number(masterDetail.goodsType || 0),
+  originGoodsType: fullSkus.length > 1 ? 1 : Number(masterDetail.originGoodsType || 0),
   specification: fullSkus[0]?.specification || masterDetail.specification,
   skus: fullSkus,
-  storeGoodsCustomFields,
-  storeGoodsCustomFieldsJson: JSON.stringify(storeGoodsCustomFields)
+  skipPublishStore: true,
+  updateOnExitActivityFlag: 0
 };
+
+// 强制剥离防串店、防库存库位覆盖字段（主对象 + 每个子 SKU）
+for (const key of [
+  "stockNum", "prepareStockNum", "cabinetCode", "cabinetCodeList",
+  "storeGoodsCustomFields", "storeGoodsCustomFieldsJson",
+  "sourceStoreCode", "sourceStoreName", "currentStoreCode", "extendsAttributes"
+]) {
+  delete payload[key];
+}
+for (const sku of payload.skus) {
+  delete sku.stockNum;
+  delete sku.prepareStockNum;
+  delete sku.cabinetCode;
+  delete sku.cabinetCodeList;
+}
 ```
 
 ### 3.5 四道代码级防降级硬门禁（杜绝“看了 Skill 仍然写错”的物理熔断器）
@@ -258,7 +261,7 @@ const payload = {
 
 ---
 
-## 三、性能翻倍：如何将翱象并发开到最高？
+## 四、性能翻倍：如何将翱象并发开到最高？
 
 为了实现数万级商品在数十分钟内极速治理，必须彻底摒弃基于浏览器 UI 点击的低速方案，直接采用**基于 Playwright CDP 注入原生 HTTP Pipeline 的超高并发架构**。
 
@@ -279,7 +282,7 @@ const payload = {
 
 ---
 
-## 四、安全留底与核验闭环
+## 五、安全留底与核验闭环
 
 1. **写前快照（Snapshot）**：
    - 在高并发发送修改请求前，将当前商品的原始详情与 relation 数据落盘到 `runs/snapshots/` 目录下，确保随时可无损一键恢复。
@@ -289,7 +292,7 @@ const payload = {
 
 ---
 
-## 五、多门店共享主档防串店、库位保护与三渠道（ELE/MT/JD）“不符合渠道规则”治理规范（2026-10 实战总结）
+## 六、多门店共享主档防串店、库位保护与三渠道（ELE/MT/JD）“不符合渠道规则”治理规范（2026-10 实战总结）
 
 在连锁商户（如 `BJ_BJXBT_QQD` 下辖 `CGWJHDNL` 海淀南路店与 `CGWJCS` 塔园店）治理门店商品管理 `tabType: HAS_ERROR`（“不符合渠道规则”）时，必须严格遵守以下多门店与多规格防污染红线：
 

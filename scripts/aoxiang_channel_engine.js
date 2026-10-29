@@ -1118,8 +1118,28 @@
     };
   }
 
+  function assertMultiSpecSafe(detail, skus) {
+    const expectedCount = Number(detail?._expectedSkuCount || 1);
+    const hasMultiSpu = String(detail?.spuCode || "").startsWith("@@") || Number(detail?.goodsType) === 1 || Number(detail?.originGoodsType) === 1;
+    if (detail?._relationVerified === false) {
+      throw new Error("FATAL_MULTI_SPEC_GUARD_MISSING: /goods/relation/detail was not verified before building master/update payload");
+    }
+    if (skus.length < expectedCount) {
+      throw new Error(`FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED: payload skus.length (${skus.length}) < expectedSkuCount (${expectedCount})`);
+    }
+    if (hasMultiSpu && skus.length <= 1 && expectedCount > 1) {
+      throw new Error(`FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED: multi-spec SPU (${detail?.spuCode}) cannot be saved with skus.length=${skus.length}`);
+    }
+  }
+
   function buildSavePayload(detail, plannedProperties) {
-    const skus = (detail.skus || []).map((sku) => normalizeSku(detail, sku));
+    const skus = (detail.skus || []).map((sku, index) => {
+      const normalized = normalizeSku(detail, sku);
+      normalized.specRank = sku.specRank || sku.rank || (index + 1);
+      normalized.rank = sku.rank || sku.specRank || (index + 1);
+      return normalized;
+    });
+    assertMultiSpecSafe(detail, skus);
     const firstSku = skus[0] || {};
     const pictures = [detail.mainPic, ...(detail.subPic || [])].filter(Boolean);
     const specialPictures = Array.isArray(detail.specialPictures) ? clone(detail.specialPictures) : [];
@@ -1319,6 +1339,78 @@
     return requestJson(task, `/goods/master/detail?skuCode=${encodeURIComponent(skuCode)}`);
   }
 
+  async function fetchRelationList(task, code) {
+    if (!code) return [];
+    const res = await requestJson(
+      task,
+      `/goods/relation/detail?skuCode=${encodeURIComponent(code)}&relationType=1&positive=1`,
+    );
+    return Array.isArray(res?.data) ? res.data : [];
+  }
+
+  async function hydrateRelationSkus(task, detail, row) {
+    const rawCode = String(row?.skuCode || detail?.skus?.[0]?.skuCode || "");
+    const spuCode = String(detail?.spuCode || row?.spuCode || "");
+    let relList = await fetchRelationList(task, rawCode);
+    if ((!relList || relList.length <= 1) && spuCode.startsWith("@@") && spuCode !== rawCode) {
+      const spuRelList = await fetchRelationList(task, spuCode);
+      if (spuRelList.length > relList.length) relList = spuRelList;
+    }
+    const rowMultiCount = Array.isArray(row?.multiSubGoods) && row.multiSubGoods.length > 0
+      ? row.multiSubGoods.length
+      : 0;
+    const expectedCount = Math.max(
+      detail?.skus?.length || 1,
+      relList?.length || 0,
+      rowMultiCount,
+      spuCode.startsWith("@@") ? 2 : 1,
+    );
+    if (relList && relList.length > 0) {
+      const baseSku = detail.skus?.[0] || {};
+      detail.skus = relList.map((relItem, index) => {
+        const mg = relItem.masterGoods || {};
+        const itemSku = mg?.skus?.[0] || {};
+        const merged = clone(baseSku);
+        merged.skuCode = itemSku.skuCode || relItem.subSkuCode || merged.skuCode;
+        merged.subSkuCode = merged.skuCode;
+        merged.barcodes = Array.isArray(itemSku.barcodes) && itemSku.barcodes.length > 0
+          ? clone(itemSku.barcodes)
+          : [itemSku.mainBarCode || merged.mainBarCode].filter(Boolean);
+        merged.mainBarCode = merged.barcodes[0] || "";
+        merged.specification = itemSku.specification || merged.specification || "";
+        merged.masterSpecification = merged.specification;
+        merged.suggestPrice = itemSku.suggestPrice != null ? itemSku.suggestPrice : merged.suggestPrice;
+        const validWeight = (itemSku.weight && itemSku.weight > 0 && itemSku.weight < 99999)
+          ? itemSku.weight
+          : ((merged.weight && merged.weight > 0 && merged.weight < 99999) ? merged.weight : 10);
+        merged.weight = validWeight;
+        merged.weightForUnit = validWeight;
+        merged.weightUnit = itemSku.weightUnit || merged.weightUnit || "g";
+        merged.cabinetCodeList = Array.isArray(itemSku.cabinetCodeList) && itemSku.cabinetCodeList.length > 0
+          ? clone(itemSku.cabinetCodeList)
+          : clone(merged.cabinetCodeList || []);
+        merged.specRank = relItem.rank || (index + 1);
+        merged.rank = relItem.rank || (index + 1);
+        if (merged.channelCategoryProperty) {
+          for (const ch of ["MT", "JD", "ELE"]) {
+            if (merged.channelCategoryProperty[ch]?.[0]?.currentValue) {
+              merged.channelCategoryProperty[ch][0].currentValue.propertyValueName = merged.specification;
+            }
+          }
+        }
+        return merged;
+      });
+      if (detail.skus.length > 1) {
+        detail.goodsType = 1;
+        detail.originGoodsType = 1;
+      }
+    }
+    detail._relationVerified = true;
+    detail._expectedSkuCount = expectedCount;
+    assertMultiSpecSafe(detail, detail.skus || []);
+    return detail;
+  }
+
   function categoriesFor(detail) {
     return Object.fromEntries(
       (detail.channelBackCategoryList || []).map((category) => [category.channelCode, String(category.categoryId)]),
@@ -1406,6 +1498,7 @@
       const detailResponse = await fetchDetail(task, skuCode);
       const detail = detailResponse.data;
       if (!detail || !detail.skus?.length) throw new Error("missing_product_detail");
+      await hydrateRelationSkus(task, detail, row);
       const categoryRepairs = applyCategoryOverrides(task, detail, skuCode);
       const matches = await fetchMatches(task, detail);
       const diagnosedRequired = diagnosisRequiredFields(row);

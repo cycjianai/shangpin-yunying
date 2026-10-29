@@ -103,7 +103,23 @@ const payload = {
 };
 ```
 
-### 4. 误将多规格改成单规格后的反查与紧急恢复规程
+### 3.5 四道代码级防降级硬门禁（杜绝“看了 Skill 仍然写错”的物理熔断器）
+光靠文档叮嘱“注意多规格”无法阻止临时脚本的 `if` 判断失误或网络瞬断静默降级。所有涉及翱象 `goods/master/update` 的脚本与引擎（包括 `aoxiang_channel_engine.js` 与 `aoxiang_high_concurrency_product_engine.mjs`）必须内置以下 **4 道代码级物理熔断门禁**：
+1. **门禁一（改前全门店 + 全实体仓快照强备份）**：
+   - 严禁只备份当前单店！修改主档（`master/update`）会影响商户下**所有门店与实体仓**。
+   - 动工前必须先调用 `merchant/warehouse/listAll` 获取全部门店及关联实体仓（注意：多个门店可能共享同一实体仓 `warehouseCode`），对所有门店调用 `goods/store/pageV3` 落盘全量主规格及 `multiSubGoods` 子规格的 `stockNum`（库存）与 `cabinetCodeList`（独立库位）。未生成全店快照文件前，代码直接抛出异常拒绝启动。
+2. **门禁二（无条件查询 `relation/detail` + 严禁静默 `catch { return null }`）**：
+   - **绝对禁止**用 `if (masterDetail.goodsType === 1)` 或 `if (rawCode.startsWith('@'))` 作为是否查询 `relation/detail` 的前置条件（因为子规格为纯数字编码如 `691090469` 时，`master/detail` 返回的 `goodsType` 恒为 `0`！）。
+   - 必须对每一个商品无条件调用 `goods/relation/detail?skuCode=...&relationType=1&positive=1`；若 `masterDetail.spuCode` 以 `@@` 开头且首次返回为空，必须再用 `spuCode` 二次查询 `relation/detail`。
+   - 若 `relation/detail` 请求发生超时、限流或异常，重试后仍失败时**必须直接 `throw Error` 中止该商品更新**，绝对禁止 `catch (e) { return null; }` 静默落入 `else` 单规格分支！
+3. **门禁三（`master/update` 发送前 `assertMultiSpecSafe` 数量硬断言）**：
+   - 在调用 `POST /goods/master/update` 前执行硬断言：
+     `expectedSkuCount = Math.max(detail.skus.length, relList.length, row.multiSubGoods?.length || 0, spuCode.startsWith('@@') ? 2 : 1)`
+   - 只要 `payload.skus.length < expectedSkuCount`，或 `spuCode.startsWith('@@') && payload.skus.length <= 1`，立即抛出 `FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED` 物理阻断请求发送！
+4. **门禁四（首单多规格金丝雀 Canary 独立回读验真）**：
+   - 任何批量任务放量前，必须先单独挑 **1 个多规格商品** 执行更新，随后调用 `goods/store/pageV3` 独立回读，人工/代码双重断言其 `multiSubGoods.length`、各门店 `stockNum`、各子规格 `cabinetCodeList` 100% 未丢失后，才允许解锁并发批处理。
+
+### 4. 误将多规格改成单规格后的反查与紧急恢复规程（含全门店原库存、原独立库位 100% 找回）
 若此前误操作导致门店品或主档被覆盖为单规格，**绝不是不可逆的**，按以下流程 100% 找回并恢复：
 1. **母 SPU 与历史子规格反查**：
    - 门店品虽然丢失了兄弟规格，但商户总库主档（`goods/master/page` 或 `goods/relation/detail?positive=0`）仍完整保留母 SPU（以 `@@` 开头，如 `@@106442525`）及其全部子 SKU（规格名、条码、原指导价）。
@@ -113,9 +129,14 @@ const payload = {
    - **关键避坑**：必须传入 `checkBarcodeStoreUnique: 0`（或 `false`）！
      - 默认如果传入 `checkBarcodeStoreUnique: 1`，翱象后台子任务会报 `条码重复 门店品已存在条码` 而导致下发失败；
      - 设为 `0` 后即可免冲突检测，秒级将遗失的子规格下发至目标门店，并在美团与饿了么渠道自动恢复上架状态。
-3. **回读核验**：
-   - 使用 `goods/store/pageV3` 传入 `storeCodes`、`goodsStatus: 0`、`tabType: ALL`、`mergeMultiSpec: true` 进行查询；
-   - 验证目标商品下的全部规格（主规格与子规格）均在门店库中正常呈现、价格无误且渠道状态正常（`status=0`）。
+3. **全门店错删前“原库存”与“原独立库位” 100% 溯源与恢复（WMS 底层留档法）**：
+   - 当子规格因主档误覆盖被归档删除时，翱象 WMS 底层会自动解绑其库位并清零库存，但**全部留有精确毫秒级审计流水**，严禁用同组主规格库位直接硬套子规格！必须按以下官方留档接口 100% 还原每个子规格的真实原值：
+   - **① 实体仓拓扑映射**：调用 `GET https://tc-supply-chain-portal.ele.me/merchant/warehouse/listAll` 获取所有门店及其所属实体仓 `warehouseCode`（注意：共享同一实体仓 `warehouseCode` 的多个门店共享库存与库位）；
+   - **② 原库存溯源（库存流水）**：调用 `POST https://saas-wms.ele.me/saas/wms/inventory/detail/log/list`（传 `warehouseCode`、时间范围及 `skuCode`），筛选 `remark: "商品删除，自动清零库存"`（或 `operationTypeName: "删除商品品仓关系"`），其清零前的 `beforeAmount`（或 `-deltaAmount`）即为该子规格错删前的精确原库存！随后通过 `POST https://tc-supply-chain-portal.ele.me/goods/stock/UploadFileAdjustStock` 上传 Excel 模板执行全量库存覆盖导入；
+   - **③ 原独立库位溯源与绑定（库位日志）**：调用 `POST https://saas-wms.ele.me/saas/wms/basic/cabinet/item/relation/bindChangeLog/page`（传 `warehouseCode`、`startTime`、`endTime`），筛选 `operateDetail` 含 `"解绑[库位"` 的记录，提取每个子规格被删瞬间解绑的真实独立库位编码（绝不与主规格混同），再调用 `POST https://saas-wms.ele.me/saas/wms/basic/cabinet/item/relation/cabinetBind`（传 `{ warehouseCode, skuCode, cabinetCodeList }`）逐一恢复绑定！
+4. **回读核验**：
+   - 使用 `goods/store/pageV3` 传入全部 `storeCodes`、`goodsStatus: 0`、`tabType: ALL`、`mergeMultiSpec: true` 进行查询；
+   - 验证所有门店下目标商品的全部规格（主规格与子规格）均在门店库中正常呈现，且每个子规格的 `stockNum` 与 `cabinetCodeList` 与错删前 100% 一致（差异数为 0）。
 
 ---
 

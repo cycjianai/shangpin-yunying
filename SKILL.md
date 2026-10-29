@@ -186,7 +186,11 @@ python3 scripts/route_skill.py \
          ② 化妆品/个护：白底外包装背面实拍图，清晰展示全成分、厂名厂址、生产许可证编号（如粤妆20160001）与备案编号（如粤G妆网备字2023000000），挂载至 slots `[1, 6, 8]`（Type 1 为 ELE 核心机审槽位），并自动补充属性 `是否为特殊用途化妆品: 否`；
          ③ 医疗器械：槽位对应 Type 3（医疗器械注册证/备案凭证），若渠道报错要求上传《第二类医疗器械经营备案证明》或《医疗器械经营许可证》，判定为门店/企业经营主体资质缺失，与商品级资质解耦并输出商户资质待办清单；
        - **图文详情硬校验**：部分类目强制要求图文详情时，将主图与轮播图生成 `<img src="..." /><br />` 结构写入 `description` 与 `masterDescription`；
-       - **安全审计铁律**：每次批处理后运行全量审计，必须确保价格变动严格为 0、多规格组完整度 100%、库存字段零污染。
+       - **安全审计铁律与多规格防降级四道代码级硬门禁（最高红线，严禁违背）**：
+         ① **改前全门店快照强备份**：动工前必须先调 `merchant/warehouse/listAll` 查清商户下所有门店及共享实体仓映射，遍历全部门店落盘 `goods/store/pageV3` 全量子规格（`multiSubGoods`）的库存（`stockNum`）与独立库位（`cabinetCodeList`）；
+         ② **无条件强制拉取 `relation/detail`（严禁条件跳过或静默降级）**：子规格为纯数字编码（如 `691090469`）时，`goods/master/detail` 返回的 `goodsType` 恒为 `0`（而非 `1`）！因此**绝对禁止**写 `if (detail.goodsType === 1)` 或 `if (code.startsWith('@'))` 才去查 `relation/detail`，必须对 100% 商品无条件查询 `goods/relation/detail?skuCode=...&relationType=1&positive=1`（若 `spuCode` 以 `@@` 开头则同步查 `spuCode`），且接口报错时必须直接 `throw` 中止，严禁 `catch { return null }` 静默走单规格分支；
+         ③ **发送前 `assertMultiSpecSafe` 物理熔断断言**：在 `POST /goods/master/update` 前强制校验 `payload.skus.length >= expectedSkuCount`，凡 `spuCode` 以 `@@` 开头或原含多个子规格而 `payload.skus.length <= 1` 的，立即抛出 `FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED` 阻断请求；
+         ④ **首单多规格 Canary 独立回读门禁**：批量执行前必须先拿 1 个多规格商品试跑并回读 `pageV3`，确认子规格数、各门店库存与各子规格独立库位 0 丢失后方可放量。
     5. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
     6. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
        在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口（如 `/api/v1/tenant/product/page-query?pageSize=100`，需携带 header `x-csrf-token`）原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须配合 `window.H5guard.sign` 防伪签名池（4 Tabs 空闲轮询分发，突破单线程锁），纯内存扫描过滤（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！

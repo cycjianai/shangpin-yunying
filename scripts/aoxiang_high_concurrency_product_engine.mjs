@@ -48,16 +48,26 @@ export async function runAoxiangBatchTask(options) {
     }
   };
 
-  const fetchRel = async (sku) => {
-    try {
-      const r = await fetch(`https://tc-supply-chain-portal.ele.me/goods/relation/detail?skuCode=${encodeURIComponent(sku)}&relationType=1&positive=1`, {
-        headers: { cookie }
-      });
-      const data = await r.json();
-      return data?.data;
-    } catch (e) {
-      return null;
+  // 硬门禁：relation/detail 严禁 catch 返回 null 静默降级！网络失败必须重试，仍失败则抛出异常阻断更新！
+  const fetchRel = async (sku, attempts = 3) => {
+    let lastErr = null;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        const r = await fetch(`https://tc-supply-chain-portal.ele.me/goods/relation/detail?skuCode=${encodeURIComponent(sku)}&relationType=1&positive=1`, {
+          headers: { cookie }
+        });
+        if (!r.ok) throw new Error(`relation_http_${r.status}`);
+        const data = await r.json();
+        if (data?.success === false || data?.failed === true) {
+          throw new Error(data?.message || "relation_detail_failed");
+        }
+        return Array.isArray(data?.data) ? data.data : [];
+      } catch (e) {
+        lastErr = e;
+        if (i < attempts) await new Promise(res => setTimeout(res, 300 * i));
+      }
     }
+    throw new Error(`FATAL_RELATION_FETCH_FAILED: 无法获取多规格关系 (${sku}): ${lastErr?.message || lastErr}`);
   };
 
   const updateMaster = async (payload) => {
@@ -93,15 +103,26 @@ export async function runAoxiangBatchTask(options) {
         return { code: rawCode, rowIdx: task.rowIdx, status: "失败: 商品主档在翱象已被废弃/删除(goodsStatus: -2)" };
       }
 
-      // 处理母规格 SPU 聚合品 (如 @655502634 挂在 @@97176061)
+      // 处理母规格 SPU 聚合品（注意：子规格可能是纯数字编码如 691090469，严禁限定 rawCode.startsWith("@")！）
+      const spuCode = String(detail.spuCode || task.spuCode || "");
       let targetCode = rawCode;
-      if (detail.spuCode && detail.spuCode.startsWith("@@") && rawCode.startsWith("@")) {
-        targetCode = detail.spuCode;
+      if (spuCode.startsWith("@@") && rawCode.startsWith("@")) {
+        targetCode = spuCode;
         const spuDetail = await fetchDetail(targetCode);
         if (spuDetail) detail = spuDetail;
       }
 
-      const relList = await fetchRel(targetCode);
+      let relList = await fetchRel(targetCode);
+      if ((!relList || relList.length <= 1) && spuCode.startsWith("@@") && spuCode !== targetCode) {
+        const spuRelList = await fetchRel(spuCode);
+        if (spuRelList.length > relList.length) relList = spuRelList;
+      }
+      const expectedSkuCount = Math.max(
+        detail.skus?.length || 1,
+        relList?.length || 0,
+        Number(task.expectedSkuCount || 0),
+        spuCode.startsWith("@@") ? 2 : 1
+      );
 
       if (saveSnapshot) {
         try {
@@ -191,6 +212,9 @@ export async function runAoxiangBatchTask(options) {
         storeGoodsCustomFieldsJson: JSON.stringify(storeGoodsCustomFields)
       };
 
+      if (payload.skus.length < expectedSkuCount || (spuCode.startsWith("@@") && payload.skus.length <= 1)) {
+        throw new Error(`FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED: 严禁将多规格商品 (${rawCode} / ${spuCode}) 覆盖为单规格 (skus.length=${payload.skus.length}, expected=${expectedSkuCount})`);
+      }
       const res = await updateMaster(payload);
       if (!res.success) {
         return { code: rawCode, rowIdx: task.rowIdx, status: `失败: ${res.message}` };

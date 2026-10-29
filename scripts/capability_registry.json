@@ -1,6 +1,10 @@
 {
   "schema_version": "multiplatform-product-capability-registry-v1",
-  "capability_statuses": ["implemented", "runtime_guided", "planned"],
+  "capability_statuses": [
+    "implemented",
+    "runtime_guided",
+    "planned"
+  ],
   "shared": {
     "execution_references": [
       "references/unified-business-success-contract-v1.md",
@@ -10,7 +14,9 @@
       "references/core/output-contract.md",
       "references/excel-schema-v1.md"
     ],
-    "diagnosis_references": ["references/debugging-and-rollout.md"]
+    "diagnosis_references": [
+      "references/debugging-and-rollout.md"
+    ]
   },
   "platforms": {
     "qnh": {
@@ -20,7 +26,9 @@
         "channel_attributes_only": {
           "status": "implemented",
           "task_reference": "references/tasks/channel-attributes.md",
-          "detail_references": ["references/channel-attribute-contract-v2.md"]
+          "detail_references": [
+            "references/channel-attribute-contract-v2.md"
+          ]
         },
         "unavailable_one_pass": {
           "status": "implemented",
@@ -42,35 +50,47 @@
         "plugin_attribute_fill": {
           "status": "implemented",
           "task_reference": "references/tasks/plugin-attribute-fill.md",
-          "detail_references": ["references/channel-attribute-contract-v2.md"]
+          "detail_references": [
+            "references/channel-attribute-contract-v2.md"
+          ]
         },
         "copy_history_retry": {
           "status": "implemented",
           "task_reference": "references/tasks/copy-history-retry.md",
-          "detail_references": ["references/copy-history-retry-contract-v1.md"]
+          "detail_references": [
+            "references/copy-history-retry-contract-v1.md"
+          ]
         },
         "copy_conflict_reconciliation": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,
           "task_reference": "references/tasks/copy-conflict-reconciliation.md",
-          "detail_references": ["references/copy-conflict-reconciliation-contract-v1.md"]
+          "detail_references": [
+            "references/copy-conflict-reconciliation-contract-v1.md"
+          ]
         },
         "store_sku_replacement": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,
           "task_reference": "references/tasks/store-sku-replacement.md",
-          "detail_references": ["references/store-sku-replacement-contract-v1.md"]
+          "detail_references": [
+            "references/store-sku-replacement-contract-v1.md"
+          ]
         },
         "headquarters_price_fill": {
           "status": "runtime_guided",
           "task_reference": "references/tasks/qnh-headquarters-price-fill.md",
-          "detail_references": ["references/qnh-bulk-operations.md"]
+          "detail_references": [
+            "references/qnh-bulk-operations.md"
+          ]
         },
         "protected_request_maintenance": {
           "status": "runtime_guided",
           "uses_operations_workbook": false,
           "task_reference": "references/tasks/protected-request-maintenance.md",
-          "detail_references": ["references/qnh-protected-request-maintenance-v1.md"]
+          "detail_references": [
+            "references/qnh-protected-request-maintenance-v1.md"
+          ]
         },
         "watermark_scan": {
           "status": "runtime_guided",
@@ -97,17 +117,23 @@
         "product_editing": {
           "status": "runtime_guided",
           "task_reference": "references/tasks/product-editing.md",
-          "detail_references": ["references/meituan-product-editing.md"]
+          "detail_references": [
+            "references/meituan-product-editing.md"
+          ]
         },
         "medical_device_store_migration": {
           "status": "runtime_guided",
           "task_reference": "references/tasks/medical-device-store-migration.md",
-          "detail_references": ["references/meituan-medical-device-store-migration.md"]
+          "detail_references": [
+            "references/meituan-medical-device-store-migration.md"
+          ]
         },
         "unavailable_one_pass": {
           "status": "implemented",
           "task_reference": "references/tasks/unavailable-one-pass.md",
-          "detail_references": ["references/platform-meituan.md"]
+          "detail_references": [
+            "references/platform-meituan.md"
+          ]
         },
         "channel_attributes_only": {
           "status": "planned",
@@ -153,17 +179,32 @@
         "channel_attributes_only": {
           "status": "implemented",
           "task_reference": "references/tasks/channel-attributes.md",
-          "detail_references": ["references/aoxiang-channel-contract-v1.md"]
-        },
-        "qualification_images_only": {
-          "status": "planned",
-          "task_reference": "references/tasks/qualification-images.md",
-          "detail_references": []
+          "detail_references": [
+            "references/aoxiang-channel-contract-v1.md",
+            "references/platforms/aoxiang-playbook-and-pitfalls.md"
+          ]
         },
         "unavailable_one_pass": {
-          "status": "planned",
+          "status": "implemented",
           "task_reference": "references/tasks/unavailable-one-pass.md",
-          "detail_references": []
+          "detail_references": [
+            "references/aoxiang-channel-contract-v1.md",
+            "references/platforms/aoxiang-playbook-and-pitfalls.md"
+          ]
+        },
+        "qualification_images_only": {
+          "status": "implemented",
+          "task_reference": "references/tasks/qualification-images.md",
+          "detail_references": [
+            "references/platforms/aoxiang-playbook-and-pitfalls.md"
+          ]
+        },
+        "product_editing": {
+          "status": "implemented",
+          "task_reference": "references/tasks/product-editing.md",
+          "detail_references": [
+            "references/platforms/aoxiang-playbook-and-pitfalls.md"
+          ]
         }
       }
     },
@@ -237,4 +278,3 @@
     }
   }
 }
-

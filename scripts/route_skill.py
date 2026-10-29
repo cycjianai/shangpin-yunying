@@ -136,7 +136,7 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("product_editing")
     if contains(text, r"资质图", r"专项图", r"配料营养图", r"背签图", r"3c证书", r"吊牌", r"洗唛"):
         candidates.add("qualification_images_only")
-    if contains(text, r"不可售", r"无法售卖", r"审核未通过", r"影响流量", r"清退"):
+    if contains(text, r"不可售", r"无法售卖", r"审核未通过", r"影响流量", r"清退", r"不符合渠道规则", r"铺品异常", r"has_error"):
         candidates.add("unavailable_one_pass")
     if contains(text, r"插件") and contains(text, r"属性", r"填充"):
         candidates.add("plugin_attribute_fill")

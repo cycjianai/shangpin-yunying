@@ -1,7 +1,8 @@
 # 任务分支：商品信息与店内码编辑
 
-当前仅美团为 `runtime_guided`。完整读取 [美团商品编辑合同](../meituan-product-editing.md)。饿了么商品编辑未注册独立
-writer，不得套用美团字段、保存链或并发参数。
+- 美团（`runtime_guided`）：完整读取 [美团商品编辑合同](../meituan-product-editing.md)。
+- 翱象（`implemented`）：完整读取 [翱象实战防坑指南](../platforms/aoxiang-playbook-and-pitfalls.md)，使用 `scripts/aoxiang_high_concurrency_product_engine.mjs` 执行，强制通过多规格四道防降级硬门禁。
+- 饿了么等其他平台：未注册独立 writer，不得套用美团或翱象保存链。
 
 先生成只读匹配账本；名称只能辅助识别，最终按稳定 SPU/SKU、旧店内码/条码和明确规格唯一匹配。保存若为完整 SPU：
 

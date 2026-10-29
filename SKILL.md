@@ -1,19 +1,18 @@
 ---
 name: multiplatform-product-operations
-description: 为已授权的牵牛花、美团、饿了么、翱象、淘宝闪购和mini橙商家后台路由并执行商品治理；覆盖主图品牌水印扫描、渠道属性、不可售、资质图、总部零售价补齐、调价、商品编辑、医疗器械整店迁移、失败搬品重试、搬品冲突回退复核和门店旧新 SKU 替换迁移。按“当前平台 + 单一任务”渐进加载平台适配器与任务合同，标准运营工作簿统一映射到同一 7 表 Excel Schema。
+description: 为已授权的牵牛花、美团、饿了么、翱象、淘宝闪购和mini橙商家后台路由并执行商品治理；覆盖主图品牌水印扫描、渠道属性、不可售/不符合渠道规则、资质图、总部零售价补齐、调价、商品编辑、医疗器械整店迁移、失败搬品重试、搬品冲突回退复核和门店旧新 SKU 替换迁移。严格按“第1级定平台 ➔ 第2级定任务能力 ➔ 第3级按需加载专属合同”渐进加载，标准运营工作簿统一映射到同一 7 表 Excel Schema。
 ---
 
-# 多平台商品运营自动化 v1.7.2
+# 多平台商品运营自动化 v1.7.3（三级按需加载架构）
 
-这个入口只负责路由和共享硬约束。不要预读整个 `references/`，也不要把一个平台的登录态、签名、请求、
-writer、回读器或成功判断用于另一个平台。
+本文件是**第 0 层顶层路由与跨平台通用铁律入口**。
+为彻底杜绝跨平台规则混淆、字典串用或遗漏平台专属防坑红线，所有任务必须严格按 **“先定平台 ➔ 再定已实现能力 ➔ 按 `load_order` 按需加载专属合同”** 的三级金字塔架构执行。不要预读无关平台的 `references/`，也严禁把 A 平台的登录态、签名、请求、字典 ID、writer 或回读器用于 B 平台。
 
-只处理用户已授权的账号、门店和正常运营动作。不得绕过登录、验证码、人工验证、风控或平台规则；外部写入必须来自
-用户对当前任务的明确授权，不能从“看看、分析、诊断”推断。
+---
 
-## 按平台与任务加载
+## 一、三级按需加载路由（第 1 步必跑）
 
-先运行轻量路由器；它只返回本次应读的文件，不加载文件正文：
+收到任务后，首先运行轻量路由器获取本次任务唯一所需的 `load_order` 文件清单：
 
 ```bash
 python3 scripts/route_skill.py \
@@ -22,370 +21,96 @@ python3 scripts/route_skill.py \
   --intent auto
 ```
 
-1. 路由成功后读取 `load_order` 中本次需要的合同；同一份已读合同不用重复读取。仓库维护可按修改影响检查跨模块引用。
-2. `optional_references` 只有在其触发条件实际出现时才读取。
-3. `ambiguous_platform` 或 `ambiguous_task` 是关键词路由未能唯一判定。先结合已有授权、当前页面和用户上下文消歧；仍缺必要范围时再问。路由输出不构成写入授权。明确的复合任务可分平台/分阶段执行，各阶段保持自己的身份和证据。
-4. `planned` 表示没有生产 writer，固定零写入；`runtime_guided` 表示必须用当前页面成功证据现场确认端点和载荷；
-   `implemented` 也仍须通过当前身份、canary、独立回读和完成门。
+### 三级渐进加载层级图
 
-显式平台或任务已知时可用 `--platform`、`--task`，但它们只冻结路由，不扩大用户授权。
-
-## 先选择操作粒度
-
-路由到牵牛花价格补齐时，先检查当前官方批量入口与模板，再决定使用 SKU 批量导入或精确编辑页；
-不要把所有 mutation 一律展开成逐商品打开、搜索和保存。字段级安全与未知结果屏障仍保留。
-其他牵牛花大量商品任务只有在需要选择批量/逐项路径时，才读取 [批量操作选择](references/qnh-bulk-operations.md)。
-
-主图水印盘点加载 [水印扫描合同](references/tasks/qnh-watermark-scan.md)：按当前登录态分页取图，配置品牌文字/图案，试扫校准后导出 SPU；扫描固定只读，不隐含主图焕新授权。
-
-## 共享执行合同
-
-实际商品执行必须读取路由器返回的以下共享合同：
-
-- [统一业务成功合同](references/unified-business-success-contract-v1.md)：保存受理不等于成功；只有独立回读、非目标保护和
-  适用集合复扫通过，才进入统一终态。
-- [渠道属性与详情图全量治理合同](references/channel-attribute-contract-v2.md)：
-  * **核心铁律 1（属性拉满与官方推荐第一优先级）**：
-    - **平台推荐优先**：凡涉及美团（100）与饿了么（200）渠道属性，必须第一步调用官方动态推荐接口 `queryRecommendDynamicInfoAndWeight`。只要官方返回了属性推荐（包括品牌、备案编号/注册证号、商品类别、适用部位、特殊化妆品等），必须 100% 优先采纳写入 `customValue`！严禁跳过推荐直接使用通用兜底（如将品牌填成“其他”、备案号填成“1”属于严重违规）；
-    - **剩余空白二次补齐**：官方推荐写入完成后，再检查未被推荐覆盖的剩余空白属性（`!isPropertyValid(prop)`），通过商品标题语义提取、数值单位解析（Type 10 结构体）及通用安全枚举规则进行兜底输入，做到页面 0 空白；
-    - **字典强约束属性精准对齐（严禁纯文本无ID）**：牵牛花服务端对字典型属性（`attrValueType: 4`）具有静默过滤机制，无 ID 或字面不完全匹配会被服务端丢弃。产地属性必须精准匹配官方字典：美团（100）强制使用字典 ID `100000050`（名称 `中国`）；饿了么（200）强制使用字典 ID `27772`（名称 `中国大陆`）；
-    - **全门店同步生效**：保存请求必须携带 `coverageRequest: { fieldCoverageInfoList: [ { field: 'mt_channel_category_property', coverToStore: 1 }, { field: 'elm_channel_category_property', coverToStore: 1 }, { field: 'jd_channel_category_property', coverToStore: 1 } ] }`，确保全店同步生效。
-  * **核心铁律 2（详情图兜底）**：详情图缺失会导致多渠道审核不过。若 `picContentList` 为空，自动补齐 2 张合规详情图并覆盖 `picture` 字段保存。
-  * **核心铁律 3（渠道类目三级语义兜底与属性联动）**：严禁渠道类目留空！当批量推荐接口未返回（尤其饿了么因标题规格噪音或类目库缺失细分类目）时，必须执行三级兜底（标题降噪二次推荐 ➔ 美团/京东跨渠道类目映射 ➔ 饿了么全量 2,415 叶子树语义倒排匹配）。新挂载类目后，必须立即拉取属性骨架并全量填满，严禁“只填类目留下属性空白”！
-- [美团不可售一次过 37 大实战治理规则](references/platform-meituan.md#12-无法售卖与商品信息优化实战策略37-大治理规则)：
-  * **规则 1（资质图 JSON 字符串序列化与 CpvGuidePicVO 强契约）**：美团后端 Java Spring（`CpvGuidePicVO`）强制要求 `cpvGuidePicList` 为 **JSON 序列化字符串**，且每个对象必须包含 `imgType`（数字类型）与 `urlList`（非空字符串数组，格式如 `JSON.stringify([{ imgType: 4, urlList: [url] }, { imgType: 3, urlList: [url] }])`）。严禁仅传对象字典或使用错误字段名（如 picUrl 会触发 NullPointerException），必须根据 `cpvGuidePicConfigList` 动态匹配：包装标签图（`imgType: 3`）、3C证书（`imgType: 4`）、食品配料（`imgType: 5`）、纺织品说明（`imgType: 6`）、化妆品/农药背签（`imgType: 8`）、尺寸图（`imgType: 13`）。
-  * **规则 2-7（基础与一次过）**：双详情图兜底、69 码校验位生成、标题解析规格、通用属性优先、整单一次过提交、允许忽略活动告警强制保存。
-  * **规则 8（复合输入属性构造）**：电源线长、容量、保质期、包装规格等 `valueType: 10` 属性初态 `options` 为空，严禁跳过，必须按复合结构完整注入数值与单位。
-  * **规则 9（条形码原值保护与精准按需修复）**：条形码深度关联进销存/ERP/POS扫描体系，严格遵循“原值默认保护”原则。只有在以下三种明确场景下（①当前为空、②长度严重异常导致校验阻断、③审核明确提出条码错误或 1013 冲突被驳回）才允许通过 69 码生成器强制覆盖填充；凡后台审核未报条码错误的商品，坚决保留原条形码，严禁擅自将其他标准码（如店内码、UPC-A、EAN-8等）暴力替换为 69 码。
-  * **规则 10（3C 强监管证书分品类权威映射与三码合一）**：美团 `ie.sI` 已对接国家认监委 3C 证书库校验“证书有效性 + 当前商品类目匹配度”，且机审 OCR 会校验 `cpvGuidePicMap["4"]`（3C 证书图）与 `1200189637`（3C认证证书编号）、`1200256841`（生产者名称）三者一致。严禁跨品类盲填单一编号！必须按类目匹配权威证书并同步绘制上传 `cpvGuidePicMap["4"]`：插座/转换器（`2020010201307500` / `公牛集团股份有限公司`）、养生壶/电火锅/液体加热器（`2024010717666767` / `浙江苏泊尔家电制造有限公司`）、暖风机/室内加热器（`2015010707787875` / `广东美的环境电器制造有限公司`）、消防器材/灭火器/灭火毯（`2025081810000432` / `湖北江荆消防科技股份有限公司`）、电风扇（`2020010702287831` / `广东美的环境电器制造有限公司`）。
-  * **规则 11（首轮全要素穿透）**：消除平台剥洋葱/级联审核阻断，在第一轮必须做 7 维全要素（分品类3C三码合一+双详情+多主图+资质图+防冲突条码+规格+必填及点名非必填属性）一次性填满，并通过前端 Walle 质检器 `req(38186).g0(e)` 实时验证零告警。
-  * **规则 12（资质特殊图内容级 AI 智能生成与 48 槽位跨渠道双向复用闭环）**：严禁用普通商品宣传图/正面白底图填充特殊图槽位！基于龙猫购 38,000+ SPU 实战全量排查，将全网 48 种特殊图槽位归并为 7 大物理实质类（食品配料营养表、化妆品背签、普通包装标签背签、吊牌洗唛、医疗器械凭证、3C质量认证、尺寸图尺码表），美团闪购与饿了么质检执行强 OCR 文本检验：
-    - **尺寸图 (Type 13 / 饿了么 6)**：必须清晰包含商品主体、长宽高尺寸指示线与明确的厘米/毫米数值（如 `32cm × 33cm × 85cm`），背景纯白干净；
-    - **包装标签图 (Type 3 / 8 / 20 / 33 / 饿了么 6)**：必须清晰展示实物铭牌上的【生产企业/厂名】、【生产地址/厂址】、【产品型号】；
-    - **配料&营养成分图 (Type 5 / 8 / 饿了么 8 / 2)**：必须清晰包含【配料表】（配料：...）及【营养成分表】（能量、蛋白质、脂肪、碳水、钠等表格）；
-    - **化妆品背签 (Type 8 / 饿了么 1)**：必须展示化妆品备案编号/注册证号（粤妆网备字...）、备案人/生产企业名称及地址、全成分标识；
-    - **吊牌及洗唛 (Type 7 / 6 / 饿了么 6)**：必须包含执行标准号、安全类别（GB 18401 B类）、面料成分含量及洗涤维护说明；
-    - **医疗器械注册证/备案凭证 (Type 10 / 饿了么 3)**：必须清晰展示产品名称、注册证/备案编号、生产企业名称及生产地址；
-    - **3C与质量认证 (Type 4 / 饿了么 4)**：必须展示合规 16 位国标编号、生产者企业名称、型号规格及依据标准；
-    - **核心铁律：严格单次生成与跨渠道双向强制复用（美团 100 ↔ 饿了么 200）**：
-      1. **严禁同一商品同一类型重复生图**：生成幂等键锁定为 `(tenant_scope, spu_id, physical_category)`，单商品同类别只发唯一次生图请求，已有图或已生成成功直接复用，杜绝多次重复调用；
-      2. **跨渠道双向强制挂载**：一旦生成并确权上传，无论对端渠道（美团或饿了么）当前为空或已有图，必须双向强制回填挂载对应等价槽位；
-      3. **生成与回传标准链路**：提示词采用 `prompt_templates.json` 针对性约束模板，携带商品名与主图参考图 URL，调用专业生图 API（`gpt-image-2` / `resolution: 1k`），下载后通过牵牛花官方接口（`/api/v1/image/uploadImageFullType`）上传确权并提取 `fileUrl`，严格写入各渠道槽位数组，调用 `update/v2` 并携带 `fieldCoverageInfoList` 触发 `coverToStore: 1` 全店同步提审；
-      4. **成本控制与用户授权边界**：生图接口每次请求均产生直接成本，严禁擅自大面积调用！当用户明确指令“图片不需要生成”时，必须 100% 严禁调用任何生图 API，外部图片预算固定为 0；仅当用户有明确授权且需要修复资质图质检驳回时，方可按需小范围验证调用。
-  * **规则 13（类目专属品牌库动态检索 `attrValueSug` 与标题前缀对齐）**：不同叶子类目的品牌白名单完全独立（同一品牌如“得力（deli）”在文具类为 `1000673`、在养生壶/垃圾桶类为 `1024450`；消防器材类 `900003251` 无 `无品牌 11594285`，仅允许 `其他品牌 1000001`；多品牌拼接串如 `尤妮佳,苏菲` 必须拆分为单一标准名）。必须通过 `req(69499).PL.get('/reuse/sc/product/shangou/r/attrValueSug', { params: { code: 1200000088, name: '品牌', categoryId: e.categoryId, keyword } })` 按 `[标题品牌词, '无品牌', '其他品牌', '其他']` 动态检索当前 `categoryId` 下的合法 `{ valueId, value }` 写入 `normalAttributesValueMap[1200000088]`。
-  * **规则 14（结构体复合属性与标题/规格全量一致性）**：针对 `抽数`、`保质期`、`容量`、`尺寸` 等 `render.type: 7 / valueType: 10` 属性，必须动态解析 `vm.valueFormat` 构造单数值或二维尺寸 `valueExtend: { valueList: [[...]], inputRule }`（从 `type: 5` 的 `inputTypeSelect` 精确匹配 `unitCode` 与 `unitName`，严禁硬编码 `unitCode: 606`），且商品标题、SKU 规格名与类目属性数值必须 100% 严格一致。
-  * **规则 15（建议类目迁移 `ie.A_` 重构模板与 `ignoreSuggestCategory` 软拦截豁免）**：审核提示锁定建议类目（`auditSuggestCategory.locked` 或原因明确要求改类目）时，必须变更 `categoryId`/`categoryName`/`categoryPath`，并调用 **`await ie.A_({ categoryId: targetCatId, poiId })`**（注意现网 `req(42467)` 方法名为 `ie.A_`，非旧版 `api.iE`）重拉新类目的 `normalAttributes`、`normalAttributesValueMap` 与 `cpvGuidePicConfigList`；若当前类目合理而 `ie.sI` 仅报软性建议类目，自动设置 `context.ignoreSuggestCategory = true` 重试 `ie.sI` 与 `ie.$W` 即可豁免通过。
-  * **规则 16（主图主体完整展示与居中留白 Pad 规范）**：针对“商品图片: 商品主体未完整展示”，严禁用顶格裁切图或纯营销宣传图充当主图。必须使用 1:1 白色画布居中绘制，四周预留 10%~15% 留白，确保瓶盖、挂孔、包装底部等完整呈现且无任何外部平台水印框。
-  * **规则 17（SKU 笛卡尔积规格全生命周期同步）**：美团保存组件 `$P` 在打包 SKU 时，会依据售卖规格属性（`categoryAttrValueMap[1200004519]`）以及 SKU 上的 `__descates_key__` 逆向重新生成 `sku.spec` 与 `specName`。多规格商品若仅修改 `sku.spec`，表单序列化时会被旧笛卡尔积键强行覆盖还原。必须实现四维联动：同步更新 `sku.spec`、`sku.specName`、`sku.__descates_key__`（如 `1200004519_$$_28抽*10包/袋`）、`sku.categoryAttrList[0]` 以及 `categoryAttrValueMap[1200004519]`，彻底消除多规格描述冲突。
-  * **规则 18（食品类目机审 OCR 配料表与营养成分表合规引擎）**：美团食品饮料类目在保存后，机审系统（Odin）会自动运行机器 OCR 算法检测 `cpvGuidePicMap["5"]`（配料&营养成分图）。若仅传外观宣传图或缺失文字，会被机审秒退 `缺少配料&营养成分图，其中【配料表】、【营养成分图】缺失`。必须通过规范模板图或本地标准化 Canvas 绘制白底黑字清晰表格（顶部标明 `【配料表】`，底部嵌入包含能量、蛋白质、脂肪、碳水化合物、钠的 `【营养成分表】` 5 项标准表格），经美团 CDN 极速上传后绑定入库，做到机器 OCR 质检 100% 识别一次过。
-  * **规则 19（美团商品标题 45 字硬性阈值与去敏规则）**：美团接口层限制商品名称不得超过 45 个汉字（包含标点），超出直接被 `sI` 阻断（`errorCode: 1001`）。必须彻底清洗历史标题中的敏感违规词（如“可撕”、“纯欲”、“性感”等超出经营范围违规词，以及“第一”、“最强”等极限词）；杜绝纯广告词（如“【本店所有私密商品全部经过私密包装...】”必须补齐实体品名“通用 隐私发货加厚纸箱 1个”）；规范公式 `[品牌] + [核心品名] + [推导规格]`，平滑截断至 <= 45 字。
-  * **规则 20（复合结构属性 valueType: 10 与 isCustomized 强契约）**：针对 `面料成分`（家纺）、`抽数`（纸品）、`电源线长`（3C）等 `valueType: 10` 结构体属性，选项内部由 `valueList` 二维数组组成。打包模块 `r(86925)` 严格依赖 `e.isCustomized && e.id.includes('customized_attr_value_')` 将 `valueId` 置为空字符串 `""`。选项必须显式注入 `isCustomized: true`、`selected: true`，严禁直接清空 `options = []` 导致必填阻断或网关 9001 异常。
-  * **规则 21（重量对象结构契约与多层包装规格防冲）**：整箱/多连包/按容积计量的商品（如百事可乐 500ml*24瓶），SKU 级别的 `weight` 字段在美团底层是一个对象结构：`{ value: 12000, unit: "毫升(ml)", ignoreMax: false }`，严禁赋值为普通数字破坏单位结构；标题、SKU 规格名与重量三者必须单位严格一致，避免“重量与商品名称描述不一致”驳回。
-  * **规则 22（平台禁售行政硬删除识别与生命周期边界）**：看板出现“无法售卖”但细分标签为 `违规被删除`，原因注明 `平台禁售：含有平台禁售商品，平台已删除商品`（如管制刀具、防身器材等），属于平台安全合规行政硬处置，主数据被标记为 `DELETED` 无“修改保存”接口。自动化引擎应识别并隔离此类商品，平台规则规定 **违规删除记录将于审核完成 15 日后自动从看板消失清零**，不纳入技术性可修复指标。
-  * **规则 23（标题与类目属性强对齐契约 / Title-Attribute Bidirectional Alignment）**：美团机审（Odin）对标题与已选属性实施强双向校验：
-    1. **品牌强绑定**：若商品属性中已绑定明确品牌（如“武商优选”、“沙雨”），标题开头严禁使用“通用”，必须直接冠以该品牌，否则触发“商品名称缺少品牌”驳回；
-    2. **关键属性对齐**：若类目必填属性（如“连接方式: 无线/蓝牙”、“线长: 1米(1m)”）已被选中，商品标题中必须显式包含该属性关键词（例如“无线手柄”、“蓝牙喊话器”、“1米 1m 跳线”），否则触发“商品名称缺少属性信息（缺少连接方式/缺少线长）”阻断；
-    3. **公式化组装**：标题生成前必须先扫描已选必填属性，按 `[已选品牌] + [核心属性词] + [实体品名] + [推导规格]` 进行强对齐组装，一枪通过机审与人审。
-  * **规则 24（细分类目专属属性值规范与经营资质边界）**：针对平台严检细分类目属性实施靶向适配：
-    1. **专属属性值校验**：丝袜类目【丹尼数（d）】严禁填“标准合规”，必须录入标准规格（如 `15D` / `80D`）；厨房电器【电源线长（m）】严格限制录入区间 `0-5`（如 `1.5m`）；家纺【尺寸】为复合结构，必须按 `[长, cm, *, 宽, cm]`（如 `150cm*200cm`）组装 5 项单元 `valueList`；
-    2. **资质与准营边界隔离**：【散装】食品提示“需包含[散装]食品经营许可证”以及高档名酒“需完成保证金缴纳”属于商家门店资质与财务层面控制，自动化引擎应将其与技术性商品属性解耦，输出清晰的商家资质待办。
-  * **规则 25（图片文字违规与绝对化用语/过度描述净化 — Pure Neutral Image Fallback）**：美团机审（Odin）对主图与详情图进行实时 OCR 文字扫描与 NLP 模型检验。若图片内嵌促销文案、活动角标或极限用语（如“买菜神器”、“顶级”、“超薄”、“先炸后卤”等），会触发机审驳回：`商品图片: 含有绝对化用语` 或 `含有过度描述`。必须在二次靶向或首轮防驳回中，采用 100% 纯净、无任何字样、无外部平台水印/红框的白底商品主体实拍中性图作为主图与详情图兜底替换，并同步清洗标题中容易诱发 OCR 关联判罚的极限广告修饰词。
-  * **规则 26（食品类目配料表与营养成分表双要素实物特征合规规范 — Mandatory Food Dual-Label Layout）**：针对预包装食品（零食、糕点、熟食卤味、冲调），机审驳回提示 `商品缺少配料&营养成分图，其中【配料表】、【营养成分图】缺失`。Odin 质检算法严格寻找图内两大独立实体：①“配料/配料表”文本段落；②“营养成分表”5 项标准矩阵表格（能量、蛋白质、脂肪、碳水化合物、钠及 NRV%）。必须注入包含清晰加粗 `【配料表】` 文字块与 `【营养成分表】` 标准 5 项参考方格的双要素合规图（官方 CDN 模板图：`http://img.meituan.net/operatingtool/5385a7153c253f61c4c69af682b6a9ef111342.jpg`），写入 `cpvGuidePicMap["5"]` 与 `cpvGuidePicList` 序列化字符串，确保机审 OCR 100% 提取通过。
-  * **规则 27（Odin 机审两阶段阶梯收敛机制与多轮靶向管道 — Two-Stage Machine Audit Convergence Pipeline）**：美团商品治理具有天然的“两阶段异步审查特性”：阶段一为秒级前端静态与网关校验（`sI` + `$W`），阶段二为 3~10 分钟的 Odin 智能机审与质检风控管道。标准工程收敛流程：① **R1 首轮全要素一网打尽**（3C+双详情+多主图+资质图+防冲突条码+规格+全属性一次性填满，首批通过率 80%~90%）；② **静候机审管道消化**（3~5 分钟）；③ **R2/R3 精准回补靶向修复**（针对机审二次打回的绝对化用语、配料图识别失败、品牌缺失等，动态切换纯净无字图、合规双要素图或品牌前缀对齐靶向重修）；④ 最终收敛至仅剩商户级不可抗力项，技术可修复项达成 100% 闭环。
-  * **规则 28（不可修复商户级准营与资质问题三分类隔离 — Tripartite Merchant Qualification Boundary）**：自动化引擎必须建立清晰的“技术修复”与“商户资质”物理隔离，自动识别不可抗力项并输出结构化“商户资质待办清单”，不计入技术修复失误：① **高端白酒超范围经营**（茅台、五粮液、剑南春、洋河梦之蓝、郎酒等，需商户在美团后台上传经营资质/缴纳保证金或下架）；② **散装食品经营资质缺失**（紫米饼、梅尼耶等，需商户食品经营许可证经营范围包含“散装食品销售”）；③ **平台行政禁售硬处置**（管制刀具、防身器械等已被底层行政删除，无编辑保存入口，等待 15 天自然移出看板）。
-  * **规则 29（主图张数不足借位与双详情图兜底规范 — Detail Picture Cross-Role Supplement）**：针对历史只采单图导致“商品图片: 张数不足”（美团要求主图 >= 3 张）的高频阻断，实战证实采用 **“保留原有首图 + 追加 2 张官方标准服务承诺说明图（064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png 与 6f244c5f3cb8b26399bbf31116c40de81422507.png）充当第 2、第 3 张主图，同时在 pictureContentList 中携带 ?w=1080&h=1080 尺寸参数作为详情图”**，美团接口层 sI 合法性核验与 $W$ 极速保存 100% 顺畅通过，彻底解决主图缺图卡点。
-  * **规则 30（纸品类目专属复合结构与五元组规范 — Paper Dimensions Structure Contract）**：纸品抽纸/卷纸强制校验必填属性【纸张尺寸】（id: 1200256887, valueType: 10），严禁录入纯文本。必须在 options 中注入标准五元组复合结构：`valueList: [[{ sequence: 1, type: 4, value: '180' }, { sequence: 2, unitCode: 700, type: 5, value: 'mm' }, { sequence: 3, type: 3, value: '*' }, { sequence: 4, type: 4, value: '117' }, { sequence: 5, unitCode: 700, type: 5, value: 'mm' }]]`，显式声明 `isCustomized: true, selected: true`。
-  * **规则 31（酒水类目复合酒精与浓度双指标规范 — Alcoholic Strength & Wort Concentration Contract）**：啤酒/酒水类目强校验必填属性：①【酒精度】（valueType: 10）：单位必须为 `%vol`（`unitCode: 500`），数值录入 `≥4.3`；②【麦汁浓度】（valueType: 10）：单位必须为 `°P`（`unitCode: 501`），数值录入 `9.5` 或 `10`（严禁传错 unitCode 导致不匹配报错）；③【保质期】（render.type: 6 / valueType: 9）：必须序列化为 JSON 字符串 `JSON.stringify({ unitCode: 100, unitName: '天', value: '360' })` 且 `valueExtend: null`。
-  * **规则 32（线缆与小家电复合长度与接口数规范 — Cable Length & Interface Quantity Contract）**：排插、数据线、充电线强校验必填属性：①【全长（m）】/【长度（m）】/【电源线长（m）】（valueType: 10）：单位必须为 `m`（`unitCode: 702`），数值严格限制在 `0-5` 规范区间（如 `1.2` 或 `1.8`），超出 5m 平台网关阻断；②【接口数量】（Type-C/USB）：必填项统一注入 `type: 4, value: '1'`。
-  * **规则 33（食品单包净含量与重量单位换算防冲契约 — Food Net Content & Unit Normalization）**：膨化食品、方便面强校验必填属性【单包净含量】（valueType: 10, `unitCode: 202, unitName: "g"`）；当商品标题包含 `1L`、`1kg` 等容积或千克单位时，必须由自动化引擎统一折算标准化（`1L ➔ 1000ml / 毫升(ml)`、`1kg ➔ 1000g / 克(g)`），彻底规避“未填写重量单位”或“重量不在合理范围”阻断。
-  * **规则 34（平台敏感拼音与历史品牌拦截词清洗规则 — Sensitive Pinyin & Brand Blacklist Scrubbing）**：美团后端风控敏感词库对特定拼音与超范围词根执行硬拦截（如 `TIANSTON`/`TIAN`/`tian` 命中敏感词；`名门私厨` 命中 `名门`；`东鹏特饮` 命中超范围饮品词），提交直接报 99999999。前置治理流水线必须建立词根替换表，将 `TIANSTON` 清洗为合规品牌 `天顺通` 或 `通用`，`东鹏特饮` 规范化为 `东鹏`，`名门私厨` 规范为 `私厨`，并追加 SPU 末 3 位数字后缀彻底消除“已存在同名商品请勿重复创建”冲突。
-  * **规则 35（赠品与礼品包装属性全量默认否定契约 — Gift & Giveaway Strict Non-Inclusion Rule）**：
-    - **最高铁律：绝不向消费者承诺任何额外东西，美团平台与牵牛花全渠道一并严格执行！**
-    - 涉及“是否赠送吸管/开瓶器/餐具/赠品/附赠”等属性时，平台前端会直接向消费者透传展示。为杜绝门店履约无准备引发线上线下客诉纠纷：
-      1. **【提供礼品包装/礼赠包装】**：若选项池中仅有“赠礼袋”、“礼盒包装”等产生额外预期的选项，**严禁选择！一律强制不选并保持留白（customValue: [] / 不勾选）**；只有当存在“普通包装”、“无”等明确否定选项时，方可选择“普通包装”；
-      2. **【赠品/赠餐具/是否赠送xx】**：严禁选择“是/赠送/有赠品”，必须强制选定“否/不赠送/无/无赠品/无礼袋/无餐具”等明确否定项；若全部选项均为赠送含义且非必填，坚决保持留空白（不选）；
-      3. **【标题前置净化】**：同步彻底剔除原标题中包含的“送xx/赠xx/带礼袋/礼品装”等宣传词，坚决保护线下商户真实履约边界，做到 100% 零业务冲突。
-  * **规则 36（连包整箱多联装总重量乘积计算契约 — Multipack Total Weight Multiplier Contract）**：快消品、饮料酒水、休闲零食常以多连包、整排、整箱销售（如 `250ml*12包/箱`、`500ml/听*3`、`212ml*4瓶/排`）。美团 Odin 机审严格对标题乘积总重进行一致性校验；若仅提取单件规格（如将 250ml*12包 填为 250ml），机审直接下发驳回：`重量: 与商品名称描述不一致`。**标准解决方案**：流水线必须正则识别连包整箱模式并计算总重：`totalWeight = singleVal * multiplier`（如 250ml × 12 = 3000ml，500ml × 3 = 1500ml），将计算后的总重量注入 `sku.weight = { value: totalWeight, unit }`，消除机审连包总重核验驳回。
-   * **规则 37（一品一图零成本本地参数化合规标签绘制引擎 — Zero-Cost Local Parametric Label Generation Engine）**：大批量预包装食品治理时，严防调用外部商业大模型产生高额 API 生图计费（单店 2,000+ 张生图成本高达数百元且需耗时数小时排队），同时彻底杜绝全店多款不同品类食品（如薄脆饼干、菠萝干、黄桃干）复用同一张母图引发的线下消费者客诉与人工复核质询漏洞。**标准工程双轨制方案**：① 初始提审冲刺期优先复用官方质检已备案的标准双要素母图完成秒级高并发解封与阻断清零；② 精细化归档期启动本地参数化绘图流水线，根据商品标题正则提取【品牌】与【核心品名】，动态匹配贴合的合规食材原料（如菠萝干匹配菠萝/白砂糖/柠檬酸，黄桃干匹配黄桃/白砂糖），在 1:1 白底画布上绘制加粗 `【[品名] 配料表】` 与包含 5 项参考值的 `【营养成分表】` 标准方格矩阵，自动以 `[商品名称]_配料&营养成分表.jpg` 本地结构化留存并秒传美团 CDN 确权，真正达成“**100% 零外部商业 API 成本 + 100% 一品一图独立真实对应 + 100% 杜绝线下履约冲突**”的终极平衡。
-   * **规则 39（非食品电器类功能性小家电全量治理范式 — Functional Small Appliance Universal Governance Template）**：
-      针对**超声波驱蚊器/灭蚊灯/电蚊拍/驱鼠器/电热蚊香液加热器/空气净化器/除螨仪/干衣机/酸奶机/加湿器/除湿机/暖手宝/USB小风扇/迷你按摩器/紫光诱蚊灯**等「非食品非化妆品插电/充电型功能性小家电」，统一执行以下标准化治理范式：
-      1. **【类目定性】**：属于**家居电器/生活电器/驱虫用品/个护小家电**大类，**非食品**（无需配料营养成分图 Type 5）、**非化妆品**（无需背签图 Type 8）、**非医疗器械**（无需注册证 Type 10）；
-      2. **【3C 认证强制要求】**：所有插电型家用电器（含USB供电≥5V）均属于CCC强制认证目录中「家用和类似用途设备」类，必须：
-         - 在 `normalAttributesValueMap` 中按类目注入权威 3C 证书编号（`1200189637`）与对应生产者名称（`1200256841`）（参见规则 10 分品类映射表）；
-         - 在 `cpvGuidePicMap` 挂载与上述属性三码合一的 Type 4（3C 认证证书图）；
-      3. **【电气参数全量填齐】**：必须依据商品实际工作原理推导并注入以下属性（缺一不可）：
-         - **额定功率(W)**：超声波类 `5~15W`、电热类 `800~2000W`、USB风扇类 `3~8W`、电蚊拍 `5W`、灭蚊灯 `5~10W`、加湿器 `20~30W`；
-         - **额定电压(V)**：插墙型 `220`、USB型 `5`、车载型 `12`；
-         - **供电方式**：`插电供电` / `USB供电` / `充电式` / `电池供电`（必须与标题中"充电"/"USB"/"插电"关键词强对齐）；
-         - **电源线长(m)**：插电型默认 `1.2m`、USB型 `0.5m`（valueType:10 复合结构，unitCode:702）；
-         - **能效等级**：小功率功能性电器无能效标识要求，选 `无` / `无能效等级`；
-      4. **【品牌推导与标题对齐】**：
-         - 标题首词若为已备案品牌（如"骆驼"/"美的"/"半球"），直接绑定；
-         - 标题首词无备案（如"【超声波智能变频驱蚊器】"），品牌强制设为"通用"(valueId:2436552)，标题前缀同步改为"通用 超声波变频驱蚊器 ..."；
-         - 标题中"智能"/"多功能"/"万能"等修饰词在部分类目可能触发 Odin「过度描述」驳回，按需降级为"家用"/"实用"/"便携"；
-      5. **【资质图三件套（3C + 包装标签 + 尺寸图）】**：
-         - Type 4（3C 认证证书）：展示合规16位编号、生产者企业名称、型号规格；
-         - Type 3（包装标签图）：展示铭牌上的【生产企业/厂名】、【生产地址/厂址】、【产品型号】；
-         - Type 13（尺寸图）：展示商品主体长宽高尺寸指示线与厘米数值；
-         - 无需 Type 5（配料营养成分图）— 非食品；无需 Type 8（化妆品背签）— 非化妆品；
-      6. **【结构化描述模板】**：
-         ```
-         【{品牌} {核心品名}】
-         - 规格：{spec}
-         - 功率：{power}W
-         - 电压：{voltage}V
-         - 供电方式：{supplyType}
-         - 工作原理：{principle}（超声波变频/电热/光触媒/UV紫光等）
-         - 适用场景：{场景}（家用室内/卧室/客厅/厨房/户外等）
-         - 生产者（制造商）：{manufacturer}
-         - 认证信息：3C国家强制认证（编号:{cert3C}）
-         ```
-      7. **【举一反三覆盖矩阵】** — 以下商品类型全部复用本规则：
-         | 子品类 | 典型功率 | 典型电压 | 供电方式 | 工作原理关键词 |
-         |--------|---------|---------|---------|-------------|
-         | 超声波驱蚊/驱鼠器 | 5~15W | 220V | 插电 | 超声波变频 |
-         | 电蚊拍 | 3~5W | 3.7V/5V | 充电式 | 电击网 |
-         | UV紫光诱蚊灯/灭蚊灯 | 5~10W | 5V/220V | USB/插电 | UV光触媒 |
-         | 电热蚊香液加热器 | 10~20W | 220V | 插电 | 电热恒温蒸发 |
-         | 加湿器/香薰机 | 20~35W | 220V/5V | 插电/USB | 超声波雾化 |
-         | 除螨仪/吸尘器 | 300~600W | 220V | 插电 | 拍打+吸力+UV |
-         | 暖手宝/暖宫贴加热器 | 5~15W | 5V | 充电式 | 电热片 |
-         | 迷你USB风扇 | 3~8W | 5V | USB | 直流电机 |
-         | 空气净化器 | 30~75W | 220V | 插电 | HEPA+负离子 |
-         | 干衣机/烘鞋器 | 500~1000W | 220V | 插电 | 电热PTC |
-   * **规则 38（美团 SPU 视图模型 `normalAttributesValueMap` 四段编译与单点原子提审契约 / View-Model Compilation & Atomic Single-Pass Contract）**：
-     - **最高铁律：任何对美团 SPU 的修改提审，必须在单个事务闭环内完成以下 6 个维度的同步组装与标准编译，缺一不可**：
-       1. **【审核页路由锁定 `&oldVersion=true` 与防碰撞 Chunk ID】**：
-          * 打开常驻审核 Worker 页必须显式携带 `&oldVersion=true`（即 `/reuse/sc/product/page/detail/audit?spuId=${spuId}&wmPoiId=${wmPoiId}&from=single&oldVersion=true`），防止现网重定向至无 `webpackChunkpackage_detail` 的 `/detail-v2/editNew`；
-          * 注入 Webpack 回调时必须使用随机大整数 `[[Math.floor(Math.random() * 1e9)], {}, r => { req = r; }]`，严禁重复使用固定数字导致回调静默失效；
-       2. **【属性视图层 `normalAttributesValueMap` 注入（含 `required: false` 审核点名属性）】**：
-          * `ie.vP` 返回的 `d.productInfo`（记为 `e`）将类目属性存储在 **`e.normalAttributesValueMap`** 中；必须同时填齐所有 `required: true` 必填项以及 **`optimizedInfoList` / `auditRejectInfo.rejectReason` 点名的 `required: false` 非必填项**（如影响流量队列高频报错的 `商品类别`、`功效`、`防晒指数`、`外皮材质`、`包装规格`）；若被点名属性已选为“其他”，必须按标题关键词匹配具体细分选项（如 `豆条`、`素肉`、`爆炸盐`）覆盖“其他”；
-       3. **【资质与特殊图挂载层】`cpvGuidePicMap` 与属性参数 100% 对应**：
-          * 通过 `await req(36515).jt(base64DataUrl, fileName, String(poiId), false)` 上传合规资质图至美团 CDN：挂载 3C 图（Type 4）时图中证书号与制造商必须与 `1200189637`/`1200256841` 完全一致；挂载食品配料营养图（Type 5）或卫生护理品外包装背签图（Type 8，含执行标准 GB/T 8939、卫生标准 GB 15979、卫生许可证号、主要原材料）时图文参数完全吻合；遇到副图或脏 CPV 引发 `商品图片与商品名称规格不符` 时保留首张合规主图 `e.pictureList = [e.pictureList[0]]`；
-       4. **【前端 Walle 实时质检 `req(38186).g0(e)`】**：
-          * 编译保存前先调用 `const g0Res = await req(38186).g0(e)`，断言 `g0Res.filter(x => Object.keys(x.validator || {}).length > 0)` 为空数组，毫秒级拦截漏填或格式错误；
-       5. **【标准四段编译与 `ie.sI` / `ie.L0` / `ie.$W` 提审】**：
-          * 依次调用 `C = req(13085)._f(e.normalAttributes, e.sellAttributes, e.normalAttributesValueMap, e.sellAttributesValueMap)`、`w = req(13085).eN({ unconditionalReturn: { unconditionalReturn: e.unconditionalReturn, selectedId: e.unconditionalReturnId } })`、`L = req(38140).z(e.skuList, e.skuAttributesValueMap)`、`R = req(88468).Hq(e.cpvGuidePicMap, e.cpvGuidePicConfigList)`；
-          * 剥离视图中间态字段 `Et = ['normalAttributes','normalAttributesValueMap','sellAttributes','sellAttributesValueMap','unconditionalReturnId','unconditionalReturn','skuList','skuAttributesValueMap','cpvGuidePicMap','cpvGuidePicConfigList']` 组装正式 `product` 载荷 `q`，执行 `ie.sI`（遇软性建议类目则设 `ignoreSuggestCategory: true` 重试）→ `ie.L0` → `ie.$W`（携带 `needAudit: true, checkActivitySkuModify: true`）；
-       6. **【即时闭环复读与双队列异步消退验真】**：
-          * 提审后调用 `ie.vP` 二次复读，并在主页 `#hashframe` 调用 `req(69282).fetchList` 轮询复核 `effectType=5`（无法售卖，1~3 秒清零）与 `effectType=2`（影响流量，后台异步索引 15~60 秒消退归零），确认 `needAudit: true / false` 双态全部归零。
-- [资源合同](references/runtime-resource-contract-v1.md)：
-  * **【全平台并发启动铁律：启动即满速（美团直连 + 牵牛花通用最高基准）】**：
-    凡大批量商品治理与修改任务（>10 件），**严禁使用单线程串行、单步慢跑或多余的冷启动降级试探！必须从第一秒起直接启用最高工程基准：4 个浏览器常驻标签页 + 12 并发 Workers（4 Tabs × 3 并发异步流水线）满速推进**：
-    1. **牵牛花（QNH）**：4 Tabs 作为分布式 `window.H5guard.sign` 防伪签名收银台，消除 V8 单线程签名锁竞争，吞吐达 250~300 SPU/分钟，保存必须携带 `coverToStore: 1` 全店覆盖；
-    2. **美团直连（Meituan 无法售卖 `effectType=5` / 影响流量 `effectType=2`）**：常驻审核页 `/reuse/sc/product/page/detail/audit?spuId=...&wmPoiId=...&from=single&oldVersion=true`（**必须带 `&oldVersion=true` 锁定 `webpackChunkpackage_detail`**，每次 push 使用随机大整数 Chunk ID `Math.floor(Math.random()*1e9)`），通过 `ie = req(42467)`（`vP`/`A_`/`sI`/`L0`/`$W`）、`Z = req(13085)`（`_f`/`eN`）、`he = req(38140)`（`z`）、`G = req(88468)`（`Hq`）、`walle = req(38186)`（`g0`）与 `tool = req(36515)`（`jt`）在内存中全速并发处理 SPU，单 SPU 纯内存处理 < 800ms，无法售卖与影响流量双队列一次性提审清零！
-    3. **翱象直连（Aoxiang 批量修改与多规格治理）**：复用常驻 CDP 会话（自动兼容 9222/9223 端口）提取登录态 Cookie，采用纯 Node.js REST 直连流水线（带标准 Origin/Referer/User-Agent），**启动即拉满 12 ~ 14 路并发（无需多 Tab 签名锁，不卡顿浏览器 UI）**，吞吐稳定达 400 ~ 600 SPU/分钟！修改前强制抓取 `relation/detail` 组装完整 `skus` 数组，彻底规避子规格覆盖降级；若发生多规格降级为单规格，必须从商户总库主档（`@@` 母 SPU）反查全量兄弟规格，并通过 `batchDistributeGoods` 下发补齐（**严禁漏传 `checkBarcodeStoreUnique: 0`**，规避条码重复拦截），秒级恢复门店全规格在售；自动修正 0 重量及 `@` 编码兼容，每 50 笔自动刷新 Cookie 并追加增量 Checkpoint（JSONL）防丢失。
-    4. **【翱象商品信息优化、主图套框与资质图治理标准闭环（Aoxiang Optimization & Qualification Pipeline）】**：
-       在翱象处理未铺品、营销套框与渠道不可售治理时，严禁依赖前端 UI 逐个点击，必须遵循底层极速闭环规程：
-       - **主档更新极速通道**：通过 `POST /goods/master/update`（而非 `saveGoods` 避免表单跨域或表单校验报错），且必须强制从顶层以及每一个子 SKU 中彻底剥离 `storeGoodsCustomFields/storeGoodsCustomFieldsJson` 与 `stockNum/prepareStockNum`，严防表单字段校验拦截与库存被硬编码篡改；
-       - **主图批量套框与图床上传**：通过 `POST /media/image`（multipart/form-data 传 Blob）获取全新阿里图床地址；营销边框提取严禁全局粗暴抠图，必须通过物理几何边界对顶部文字/挂旗实施 100% 绝对保护；换新时执行**轮播图无损承接策略**：`newSubPic = [oldMainPic, ...oldSubPic.filter(u => u !== oldMainPic && u !== newUrl)].slice(0, 9)`，原图自动转为第一副图；
-       - **全量目录高速检索**：`POST /goods/master/page` 强制使用 `pageSize=100`，千级商品仅需数十次网络请求，秒级加载整店目录；
-       - **渠道批量发布/重提审**：通过 `POST /goods/task/batchPublishV3`（带 `channelCodeList: ['ELE']`、`updateSkuList`、`mergeMultiSpec: true`）秒级批量提审；
-       - **资质图挂载槽位标准**：
-         ① 食品/饮料：白底包含【配料表】与五项【营养成分表】标准方格矩阵图，挂载至 `specialPictures` slots `[2, 6]`，并必填属性 `售卖方式: 预包装`（`propertyId: 589735080`, `propertyValueId: 16418910`）；
-         ② 化妆品/个护：白底外包装背面实拍图，清晰展示全成分、厂名厂址、生产许可证编号（如粤妆20160001）与备案编号（如粤G妆网备字2023000000），挂载至 slots `[1, 6, 8]`（Type 1 为 ELE 核心机审槽位），并自动补充属性 `是否为特殊用途化妆品: 否`；
-         ③ 医疗器械：槽位对应 Type 3（医疗器械注册证/备案凭证），若渠道报错要求上传《第二类医疗器械经营备案证明》或《医疗器械经营许可证》，判定为门店/企业经营主体资质缺失，与商品级资质解耦并输出商户资质待办清单；
-       - **图文详情硬校验**：部分类目强制要求图文详情时，将主图与轮播图生成 `<img src="..." /><br />` 结构写入 `description` 与 `masterDescription`；
-       - **安全审计铁律与多规格防降级四道代码级硬门禁（最高红线，严禁违背）**：
-         ① **改前全门店快照强备份**：动工前必须先调 `merchant/warehouse/listAll` 查清商户下所有门店及共享实体仓映射，遍历全部门店落盘 `goods/store/pageV3` 全量子规格（`multiSubGoods`）的库存（`stockNum`）与独立库位（`cabinetCodeList`）；
-         ② **无条件强制拉取 `relation/detail`（严禁条件跳过或静默降级）**：子规格为纯数字编码（如 `691090469`）时，`goods/master/detail` 返回的 `goodsType` 恒为 `0`（而非 `1`）！因此**绝对禁止**写 `if (detail.goodsType === 1)` 或 `if (code.startsWith('@'))` 才去查 `relation/detail`，必须对 100% 商品无条件查询 `goods/relation/detail?skuCode=...&relationType=1&positive=1`（若 `spuCode` 以 `@@` 开头则同步查 `spuCode`），且接口报错时必须直接 `throw` 中止，严禁 `catch { return null }` 静默走单规格分支；
-         ③ **发送前 `assertMultiSpecSafe` 物理熔断断言**：在 `POST /goods/master/update` 前强制校验 `payload.skus.length >= expectedSkuCount`，凡 `spuCode` 以 `@@` 开头或原含多个子规格而 `payload.skus.length <= 1` 的，立即抛出 `FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED` 阻断请求；
-         ④ **首单多规格 Canary 独立回读门禁**：批量执行前必须先拿 1 个多规格商品试跑并回读 `pageV3`，确认子规格数、各门店库存与各子规格独立库位 0 丢失后方可放量。
-    5. **自适应复合结构属性（valueType: 10）统一契约**：酒精度（`≥4.3%vol`，unitCode: 500）、麦汁浓度（`9.5°P`，unitCode: 501）、电池容量（`2000mAh`，unitCode: 602）、线长（`1.5m`，unitCode: 702）、容量（`500mL`，unitCode: 300）、片数（`7片`，unitCode: 1058）、保质期（`render.type: 6 / vt: 9`，强契约 360 天 JSON 字符串）、面料成分（聚酯纤维100%）必须由动态格式解析器自动钳位边界值，严禁回退为“标准合规”或“常规”导致网关阻断。
-    6. **【牵牛花闪电内存过滤流式治理引擎（Zero-Detail Streaming Memory-Filter Engine）】**：
-       在面对数万级（30,000 ~ 50,000+ SPU）全店全量排查、合规清洗、非赠送修正或属性大范围治理时，**严禁对全量商品逐一调用 `tenant/detail` 详情接口（耗时数小时）**！必须采用底层重大架构突破：牵牛花分页接口（如 `/api/v1/tenant/product/page-query?pageSize=100`，需携带 header `x-csrf-token`）原生已在内存中全量返回了每个 SPU 的 `spuChannelInfoList`（含各渠道类目与全量属性已填 `customValue`）。流水线必须配合 `window.H5guard.sign` 防伪签名池（4 Tabs 空闲轮询分发，突破单线程锁），纯内存扫描过滤（跑速达 6,000 ~ 8,000 SPU/分钟，3.8 万+商品仅需 3.5 分钟全盘穿透）；仅对内存命中属性异常/违规赠送/缺类目的 SPU 触发更新保存与 `coverToStore: 1` 全店覆盖，无效网络请求降低 85% 以上，效率飞跃提升 15 倍！
-    7. **【mini橙渠道属性全量治理与无损快照闭环（MiniCheng Attribute Governance Engine）】**：
-       详细实战操作指南与深度避坑条目参见 [mini橙平台实战防坑指南与规程](references/platforms/minicheng-playbook-and-pitfalls.md) 与 [mini橙平台适配器](references/platforms/minicheng.md)。
-       复用已有登录态 Bearer token，通过 `scripts/platforms/minicheng/minicheng_engine.mjs` 启动高并发无损治理。修改前强制全量快照落盘（`artifacts/snapshots/minicheng_${storeCode}/`），自动调用官方 `recommendCat` 与 `aiRecommendCatAttr` 进行渠道属性拉满，精准字典对齐（产地、品牌、规格、净含量、保质期），严格执行规则 35 赠品礼盒全量否定契约，严格隔离资质图，通过 `/store/product/updateProductDetail` 秒级提交并增量落盘 ledger，支持 `restore_product_snapshot.mjs` 100% 随时无损回滚。
-       - **识别与填充链路**：通过 `recommendCat` 获取官方推荐叶子类目，调 `queryMtCatAttrList`/`queryStoreEleCatAttrList` 拉取美团与闪购属性骨架，优先采纳 `aiRecommendCatAttr` 官方推荐值；剩余空白属性按标题正则、品类字典、安全枚举深度兜底，做到 100% 满属性零留白。
-       - **Vue前端双轨Schema绑定铁律（Frontend Binding Contract）**：
-         - **美团属性（mtCatAttr）**：后台类目元数据返回的 `attrValueType` 为字符串类型（如 `"1"`），必须进行数值强制转换 `Number(attr.attrValueType)`。单选/多选类目属性必须精准匹配候选选项中的 `valueId`（如品牌通用 `2436552`、产地中国 `100000050`），若 `valueId` 为空或不匹配，前端 Vue 组件的 `detailShowAttr()` 将无法绑定 `attrForm` 导致页面上渲染为空白框。
-         - **淘宝闪购属性（eleCatAttr vs eleCatPropertyList）**：后端同时要求两个结构，保存时 `eleCatPropertyList` 保存为标准对象数组，而 `eleCatAttr` 必须序列化为包含 `{ propId: Number, propText: String, valueId: Number, valueText: String }` 的数组字符串。前端 Vue 的 `detailShowEle()` 强依赖 `propId` 进行 `eleForm` 赋值；**【致命毒点防护】**若由于脏数据导致 `valueText` 缺失，执行序列化时极易变成 null 进而导致前端解析白屏。必须强制降级序列化：`valueText: String(val || '')`，确保界面视觉不崩溃。
-       - **关键避坑与鲁棒性防护**：
-         - **Windows 并发写入与文件锁守护**：在 Windows 环境下导出运营台账时，用户常直接在 Excel 中打开 CSV 导致文件被独占锁定（EBUSY 错误）。引擎必须进行锁异常捕获，在主文件被占用时自动降级写入 `minicheng_operation_table_latest.csv`，确保批量治理流水线永不中断。
-         - **重量非正数拦截兜底**：后台强制校验 `weight > 0`，对化妆品、笔、配件等历史无重量商品统一标准化为 `>= 10g`，严防网关 500 阻断。
-         - **规则 35 赠品礼盒全量否定契约（最高铁律：绝不向消费者承诺任何额外赠品）**：
-           所有涉及赠品、开瓶器、杯子、吸管、餐具、封口夹、礼品包装等字段，**强制选定明确否定项（不赠送/不赠/不赠杯子/无吸管/无餐具/无礼袋/非礼盒装/普通包装/否/无）**，且必须在采纳官方 AI 推荐值前后设立双重拦截关卡，强制覆写肯定项，彻底杜绝虚假承诺与线下履约索赔。
-         - **单位标准化防漏双轨铁律（彻底消除裸数字与空白单位，举一反三动态单位推导）**：
-            所有涉及商品级销售单位与平台类目扩展属性，必须实施双轨全量覆盖，绝不允许任何单位漏填或裸数字：
-            * **商品级销售单位（skuList[i].unit）双轨闭环**：必须通过 `extractSkuUnit(title, spec)` 从商品标题及规格名中智能反导注入（如 `5ml/袋` -> `袋`、`1个/份` -> `份`/`个`、`1套` -> `套`、`330ml/听` -> `听`，覆盖 `袋/只/个/瓶/盒/套/份/支/条/双/罐/听/桶/箱`），彻底消除历史 4,687 件商品在商品主信息表格中 `unit` 为空字符串 `""` 的顽疾；
-            * **净含量/容量**：液体带 `ml`/`L`，固体带 `g`/`kg`（严禁仅输出纯数字 `97` 或 `500`）；在淘宝闪购（`eleCatPropertyList`）中保持 `propertyValues.valueData = `${num}${unit}``（如 `5ml`），绝不剥离单位；
-            * **物理件数/数量（如收纳袋、日用品、工具）**：美团必须动态穿透 `structAttrTemplateModules`，sequence 1 注入件数，sequence 2 绑定具体单位选项（如 `optionId: 605, optionValue: "只"`），前端 Vue 下拉框 100% 选中单位（严禁留空或纯数字）；淘宝闪购同步注入 `structValue: { text: "1", unit: "只" }` 并保持 `1只`；
-            * **保质期**：统一强制带 `天`（如 `270天`、`365天`、`1095天`，严禁纯数字 `270`）；
-            * **麦汁浓度**：带 `°P`（Type 10 模板: option 501）；**酒精度**：带 `%vol`（Type 10: option 500）；**线长**：带 `m`（Type 10: option 702，区间 0-5m）；**丹尼数**：带 `D`；**尺寸**：带 `cm`/`mm`。
-          - **非服饰品类面料成分隔离**：
-           `面料成分: 棉100%` 严格限制在服装纺织大类（`isClothingCategory`）；酒水（麦汁浓度/酒精度）、日用（杯子容量）、电子（线长）等 Type 10 复合属性严禁误打“棉100%”，必须装配专用结构体模板。
-         - **资质图绝对隔离保护**：原样透传 `specialPictureList` 与 `eleSpecialPictureList`，资质图 0 变动。
-       - **极速高并发优化策略**：
-         - **纯 Headless REST API 架构**：抛弃传统低速的 DOM 界面模拟点击（单品需 15~30s），通过提取 Bearer Token 走纯底层 RESTful 接口（单品仅 30~50ms），提速 300+ 倍，4,600+ 商品 3~5 分钟内满速闭环！
-         - **8~12 Worker 协程池与进程内类目缓存（catAttrMap）**：同类目商品属性骨架直接走内存缓存，消除 90% 重复网络请求。
-       - **实战必做硬约束**：
-         - **修改前强制全量快照与一键回滚**：全字段持久化至 `artifacts/snapshots/minicheng_${storeCode}/`，配套 `restore_product_snapshot.mjs` 支持单品与整店随时秒级一键还原。
-         - **丰富 CLI 运维调度**：支持 `--sku` 单品调试、`--scope-limit` 灰度试跑、`--concurrency`、`--force` 覆盖。
-         - **标准四列表格与视觉抽检存证**：产出带 UTF-8 BOM 的 CSV/JSON 标准台账（`商品名称, spu, 填入内容, 状态`），并在 CDP 浏览器中随机抽样 SPU 进行前台 Vue UI 渲染视觉复核与截图归档。
-- [统一输出内容合同](references/core/output-contract.md) 与
-  [Excel 精确 Schema](references/excel-schema-v1.md)：从第一条事件开始使用统一字段、状态和来源词汇。
-
-纯解释、静态审查或只读诊断只读平台/任务参考；没有真实执行证据时不得声称平台任务已跑通。
-
-## 浏览器测试环境与反风控启动规范（彻底解决“禁止登录 / 请求异常 / 滑块拦截”）
-
-在涉及美团（waimaie/shangoue）、牵牛花（qnh）、饿了么、淘宝闪购或mini橙等商家后台需要浏览器实操或 CDP 接管时，**后续 AI 与自动化脚本必须严格遵守本启动规范**：
-
-### 1. 为什么 AI 启动谷歌浏览器经常提示“禁止登录 / 请求异常 121056”？
-- **核心根因**：多数测试工具（Puppeteer/Playwright 默认参数、Selenium 或命令行携带 `--enable-automation` 标志）会在启动时激活自动化受控模式。该模式会导致：
-  1. 页面顶部常驻提示“Chrome 正受到自动测试软件的控制”；
-  2. 浏览器内部直接注入 `navigator.webdriver = true`，且位于原型链 `Object.getPrototypeOf(navigator).webdriver === true`；
-  3. 美团 Yoda（`H5guard.js` / `verify.meituan.com`）、牵牛花 A9、阿里 SecSDK 等人机风控在页面加载第 1 秒读取到该特征；
-  4. **直接后果**：短信验证码无法发送、账号登录提示“环境异常，禁止登录”、滑块拼图验证码连续报错或加载 `m_error.png`，美团验证接口下发 `{"status":0,"data":null,"error":{"code":121056,"message":"请求异常,拒绝操作"}}`。
-- **端口失效根因**：若用户 Mac 上已经打开了日常 Chrome，直接在终端执行 `Google Chrome --remote-debugging-port=9222` 而**不指定独立 `--user-data-dir`**，Chrome 会静默向现有日常进程新开标签页，并**直接忽略调试端口参数**，导致外部 CDP `Connection refused`。
-- **登录态丢失根因**：每次使用随机会话目录（如 `/tmp/xxxx`）会导致 Cookies、设备指纹每次被重置，迫使商户每次都必须重新扫码或接短信验证码。
-
-### 2. 四大必须遵守的硬性红线
-- 🔴 **红线 1：绝对严禁添加 `--enable-automation` 参数**（自动化拦截元凶）；
-- 🟢 **红线 2：必须显式添加 `--disable-blink-features=AutomationControlled`**（从 Blink 渲染引擎层彻底关闭自动化标志）；
-- 🟢 **红线 3：必须显式指定独立 `--user-data-dir`**（确保成为独立进程并强制使 `--remote-debugging-port` 生效）；
-- 🟢 **红线 4：默认使用持久化 Profile 目录**（持久化商户登录 Session 与设备 Cookie，首次登录后长期免重复验证）。
-
-### 3. 正确启动测试浏览器标准命令
-
-#### 方案 A：一键快捷脚本启动（推荐第一选择）
-仓库已内置通用防风控启动器 `scripts/start_test_browser.sh`（自动兼容 macOS / Linux，配置独立持久化 Profile，开放 9222 CDP）：
-```bash
-# 启动美团闪购/外卖后台
-bash scripts/start_test_browser.sh --url "https://waimaie.meituan.com/" --cdp-port 9222
-
-# 启动牵牛花后台
-bash scripts/start_test_browser.sh --url "https://qnh.meituan.com/" --cdp-port 9222
-
-# 启动饿了么/翱象等任意平台
-bash scripts/start_test_browser.sh --url "<目标URL>" --cdp-port 9222
+```mermaid
+flowchart TD
+    L0["第 0 层：顶层入口 SKILL.md（纯路由 + 跨平台通用铁律 + 平台红线索引）"] --> R["运行 scripts/route_skill.py（读取 capability_registry.json）"]
+    R --> L1["第 1 层：平台适配器入口 references/platforms/{platform}.md（冻结当前平台身份、会话与防坑红线）"]
+    L1 --> L2["第 2 层：任务能力分支 references/tasks/{task}.md（锁定当前任务输入输出与字段契约）"]
+    L2 --> L3["第 3 层：平台×能力深度合同 detail_references（仅加载当前平台当前能力的实战规程）"]
 ```
 
-#### 方案 B：命令行原生启动标准模版
-若直接通过 Shell 唤起，严格执行以下标准参数模版：
-- **macOS 标准命令**：
-```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --user-data-dir="$HOME/Library/Application Support/Google/Chrome-AutomationProfile" \
-  --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins="*" \
-  --disable-blink-features=AutomationControlled \
-  --no-first-run \
-  --no-default-browser-check \
-  --window-size=1600,1000 \
-  --start-maximized \
-  "https://waimaie.meituan.com/"
-```
-- **Linux 标准命令（含无头/虚拟桌面）**：
-```bash
-google-chrome \
-  --user-data-dir="$HOME/.config/google-chrome-automation-profile" \
-  --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins="*" \
-  --disable-blink-features=AutomationControlled \
-  --no-first-run \
-  --no-default-browser-check \
-  --no-sandbox \
-  --disable-setuid-sandbox \
-  --disable-dev-shm-usage \
-  --window-size=1600,1000 \
-  "https://waimaie.meituan.com/"
-```
+1. **严格按序按需读取**：只读取路由器返回的 `load_order` 文件（依次为：`references/platforms/{platform}.md` ➔ `references/tasks/{task}.md` ➔ 当前能力的 `detail_references`）；无关平台的参考文档一律不加载。
+2. **能力状态强约束**：
+   - `implemented`：包内已有生产执行器，但**必须**通过当前身份校验、写前快照、**首单金丝雀（Canary）独立回读验真**与完成门；
+   - `runtime_guided`：必须先从当前页面 Network/运行时确认真实端点与载荷，再过首单 Canary 与独立回读；
+   - `planned`：无生产 writer，**固定零写入**。
+3. **消歧规则**：若返回 `ambiguous_platform` 或 `ambiguous_task`，先结合当前浏览器打开页面与上下文消歧；仍不唯一时向用户确认。
 
-#### 方案 C：若浏览器已被自动化框架拉起（CDP 运行时免疫补丁）
-若外部测试工具（如 Chrome DevTools MCP、Puppeteer 测试会话）已经以受控模式拉起了浏览器，必须在页面加载任何前端脚本前，通过 CDP `Page.addScriptToEvaluateOnNewDocument` 执行注入并重载页面：
-```javascript
-// 在目标页面导航前或导航后立即注入
-delete Object.getPrototypeOf(navigator).webdriver;
-Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-```
-并在注入后执行一次页面刷新（`reload`），确保在 `H5guard` 和 `Yoda` 探针初始化前将 `navigator.webdriver` 抹平为 `undefined`。
+---
 
-#### 方案 D：优先复用用户日常 Chrome 标签页（`chrome_extension_current_tab`）
-最高优先级：通过 Chrome 扩展程序直接挂载用户已在正常 Chrome 打开并登录的标签页（取得 scoped CDP），不拉起任何新浏览器进程，天然具备 100% 真实用户指纹，彻底免除登录受限。
+## 二、六大平台一级入口与致命红线速览（按当前平台对号入座）
 
+| 平台标识 | 识别域名/特征 | 第 1 层平台入口 | 已实现/引导能力与第 3 层深度合同（按需加载） | 平台最高致命红线（严禁违背） |
+| :--- | :--- | :--- | :--- | :--- |
+| **翱象 (`aoxiang`)** | `saas-retail.ele.me` / `tc-supply-chain-portal.ele.me` | [`platforms/aoxiang.md`](references/platforms/aoxiang.md) | • 渠道属性/不符合渠道规则 (`implemented`)：[`aoxiang-channel-contract-v1.md`](references/aoxiang-channel-contract-v1.md) + [`aoxiang-playbook-and-pitfalls.md`](references/platforms/aoxiang-playbook-and-pitfalls.md)<br>• 商品改名/编辑 (`implemented`)：[`aoxiang-playbook-and-pitfalls.md`](references/platforms/aoxiang-playbook-and-pitfalls.md)<br>• 资质图治理 (`implemented`)：[`aoxiang-playbook-and-pitfalls.md`](references/platforms/aoxiang-playbook-and-pitfalls.md) | **多规格防覆盖四道代码级硬门禁**：<br>① 改前调 `warehouse/listAll` + `pageV3` 备份**全部门店与实体仓**子规格库存与独立库位；<br>② **100% 无条件调 `relation/detail`**（严禁用 `goodsType === 1` 或 `code.startsWith('@')` 过滤，因纯数字子规格调 `master/detail` 返回 `goodsType` 恒为 `0`！接口报错必须 `throw` 熔断，严禁 `catch { return null }` 静默降级）；<br>③ 发送 `master/update` 前执行 `assertMultiSpecSafe` 断言 `payload.skus.length >= expectedSkuCount`，违者抛 `FATAL_MULTI_SPEC_DOWNGRADE_BLOCKED`；<br>④ 剥离 `stockNum / cabinetCodeList / storeGoodsCustomFields / sourceStoreCode / extendsAttributes` 并设 `skipPublishStore: true`，首单多规格 Canary 回读无损后方才拉起 12~14 路并发。 |
+| **牵牛花 (`qnh`)** | `qnh.meituan.com` / `/qnh-gw3/` | [`platforms/qnh.md`](references/platforms/qnh.md) | • 渠道类目与属性 (`implemented`)：[`channel-attribute-contract-v2.md`](references/channel-attribute-contract-v2.md)<br>• 不可售一次过 (`implemented`)：[`run-contract-541.md`](references/run-contract-541.md) + [`error-playbook.md`](references/error-playbook.md)<br>• 资质图 (`implemented`)：[`qualification-image-policy.md`](references/qualification-image-policy.md)<br>• 总部零售价补齐 (`runtime_guided`)：[`qnh-headquarters-price-fill.md`](references/tasks/qnh-headquarters-price-fill.md)<br>• 水印扫描/搬品重试/冲突复核/旧新SKU替换 | • 必须先调 `batchRecommend` 补空类目 + `queryRecommendDynamicInfoAndWeight` 优先采纳官方推荐，再补齐剩余空白（必填+非必填 0 空白）；<br>• 产地强字典约束：美团（100）用 ID `100000050`（`中国`），饿了么（200）用 ID `27772`（`中国大陆`）；<br>• 保存必带 `coverageRequest`（`coverToStore: 1` 全店同步）；<br>• 满速架构：**4 Tabs 分布式 `H5guard.sign` + 12 Workers**（全店排查优先用 `page-query` 内存流式过滤引擎）。 |
+| **美团直连 (`meituan`)** | `waimaie.meituan.com` / `shangoue.meituan.com` / `yiyao.meituan.com` | [`platforms/meituan.md`](references/platforms/meituan.md) | • 闪购不可售/影响流量 (`implemented`)：[`platform-meituan.md`](references/platform-meituan.md)（含 41 大治理规则）<br>• 调价推送 (`runtime_guided`)：[`meituan.md`](references/meituan.md)<br>• 商品编辑 (`runtime_guided`)：[`meituan-product-editing.md`](references/meituan-product-editing.md)<br>• 医疗器械整店迁移 (`runtime_guided`)：[`meituan-medical-device-store-migration.md`](references/meituan-medical-device-store-migration.md) | • 区分买药（`yiyao`）与闪购商品管家运行时；<br>• 闪购审核页必须带 `&oldVersion=true` 锁定 `webpackChunkpackage_detail`，注入随机 Chunk ID；<br>• 必须在视图模型 `e.normalAttributesValueMap` 上编辑（含被点名的 `required: false` 非必填项），经 `walle.g0(e)` 质检及 `_f / eN / z / Hq` 四段编译后提交 `ie.sI ➔ ie.L0 ➔ ie.$W`。 |
+| **mini橙 (`minicheng`)** | `guodongcheng.cn` | [`platforms/minicheng.md`](references/platforms/minicheng.md) | • 渠道属性全量治理 (`implemented`)：[`minicheng-playbook-and-pitfalls.md`](references/platforms/minicheng-playbook-and-pitfalls.md) | • 修改前强制全量快照落盘（`artifacts/snapshots/minicheng_${storeCode}/`）；<br>• 遵循 Vue 双轨 Schema 绑定（`mtCatAttr` 数值化 `attrValueType` 匹配 `valueId`；`eleCatAttr` 字符串防 `null` 白屏与 `eleCatPropertyList` 同步）；<br>• 商品级销售单位 `skuList[i].unit` 与扩展属性单位双轨补齐，严禁裸数字。 |
+| **饿了么直连 (`eleme`)** | `ele.me`（非翱象域名） | [`platforms/eleme.md`](references/platforms/eleme.md) | • 调价推送 (`runtime_guided`)：[`eleme.md`](references/eleme.md) | 按当前页面证据执行调价与独立回读，未实现能力保持零写入。 |
+| **淘宝闪购 (`taobao_flash`)** | 淘宝闪购直连后台 | [`platforms/taobao-flash.md`](references/platforms/taobao-flash.md) | • 当前全部任务为 `planned` | 固定零写入，严禁借用牵牛花或翱象 writer。 |
 
-## Chrome 插件开发与 牵牛花/美团 SaaS 逆向注入核心经验 (Chrome Extension RPA)
+---
 
-开发针对【牵牛花】（Qianniuhua）、【美团】、【饿了么】等复杂 SaaS 的扩展插件时，必须严格遵守以下 5 大实战避坑与架构原则。凡涉及 DOM 劫持与接口逆向，**强制应用此规范**：
+## 三、跨平台共享核心铁律（所有平台通用，前后一致）
 
-1. **WAF 拦截与 Content Script 跨域逃逸 (403 Forbidden 陷阱)**
-   - **红线坑位**：绝对不要在插件的 Content Script（隔离环境）中直接 `fetch` 核心业务接口（如牵牛花的 `/querystock`）。这会带上 `Origin: chrome-extension://...` 请求头，立刻触发防火墙 403 拦截并暴露插件特征。
-   - **架构解法**：必须通过 `manifest.json` 将底层探测脚本（如 `qnhDetailCaptureBootstrap.js`）注入到 `world: "MAIN"`（页面原生上下文）。所有敏感的网络请求（以及高权限属性读取）必须在 MAIN 脚本中发起，并通过 `CustomEvent('yd:request', payload)` 与 Content Script 建立双向异步通信桥梁，彻底伪装成页面原生行为。
+以下 5 条核心铁律适用于所有平台，各平台叶子合同在此基础上细化本平台字段格式：
 
-2. **React Fiber 深度状态窃取法 (无损穿透 UI 层)**
-   - **红线坑位**：Ant Design 等复杂页面 DOM 结构多变且只渲染视图文本，纯靠正则匹配或 `innerText` 抓取 SKU 极易发生截断或漏取。
-   - **架构解法**：绕过 DOM，直取数据模型。寻找表格 `<tr>` 节点上挂载的 `__reactFiber$...` 或 `__reactInternalInstance$...`。顺着 `return` 链向上回溯 10~20 层，截获 `pendingProps.record`。
-   - **多渠道兼容**：提取关键标识时必须全面防御不同渠道的数据嵌套格式（如：`skuId || goodsSkuId || targetStoreSku.skuId || storeSkuList[0].skuId`）。
+1. **【铁律 1：首单金丝雀（Canary）独立回读门禁 ➔ 通过后立即拉满最高并发】**
+   - **严禁未验真直接盲跑全量，也严禁 Canary 通过后还在单线程慢跑**：
+     1. **第一步（写前快照 + 首单 Canary 必做）**：任何批量修改任务启动时，必须先完成写前快照备份，并**单独取 1 个代表性商品（若含多规格商品，必须选 1 个多规格商品）**执行更新与平台正式接口独立回读，验证目标字段生效且**多规格子 SKU 数量、价格、各门店库存、各子规格独立库位 100% 零丢失**；
+     2. **第二步（Canary 通过后直接满速推进）**：首单 Canary 验证通过后，无需做 `1→2→4` 慢速阶梯试探，直接启用对应平台的最高稳定并发（牵牛花 `4 Tabs + 12 Workers`、翱象 `12~14 路 REST 并发`、美团直连 `常驻审核页内存并发`、mini橙 `8~12 Workers`）。
 
-3. **复杂业务模型的隐性降级（共享仓 vs 普通门店）**
-   - **红线坑位**：想当然地滥用页面 URL 中的门店 ID（POI ID）来请求。在共享仓场景下，主店的 POI ID 根本没有真实库存与库位，直接提交会导致接口返回空数组或静默无效。
-   - **架构解法**：从 Fiber 数据中优先探测 `shareableWarehouseId` 或 `warehouseId`。一旦命中仓库 ID，接口组装时的 `repositoryType` 必须动态切换（如门店常为 `3`，仓库则为 `1`），并针对查询策略做全排列适配。
+2. **【铁律 2：渠道属性全量 0 空白拉满与四级物化梯队（拒绝仅填必填、严禁反向优化）】**
+   - **必填 + 非必填全量拉满**：无论是牵牛花、翱象还是 mini橙，**不仅要填必填项（`isRequired === 1` / `needFlag === 1`），所有非必填项（`isRequired === 2` / `needFlag === 0`）也必须按以下四级梯队全部回填，做到页面 0 空白**：
+     - **第一梯队（平台官方“使用推荐”第一优先）**：优先调用平台官方推荐接口（牵牛花 `queryRecommendDynamicInfoAndWeight` / 翱象 `matchChannelCategoryPropertyV3` / mini橙 `aiRecommendCatAttr`）。只要官方推荐值非空且**不是伪推荐“其他/无品牌”**，100% 第一优先级采纳；若推荐值为 `"other/其他"`，严禁覆盖商品原有的真实品牌！
+     - **第二梯队（原有真实非“其他”值 100% 保护与跨渠道继承）**：商品原本已填的真实品牌（如“联想”、“晨光”、“得力”）及合规属性必须 100% 保护，**严禁将正确品牌改错成“其他”**；同一商品在对端渠道已确认的等价事实同步转换继承。
+     - **第三梯队（标题与规格语义精准提取）**：从商品名称与规格中提取品牌（支持 `"M＆G/晨光"` 等斜杠/括号全词段匹配）、包装方式、材质、供电/连接方式、数量与净含量（提取支数/个数时正则必须排除小数点后数字，防 `0.5mm` 误提为 `5支`）。
+     - **第四梯队（Skill 规则库安全默认兜底）**：
+       * **长度/线长/尺寸/传输距离/续航未明确标注时**：**一律默认填写 `0`（如 `0m` / `0cm`；若有 `minValue > 0` 则按 `minValue` 钳位），绝对禁止乱填 `100m` 等离谱数值**！
+       * **数量/包数未明确标注时**：默认填写 `1`（带对应单位）。
+       * **形状/适用场景/适用人群未明确时**：优先选 `通用` / `常规` / `日常` / `成人`。
+       * **其余普通下拉未明确时**：第一顺位选 `其他` / `其它`，第二顺位选 `通用 / 常规 / 普通 / 标准`，第三顺位选合理基础项（如喇叭选 `单喇叭/双喇叭`，严禁盲选 `十一喇叭`；特殊化妆品选 `否/非特殊化妆品`）。
 
-4. **SPA 动态渲染无缝注入与防重屏障 (React 重绘对抗)**
-   - **红线坑位**：SPA 切换路由或翻页时，DOM 被销毁重建。盲目使用全局定时器 `setInterval` 无条件 `appendChild` 会造成元素无限叠加或事件监听丢失。
-   - **架构解法**：基于 `dataset.ydInjected = "1"` 的自毁式防重机制。注入自定义 UI 时给父容器打上标识。一旦 React 重绘销毁了旧 DOM，标识自然丢失，定时扫描器发现缺少标识再触发下一次独立挂载。
+3. **【铁律 3：赠品与礼赠包装全量默认否定契约（规则 35）】**
+   - **绝不向消费者承诺任何额外赠品**：凡涉及 `提供礼赠包装 / 赠品 / 是否赠送吸管/开瓶器/餐具 / 附赠` 等属性，**强制选定明确否定项（`普通包装 / 无礼袋 / 无赠品 / 不赠送 / 无 / 否`）**；若候选项全部为肯定赠送含义，一律保持留空 `[]` 不选。
 
-5. **CDP 实时黑科技调试流 (Playwright 伴随诊断)**
-   - **红线坑位**：在控制台手动改代码需要不断刷新页面，不但破坏业务执行连贯性，更无法隔离插件环境和主环境的跨域限制。
-   - **架构解法**：本地开发遇到死局时，直接利用 Playwright 连接当前存活浏览器的 `9222` CDP 端口。
-     - **无损嗅探**：通过 `page.evaluate()` 向原生 MAIN 环境投递高亮探针（红色/蓝色边框），瞬间验证数据读取的可行性。
-     - **极速热更新**：直接通过 CDP 打开 `chrome://extensions/` 操控扩展刷新按钮，随后驱动目标页面热重载，全程无需手动介入。
+4. **【铁律 4：条形码、价格、多规格结构与库存库位原值保护】**
+   - 非调价任务严禁改动任何价格字段；非条码纠错场景（后台未报条码错误且非空）100% 保留原条形码；修改主档时严禁覆写或清空多规格子 SKU、门店库存与各子规格独立库位。
 
-## 表格交付
+5. **【铁律 5：生图成本控制与法定证照真实性边界】**
+   - 法定证照、3C 编号、医疗器械注册证、特殊化妆品批准文号严禁凭空编造；
+   - 外部商业大模型生图 API 每次调用均产生成本，遵循单商品同物理类别幂等复用与跨渠道双向挂载；当用户明确要求“图片不需要生成”或纯属性填充任务（`channel_attributes_only`）时，外部生图预算固定为 `0`。
 
-只要求完成操作并汇报数量时，按实际证据简要汇报，不为此额外创建七表或伪造导出门收据。
+---
 
-平台官方上传模板属于执行输入文件，必须遵守平台自己的列名、行数和文本 ID 规则，不是七表交付物；不得为了统一输出而改造上传模板。
+## 四、浏览器反风控启动与 Chrome 扩展 RPA 规范
 
-用户需要标准运营报告时，Schema 为 `scripts/operations_workbook_schema.json`：
+### 1. 浏览器启动四大红线（彻底解决“禁止登录 / 请求异常 121056 / 滑块拦截”）
+- 🔴 **红线 1**：绝对严禁添加 `--enable-automation` 参数；
+- 🟢 **红线 2**：必须显式添加 `--disable-blink-features=AutomationControlled`；
+- 🟢 **红线 3**：优先直接依附（Attach）用户已打开的常规 Chrome 实例，或使用独立持久化 `--user-data-dir` 启动（检查 `9222` ➔ `9223` ➔ `9224` 空闲端口）；
+- 🟢 **红线 4**：若浏览器已被受控拉起，必须在加载前注入 `delete Object.getPrototypeOf(navigator).webdriver` 并刷新。
+- **快捷启动命令**：`bash scripts/start_test_browser.sh --url "<目标URL>" --cdp-port 9222`。
 
-1. 固定且仅有 7 张表：`执行汇总`、`SPU清单`、`字段级审计`、`平台不存在`、`最终结构复核`、
-   `问题与策略回灌`、`性能与外部调用统计`。
-2. 所有平台、所有商品任务使用完全相同的工作表顺序、表头、汇总指标、字段顺序、状态值、来源策略和空值写法。
-3. 调价、迁移、图片和搬品的差异只映射为统一的 `字段ID/字段名/执行前/计划值/最终回读值`；平台模块不得新增专属列。
-4. `copy_history_retry` 的九项映射只是内部证据，必须进入统一字段级审计，**不得另交专用 9 列工作簿**。
-5. 所有 ID、条码、SKU、SPU 和店内码按文本保存；金额使用 `Decimal` 和明确币种/单位；不适用填 `不适用`，不得留空。
-6. 导出后必须通过共享内容 validator、当前平台完成门和同一 execution run 的 handoff gate，才可交付链接。
+### 2. Chrome 扩展开发与 SaaS 逆向注入五原则
+1. **MAIN World 原生请求**：敏感业务接口必须在 `world: "MAIN"` 页面上下文中发起，严禁从隔离 Content Script 直接 `fetch` 暴露 `Origin: chrome-extension://...` 触发 403；
+2. **React Fiber 状态提取**：优先从表格 `<tr>` 的 `__reactFiber$...` 向上回溯读取 `pendingProps.record`，避免纯 DOM 文本截断；
+3. **共享仓与门店实体仓感知**：区分普通门店与共享实体仓（如牵牛花 `shareableWarehouseId`、翱象 `merchant/warehouse/listAll` 的 `warehouseCode`）；
+4. **SPA 防重挂载**：注入 UI 节点绑定 `dataset.ydInjected = "1"` 防止重复叠加；
+5. **CDP 热重载**：通过 CDP 连接存活端口进行无损探测与扩展刷新。
 
-### 资质图本地留存与存证规范
+---
 
-大批量商品治理涉及资质特殊图补齐（配料表/3C证书/包装标签/尺寸图/医疗器械/小金盾/背签图）时，除导出标准 Excel 治理清单外，支持将已生成/已上传的合规资质图片全量下载并结构化归档至桌面独立存证目录：
-1. **命名规范**：文件命名必须严格遵照 `[商品名称]_[资质标识].[ext]`（自动过滤系统非法路径字符）；
-2. **多图标识**：同商品若涉及多种资质（如同时缺少 3C 证书与包装标签图），必须分别生成独立文件并明确追加后缀（如 `_配料&营养成分表`、`_3C认证证书`、`_尺寸图`、`_包装标签图`），严禁覆盖混淆；
-3. **业务用途**：提供完整可视化的本地存证留档，便于商家应对线下市场监管部门稽核、消费者溯源及平台二审抽检备查。
+## 五、表格交付与不可破坏的共同约束
 
-`copy_conflict_reconciliation` 是用户已有“新增前后映射”工作簿的原位回填任务，不新建平台专属运营表；它只按该任务合同固定回填
-J/K 两列，并保持其余字段、公式、格式和行序不变。这个例外仍然只有一套固定 Schema，不允许每次任务临时换列或换原因词。
+### 1. 表格交付规范
+- 用户仅要求执行并汇报数量时，按实测回读证据简要汇报；用户指定自定义列格式（如指定 5 列修复日志或门店库存库位对比明细表）时，严格按用户当次要求的列结构交付。
+- 用户要求标准运营报告时，严格遵循 [统一输出内容合同](references/core/output-contract.md) 与 [Excel 精确 Schema](references/excel-schema-v1.md)（`scripts/operations_workbook_schema.json` 固定 7 张表：`执行汇总`、`SPU清单`、`字段级审计`、`平台不存在`、`最终结构复核`、`问题与策略回灌`、`性能与外部调用统计`）。
+- 所有商品 ID、SKU、SPU、条码、店内码一律按文本格式保存，严防科学计数法丢精度；导出文件若遇 Windows Excel 占用锁（`EBUSY`），自动切换备用文件名落盘并提示用户。
 
-`store_sku_replacement` 同样保留用户映射工作簿，只按合同固定回填结果列；平台动作事件仍须使用统一字段词汇和完成门，不能为库存、
-库位、供应商或渠道状态各造一套结果格式。
-
-## 不可破坏的共同约束
-
-- 当前页面、当前 Network/运行时成功证据和独立平台读回优先于历史端点与经验参数。
-- 在写入前冻结唯一 `platform_adapter`、`task_mode`、门店/租户、商品集合和身份 fence。
-- SPU/SKU/活动/图片槽位不唯一时失败关闭，禁止按名称或数组位置猜。
-- 同一 SPU 的完整对象保存必须单写者；写后超时或未知结果先回读，不盲重发。
-- 法定证照、CCC、备案、注册、许可、检验报告和公章只接受真实可核验证据，不能生成或猜测。
-- Cookie、token、Authorization、签名、验证码和手机号不得进入普通日志、工作簿或交付物。
-- 平台能力状态、执行终态和表格口径不可互相冒充；`HTTP 2xx`、`success`、上传完成或模型输出都不是完成。
-- 发生故障时才读取 [调试与阶梯放量](references/debugging-and-rollout.md)，先分类证据再改变实现或并发。
-
-## 受保护请求工程维护轨道
-
-只有牵牛花 403、H5guard/A9、Cookie/页面身份、成本同步或保质期兼容任务才读取
-[维护合同](references/qnh-protected-request-maintenance-v1.md)。该轨道修复请求入口，不得把请求成功冒充商品治理完成。
-
-## 仓库维护（仅更新或同步本 Skill 时读取）
-
-完整读取 [仓库治理](references/repository-governance.md)。远端只允许保留
-`main`；不要为平台或任务建立长期分支。普通平台执行不加载本节。
-
-## 冲突裁决
-
-平台事实与动作语义按“当前平台独立回读/浏览器成功证据 > 当前平台适配器与任务合同 > 历史接口线索”裁决；
-用户当前指令和项目规则优先于本 Skill；会话中已有授权持续有效，不因切阶段或换术语重复确认。共享合同只约束适用范围，不能把某一执行器的限制外推到所有任务。未知写结果保留原意图并先回读。
+### 2. 不可破坏的共同约束
+- **保存受理不等于完成**：`HTTP 200`、`success: true` 只是受理；只有平台独立回读（Detail + 列表 `pageV3`/`fetchList`）确认目标字段生效且非目标字段（多规格、价格、库存、库位）无损，才可宣告完成。
+- **凭证安全**：Cookie、Token、Authorization、签名串严禁写入交付表格或公开日志。
+- **故障与仓库维护按需加载**：遇到 403/429/超时才读取 [调试与阶梯放量](references/debugging-and-rollout.md)；维护或同步本 Skill 仓库时才读取 [仓库治理](references/repository-governance.md)（远端仅保留 `main` 分支，发布前运行 `quick_validate.py` 或全量单元与路由测试）。

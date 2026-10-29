@@ -20,7 +20,7 @@ writer、Cookie、回读器或成功捷径。
 | `qnh` | `implemented` | `implemented` | `implemented` | `implemented` | `implemented` |
 | `meituan` | `planned` | `implemented` | `planned` | `planned` | `planned` |
 | `eleme` | `planned` | `planned` | `planned` | `planned` | `planned` |
-| `aoxiang` | `implemented` | `planned` | `planned` | `planned` | `planned` |
+| `aoxiang` | `implemented` | `implemented` | `implemented` | `planned` | `planned` |
 | `taobao_flash` | `planned` | `planned` | `planned` | `planned` | `planned` |
 | `minicheng` | `implemented` | `planned` | `planned` | `implemented` | `planned` |
 
@@ -34,7 +34,7 @@ writer、Cookie、回读器或成功捷径。
 | `qnh` | `planned` | `planned` | `planned` | `runtime_guided` |
 | `meituan` | `runtime_guided` | `runtime_guided` | `runtime_guided` | `planned` |
 | `eleme` | `runtime_guided` | `planned` | `planned` | `planned` |
-| `aoxiang` | `planned` | `planned` | `planned` | `planned` |
+| `aoxiang` | `planned` | `implemented` | `planned` | `planned` |
 | `taobao_flash` | `planned` | `planned` | `planned` | `planned` |
 
 牵牛花另有 `headquarters_price_fill=runtime_guided`：按授权货盘补齐空总部零售价，优先当前官方 Excel 导入；

@@ -25,6 +25,26 @@
 用户登录后，默认只控制当前隔离 Chrome/CDP；不要求登录原点账号，也不依赖浏览器插件执行。
 允许调用项目现有的博查信息解析和正式专项图 provider，但必须沿用其密钥读取、幂等、轮询和低敏日志合同。
 
+### 🔴 不可售治理六大绝对禁区（门店自定义隔离与原值保护铁律）
+
+1. **严禁强制把门店自定义改为“跟随总部”或级联覆盖自定义门店（最高红线）**：
+   - 牵牛花同一主档 SPU/SKU 在不同门店可拥有独立的自定义名称（`customizedNameFlag: true`）、自定义主图（`customizedPicFlag: true` / `customizedPicUrlListFlag: true`）和自定义前台分类（`mainFrontCategoryList`），甚至在不同门店指代完全不同品牌/款式的商品。
+   - **绝对禁止**在 `POST /qnh-gw3/api/product/store/update` 中传 `customizedNameFlag: false` 或 `customizedPicUrlListFlag: false`（将自定义强制改为跟随总部）；
+   - **绝对禁止**在主档 `POST /qnh-gw3/api/product/tenant/update/v2` 中对存在门店自定义的商品传递 `{ field: 'spu_name', coverToStore: 1 }`、`{ field: 'product_name', coverToStore: 1 }`、`{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'pic_url_list', coverToStore: 1 }`（牵牛花后台 `主档级联更新` 会无条件将所有门店的自定义开关静默重置为 `false` 并用总部主档名称/图片覆盖全店！）；
+   - **分流维护规则**：凡某门店开启了自定义（`customizedNameFlag: true` 或 `customizedPicFlag: true`），必须**单独以该门店为单位**调用 `POST /qnh-gw3/api/product/store/update`，显式保持 `customizedNameFlag: true`、`customizedPicUrlListFlag: true`，严格按照该门店当前的自定义名称、自定义主图（`picInfoList`）、自定义分类去维护该门店信息；仅未开启自定义的门店跟随总部主档维护。
+2. **主图、详情图与特殊图原值 100% 保护**：
+   - 永久禁用 `6f244c5f3cb8b26399bbf31116c40de81422507.png`、`064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 等通用说明/占位图；
+   - 严禁用 `query-pics-by-sku-name` 或标品库（`retailsp`）模糊搜图结果替换商家原有主图；严禁把 `pictureExample` 示例图写入特殊图槽位；
+   - 详情图 `picContentList` 为空时仅允许原样复用当前商品（或当前门店）自身已有主图，且禁止携带 `{ field: 'picture', coverToStore: 1 }` 冲掉自定义门店主图。
+3. **严禁跨品类改名、篡改类目或篡改品牌规避资质拦截**：
+   - 遇到医疗器械、成人用品、3C 认证或超经营范围拦截时，严禁把类目改为 `便当盒 / 保温杯 / 厨房储物器皿` 或把品牌改为 `海尔`；必须 100% 保持原商品名、原类目、原品牌不变并归入 `manual_block`。
+4. **非调价任务价格零触碰**：
+   - 严禁改动主档 `erpInfo.sellingPrice` 及各门店 SKU 的 `storePrice`、`unifiedOnlinePrice`、`channelOnlinePriceList`；遇到“价格同步失败/低于起购价”报错时严禁擅自改价，必须原样保留价格并在报告中列出交人工处理。
+5. **售卖状态与渠道发布状态原值保护**：
+   - 100% 保持各门店 SKU 原有的 `spuSaleStatus`、`saleStatus`、`onlineStatus`（`1`/`2`）及 `onlineChannels`；严禁将已下架（`2`）改上架（`1`），严禁将已发布渠道置为 `-1`。
+6. **写前双层全量快照（主档 + 全门店 `store/detail`）强制落盘**：
+   - 写前必须将主档 `tenant/detail` 与全部关联门店的 `store/detail`（含完整 `picInfoList` URL 数组、`spuName`、`customizedNameFlag`、`customizedPicFlag`、`storeSkuList` 价格与上下架状态）完整落盘保存，严禁只存图片张数 `picCount`。
+
 ## 2. 新账号启动
 
 1. 先只读发现既有 Skill 会话；确认没有运行中/待续传任务且端口、进程和身份健康时复用原 profile、display、CDP、VNC/noVNC。用户明确要求新开，或旧会话忙碌、未知、不健康时才新建；无论哪种情况都为本任务新建 run-dir，全部端口仅监听 loopback。

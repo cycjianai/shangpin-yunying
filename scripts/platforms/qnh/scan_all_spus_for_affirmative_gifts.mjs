@@ -167,7 +167,7 @@ async function main() {
                 }
               }
 
-              // 3. Save
+              // 3. Save (仅同步渠道类目属性，严禁对 spu_name 使用 coverToStore: 1 冲掉门店自定义名称)
               if (modified) {
                 let updateUrl = 'https://qnh.meituan.com/qnh-gw3/api/product/tenant/update/v2?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
                 let updateHeaders = { 'Content-Type': 'application/json' };
@@ -175,7 +175,6 @@ async function main() {
                   tenantSpu: d,
                   coverageRequest: {
                     fieldCoverageInfoList: [
-                      { field: 'spu_name', coverToStore: 1 },
                       { field: 'mt_channel_category_property', coverToStore: 1 },
                       { field: 'elm_channel_category_property', coverToStore: 1 },
                       { field: 'jd_channel_category_property', coverToStore: 1 }

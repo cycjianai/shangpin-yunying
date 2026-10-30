@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   applyDirectPlanToDetail,
+  assertNoBannedPlaceholderImages,
   businessEnvelope,
   businessOk,
   channelPropertyContractMatches,
@@ -12,6 +13,7 @@ import {
   diffSummaries,
   findTotal,
   propertyDisplayValues,
+  resolveSafeCoverToStore,
   summarizeDetail,
   titleOf,
   unwrapData,
@@ -723,13 +725,15 @@ export async function applyPlansChromeExtension({
       const beforeSummary = summarizeDetail(beforeDetail);
       const executionPlan = await prepareBrandExecutionPlan(plan, beforeDetail, spuId);
       const { patched, requested, changedChannelIds, changedCoverageFields } = applyDirectPlanToDetail(beforeDetail, executionPlan);
+      assertNoBannedPlaceholderImages(patched.picUrlList, '主图');
+      assertNoBannedPlaceholderImages(patched.picContentList, '详情图');
       const coverageRequest = {
         fieldCoverageInfoList: [
           ...changedChannelIds.map(coverageField),
           ...changedCoverageFields,
         ].filter(Boolean).filter((value, indexNumber, values) => values.indexOf(value) === indexNumber).map((field) => ({
           field,
-          coverToStore: plan.coverage_scope === 'all_stores' ? 1 : 2,
+          coverToStore: resolveSafeCoverToStore(field, plan),
         })),
       };
       const preview = {

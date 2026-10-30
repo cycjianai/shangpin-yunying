@@ -53,7 +53,7 @@
    - 下载生成图片后通过牵牛花官方 CDN 接口（`/api/v1/image/uploadImageFullType`）上传确权，获取正式 `fileUrl`；
    - 记录任务账本，绑定 `(tenant_scope, spu_id, physical_category)` 确保不二次调用。
 
-3. **双向回填与全门店同步**：
-   - 依据映射矩阵，将上传确权的 `fileUrl` 同步注入美团与饿了么对应的所有等价槽位数组中；
-   - 调用 `update/v2` 接口提交保存，必须携带 `fieldCoverageInfoList` 声明 `coverToStore: 1` 触发全门店同步提审生效；
-   - 必须通过独立回读（`readback`）确认平台已持久化挂载图片，方可标记为 `verified_complete`。
+3. **双向回填与全门店同步（严守门店自定义主图隔离）**：
+   - 依据映射矩阵，将上传确权的 `fileUrl` 同步注入美团与饿了么对应的所有等价槽位数组中（严禁把 `pictureExample` 示例图当成真实资质图写入）；
+   - 调用 `update/v2` 接口提交保存时，`fieldCoverageInfoList` 仅允许声明特殊图槽位字段（`mtSpecialPictureList` / `elmSpecialPictureList`）的 `coverToStore: 1`，**严禁携带 `{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'spu_name', coverToStore: 1 }`**，以免误触发主档级联更新冲掉门店的自定义主图（`customizedPicFlag: true`）与自定义名称（`customizedNameFlag: true`）；若目标门店为自定义门店商品，按门店维度独立维护；
+   - 必须通过独立回读（`readback`）确认平台已持久化挂载图片且门店自定义主图无损，方可标记为 `verified_complete`。

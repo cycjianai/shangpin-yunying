@@ -202,14 +202,12 @@ async function main() {
               }
             }
 
-            // 3. Save with cascade store coverage (coverToStore: 1)
+            // 3. Save channel properties only (严禁携带 { field: 'spu_name', coverToStore: 1 } 以免冲掉门店 customizedNameFlag: true 自定义名称！)
             if (modified) {
               const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({
                 field: (cid === 100 ? 'mt_channel_category_property' : (cid === 200 ? 'elm_channel_category_property' : 'jd_channel_category_property')),
                 coverToStore: 1
               })).filter(f => f.field);
-
-              fieldCoverageInfoList.push({ field: 'spu_name', coverToStore: 1 });
 
               let updateUrl = 'https://qnh.meituan.com/qnh-gw3/api/product/tenant/update/v2?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
               let updateHeaders = { 'Content-Type': 'application/json' };

@@ -1,11 +1,41 @@
 # 牵牛花模块
 
 - `platform_adapter=qnh`
-- 渠道类目与属性一体化治理：`implemented`；入口与合同见 `channel-attribute-contract-v2.md`（v4 生产实战版），核心执行器见 `scripts/platforms/qnh/execute_mass_spu_cleaning.mjs`。严格执行“空类目官方推荐先行 → 官方属性推荐 100% 优先采纳 → 剩余空白语义与规则库二次补齐 (0空白) → 【4 Tabs + 12 并发】满速分布式签署保存 (coverToStore: 1)”。
+- 渠道类目与属性一体化治理：`implemented`；入口与合同见 `channel-attribute-contract-v2.md`（v5 门店自定义隔离与原值保护版），核心执行器见 `scripts/platforms/qnh/execute_mass_spu_cleaning.mjs`。严格执行“空类目官方推荐先行 → 官方属性推荐优先采纳（保护原有非‘其他’真实值） → 剩余空白语义与规则库二次补齐 (0空白) → 【4 Tabs + 12 并发】满速分布式签署保存（主档 `coverToStore: 1` 严格仅限纯渠道类目属性字段，严禁级联覆盖门店自定义名称与图片）”。
 - 总部零售价按货盘补齐：`runtime_guided`；入口 `tasks/qnh-headquarters-price-fill.md`，只修改主档，不能套用门店活动调价。
 - 资质图：`implemented`，入口与合同见 `thread-928-empirical-contract.md`、`error-playbook.md`、`field-safety.md`；
   所有限制的唯一机器事实源见 `qualification-image-policy.md`。
 - 搬品历史失败重试：`implemented`，入口与合同见 `copy-history-retry-contract-v1.md`。
+
+---
+
+## 🔴 门店自定义商品（Store-SPU）隔离保护与六大防坑铁律（强制执行）
+
+> [!CAUTION]
+> **严禁强制把门店自定义改为“跟随总部”，也严禁在主档对含自定义门店的 SPU 发送 `spu_name` / `picture` 的 `coverToStore: 1`！**
+
+1. **门店自定义识别与按店独立维护铁律（最高优先级）**：
+   - 在牵牛花中，同一主档 SPU/SKU 在不同门店可开启独立自定义（`customizedNameFlag: true`、`customizedPicFlag: true` / `customizedPicUrlListFlag: true`、自定义门店分类 `mainFrontCategoryList`），不同门店甚至可能用同一 SKU 售卖不同品牌/不同款式的商品。
+   - **绝对禁止**在门店更新接口 `POST /qnh-gw3/api/product/store/update` 中将 `customizedNameFlag` 或 `customizedPicUrlListFlag` 从 `true` 改为 `false`（即严禁将自定义强制改为“跟随总部”）。
+   - **绝对禁止**在主档更新接口 `POST /qnh-gw3/api/product/tenant/update/v2` 中对存在门店自定义的商品传递 `{ field: 'spu_name', coverToStore: 1 }`、`{ field: 'product_name', coverToStore: 1 }`、`{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'pic_url_list', coverToStore: 1 }`——一旦传入，牵牛花后台 `主档级联更新` 会无条件将所有门店的 `customizedNameFlag` / `customizedPicFlag` 静默重置为 `false` 并用总部主档覆盖全店！
+   - **正确维护方式**：
+     * **已开启自定义的门店（`customizedNameFlag: true` 或 `customizedPicFlag: true`）**：必须**单独按该门店维度**调用 `POST /qnh-gw3/api/product/store/update`，显式传 `customizedNameFlag: true`、`customizedPicUrlListFlag: true`，严格按照该门店当前的自定义名称、自定义主图（`picInfoList`）、自定义分类去维护，绝不允许改为跟随总部后在主档统一修改！
+     * **未开启自定义的门店**：跟随总部主档维护；若同一 SPU 下既有自定义门店又有未自定义门店，主档 `coverageRequest.fieldCoverageInfoList` 严禁包含 `spu_name` / `picture` 的 `coverToStore: 1`。
+2. **主图、详情图与特殊图原值 100% 保护铁律**：
+   - 永久禁用 `6f244c5f3cb8b26399bbf31116c40de81422507.png`、`064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 等通用说明/占位图；
+   - 严禁用 `query-pics-by-sku-name` 或标品库（`retailsp`）模糊搜图结果替换商家原有主图；严禁将 `pictureExample` 示例图写入 `mtSpecialPictureList` / `elmSpecialPictureList`；
+   - 详情图 `picContentList` 为空且确需补齐时，仅允许复用当前商品（或当前门店）自身已有主图，且禁止发送 `{ field: 'picture', coverToStore: 1 }`。
+3. **严禁跨品类改名/改类目/改品牌规避资质拦截**：
+   - 遇到医疗器械、成人用品、3C 认证或超经营范围拦截时，严禁把类目改为 `便当盒 / 保温杯 / 厨房储物器皿` 或把品牌改为 `海尔`；必须原样保留商品信息并转 `manual_block`。
+4. **非调价任务价格零触碰铁律**：
+   - 非专项调价任务中，主档 `erpInfo.sellingPrice` 及各门店 SKU 的 `storePrice`、`unifiedOnlinePrice`、`channelOnlinePriceList` 必须 100% 原值透传，严禁因“价格同步失败/低于起购价”擅自改价。
+5. **售卖状态与渠道发布状态原值保护铁律**：
+   - 100% 保留各门店 SKU 原有的 `spuSaleStatus`、`saleStatus`、`onlineStatus`（`1`/`2`）及 `onlineChannels`；严禁将已下架（`2`）改上架（`1`），严禁将已发布渠道置为 `-1`。
+6. **写前双层全量快照（主档 + 全门店 `store/detail`）与门店更新载荷契约**：
+   - 写前必须落盘主档 `tenant/detail` 与全部关联门店的 `store/detail`（完整保存 `picInfoList` URL 数组、`spuName`、`customizedNameFlag`、`customizedPicFlag`、`storeSkuList` 价格与上下架状态）；
+   - `store/detail` 返回图片字段为 `picInfoList`（`[{ picUrl, isDelete }]`）；`store/update` 顶层必须携带 `operateType: 2, actCheckType: 1, source: 2, adjustStock: { entityId: sd.storeId, entityType: sd.storeEntityType || 1, comment: 'WEB-门店商品详情调整库存', skuList: [] }`。
+
+---
 
 ## 核心架构与实战规范：全链路复用【多标签页分布式签名 + 多并发 Worker】
 
@@ -31,7 +61,7 @@
 * **极速流水线实现**：
   1. 通过 4 Tabs 分布式流式分页（每批 4 页 400 SPU 并行拉取），在内存中以 **6,000 ~ 8,000 SPU/分钟** 的极速穿透全店主档（38,924 件仅需 3.5 分钟）；
   2. **纯内存精准判定**：仅对内存中命中字段异常、违规中括号、赠品勾选的商品才触发 `detail` 深度加载与 `update/v2` 提交保存；
-  3. **级联全店覆盖**：保存必须携带 `coverageRequest: { fieldCoverageInfoList: [{ field: '...', coverToStore: 1 }] }` 触发 `CASCADE_STORE` 级联覆盖全部连锁门店；
+  3. **渠道属性级联与门店自定义硬隔离**：主档保存仅允许对纯渠道类目属性字段（`mt_channel_category_property` / `elm_channel_category_property` / `jd_channel_category_property`）携带 `coverToStore: 1`；**严禁在主档携带 `spu_name`、`product_name`、`picture` 或 `pic_url_list` 的 `coverToStore: 1` 冲掉门店自定义名称或图片**！凡开启自定义的门店（`customizedNameFlag: true` 或 `customizedPicFlag: true`），必须单独调 `/qnh-gw3/api/product/store/update` 按该门店当前自定义信息独立维护；
   4. **异步渠道激活**：以每批 20 SPU 批量触发 `generalMultiSelectPush` 同步至各大渠道；
   5. 整体治理效率较传统模式提升 15 倍以上，无效网络请求减少 85% 以上。
 

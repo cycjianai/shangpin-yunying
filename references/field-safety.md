@@ -13,7 +13,7 @@
 - 条码来自同一 SPU 图片，或权威页面逐字匹配品牌、完整品名和精确规格，并通过 GTIN-8/12/13/14 校验位检查。
 - 平台官方推荐且与商品标题、类目不冲突的属性。
 
-## 必须阻塞
+## 必须阻塞与绝对禁区（严禁触碰）
 
 没有同一商品真实证据时，不自动填写或生成：
 
@@ -25,6 +25,23 @@
 - 品牌授权、商标权属、质检报告。
 - 法定资质图、营养标签图、商品包装信息图。
 - 近似型号、不同容量/颜色/地区版本的条码；无法证明“确实无条码”时也不能自动勾选无条码。
+
+### 🔴 牵牛花门店自定义与核心商业字段防篡改铁律
+
+1. **严禁强制将门店自定义改为“跟随总部”或主档级联覆盖自定义门店**：
+   - 在牵牛花中，同一主档 SPU/SKU 在不同门店可能开启了自定义名称（`customizedNameFlag: true`）或自定义图片（`customizedPicFlag: true` / `customizedPicUrlListFlag: true`），甚至在不同门店代表完全不同品牌或款式的商品。
+   - **绝对禁止**将门店的 `customizedNameFlag` 或 `customizedPicUrlListFlag` 从 `true` 改为 `false`（强制改为跟随总部）；
+   - **绝对禁止**在主档 `tenant/update/v2` 中对含自定义门店的商品发送 `{ field: 'spu_name', coverToStore: 1 }`、`{ field: 'product_name', coverToStore: 1 }`、`{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'pic_url_list', coverToStore: 1 }`（会触发 `主档级联更新` 静默清零全门店自定义！）；
+   - 有自定义信息的门店必须以门店为单位，调用 `/qnh-gw3/api/product/store/update` 按该门店当前的自定义名称、自定义主图（`picInfoList`）、自定义分类独立维护。
+2. **严禁通用占位图与图库模糊搜图覆盖原图**：
+   - 永久禁用 `6f244c5f3cb8b26399bbf31116c40de81422507.png`、`064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 等通用服务说明/温馨提示图；
+   - 严禁用 `query-pics-by-sku-name` 模糊搜图结果替换商家原有主图；严禁把 `pictureExample` 示例图写入特殊图槽位。
+3. **严禁跨品类改名/改类目/改品牌规避资质拦截**：
+   - 严禁因医疗器械、成人用品、3C 或超经营范围拦截，把正常商品类目篡改为 `便当盒 / 保温杯 / 厨房储物器皿` 或把品牌篡改为 `海尔`。
+4. **非调价任务价格零触碰与上下架状态保护**：
+   - 非调价任务严禁改动主档 `erpInfo.sellingPrice` 及门店 SKU 的 `storePrice`、`unifiedOnlinePrice`、`channelOnlinePriceList`；
+   - 严禁将原本已下架（`spuSaleStatus: 2` / `saleStatus: 2`）的商品擅自改为上架（`1`），严禁将已发布渠道置为 `-1` 删除；
+   - 写前必须落盘主档 `tenant/detail` 与全部关联门店 `store/detail` 的完整 JSON 快照。
 
 “看起来像”“同类商品通常如此”“LLM 认为大概率”都不构成合规证据。
 

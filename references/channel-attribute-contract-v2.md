@@ -1,8 +1,18 @@
-# 渠道类目与属性一体化执行合同 v4 (全量属性拉满·生产实战版)
+# 渠道类目与属性一体化执行合同 v5 (全量属性拉满·门店自定义隔离与原值保护版)
 
 ## 适用范围与核心定位
 
-当对牵牛花（QNH）平台的商品进行渠道优化时，本合同覆盖**已开通渠道的类目补齐、官方推荐属性全采纳、全量属性（必填 + 非必填）深度填充治理与历史失效值（幽灵属性）清洗**。
+当对牵牛花（QNH）平台的商品进行渠道优化时，本合同覆盖**已开通渠道的类目补齐、官方推荐属性采纳、全量属性（必填 + 非必填）深度填充治理、历史失效值（幽灵属性）清洗，以及门店自定义商品（Store-SPU）隔离分流维护**。
+
+> [!CAUTION]
+> **最高致命红线：门店自定义隔离保护（严禁强制改为“跟随总部”或级联覆盖自定义门店）与图片/价格/上下架原值保护**
+> 1. **严禁强制把门店自定义改为跟随总部**：在牵牛花中，同一主档 SPU/SKU 在不同门店可拥有独立的自定义名称（`customizedNameFlag: true`）、自定义主图（`customizedPicFlag: true` / `customizedPicUrlListFlag: true`）和自定义门店分类（`mainFrontCategoryList`），甚至在不同门店指代完全不同品牌/款式的商品。
+>    - **绝对禁止**在门店更新接口 `POST /qnh-gw3/api/product/store/update` 中传 `customizedNameFlag: false` 或 `customizedPicUrlListFlag: false`（将自定义强制改为跟随总部）；
+>    - **绝对禁止**在主档更新接口 `POST /qnh-gw3/api/product/tenant/update/v2` 中对含自定义门店的 SPU 传递 `{ field: 'spu_name', coverToStore: 1 }`、`{ field: 'product_name', coverToStore: 1 }`、`{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'pic_url_list', coverToStore: 1 }`（牵牛花后台 `主档级联更新` 会无条件抹掉所有门店的自定义开关并用主档名称/图片覆盖全店！）；
+>    - **分流维护铁律**：凡某门店开启了自定义（`customizedNameFlag: true` 或 `customizedPicFlag: true`），必须**单独以该门店为单位**调用 `POST /qnh-gw3/api/product/store/update`，显式保持 `customizedNameFlag: true`、`customizedPicUrlListFlag: true`，严格按照该门店当前自定义的名称、主图（`picInfoList`）、分类去维护该门店信息；仅未开启自定义的门店跟随总部主档维护。
+> 2. **永久禁用通用占位图与模糊图库替换**：严禁使用原黑名单通用说明图（`6f244c5f3cb8b26399bbf31116c40de81422507.png`、`064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png`）填充主图或详情图；严禁用 `query-pics-by-sku-name` 模糊搜图替换原有主图；严禁把 `pictureExample` 示例图写入特殊图槽位。
+> 3. **严禁跨品类改名/改类目/改品牌规避资质拦截**：遇到医疗器械、成人用品、3C 或缺资质拦截时，严禁把类目篡改为 `便当盒 / 保温杯 / 厨房储物器皿` 或把品牌篡改为 `海尔`，必须原样保留商品信息并转 `manual_block`。
+> 4. **价格与上下架状态 100% 原值保护**：非调价任务严禁改动任何价格字段（`storePrice` / `unifiedOnlinePrice` / `sellingPrice`）；严禁将原本已下架（`2`）的商品改为上架（`1`）或删除已发布渠道（`-1`）。
 
 > [!IMPORTANT]
 > **核心原则：只填写必填是不对的！必须全量填满（必填 + 非必填）**
@@ -103,23 +113,34 @@ flowchart TD
    * **数量/包数**：从标题提取数字，未标注默认填写 **`1`**。
    * **文本长度保护**：自由文本严格截断至 `maxTextLength`。
 
-### 阶段 3.5：商品详情图（picContentList）检查与自动补齐
-* **适用范围**：所有商品主档详情图。
-* **业务背景**：若商品详情图为空，美团、饿了么等多个渠道将直接拦截审核或判定不合格无法上线。
-* **动作**：
-  * 检查 `detail.picContentList`，若为空数组或 null，自动补齐平台认证的 2 张标准合规详情图：
-    1. `https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png`
-    2. `https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png`
-  * 在保存时，`coverageRequest.fieldCoverageInfoList` 必须显式增加 `{ field: 'picture', coverToStore: 1 }`，确保详情图同步覆盖全部门店。
+### 阶段 3.5：商品主图、详情图（picContentList）与特殊图原值保护铁律（严禁通用占位图与级联覆写）
+* **原有图片 100% 保护**：
+  * 商品原有的主图（主档 `picUrlList`、门店 `picInfoList`）、详情图（`picContentList`）及特殊图（`mtSpecialPictureList`、`elmSpecialPictureList`）必须 **100% 原样保留**，严禁清空、删减或替换。
+  * **永久废止并拉黑通用占位图**：绝对禁止向 `picUrlList` 或 `picContentList` 注入任何通用服务说明/温馨提示图（尤其是已拉黑的 `6f244c5f3cb8b26399bbf31116c40de81422507.png` 与 `064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png`）！
+  * **严禁把平台示例图写入特殊图**：绝对禁止把 `pictureExample` 中的示例图 URL 当成商品资质图写入 `mtSpecialPictureList` 或 `elmSpecialPictureList`。
+* **详情图为空时的唯一合规处理**：
+  * 纯渠道属性填充任务（`channel_attributes_only`）默认不改动图片字段。
+  * 若在不可售治理中因渠道报错确需补齐空的 `picContentList`，**唯一允许的做法是原样复用当前商品（或当前自定义门店商品）自身已有的主图 URL**；且**绝对禁止**在主档 `coverageRequest.fieldCoverageInfoList` 中传入 `{ field: 'picture', coverToStore: 1 }`（因为牵牛花的 `field: 'picture'` 会同时级联覆盖所有门店的 `picUrlList` 并强行关闭门店的 `customizedPicFlag: true`！）。
 
-### 阶段 4：增量保存与全渠道覆盖
-* **接口**：`POST /qnh-gw3/api/product/tenant/update/v2`
-* **覆盖声明**：在 `coverageRequest.fieldCoverageInfoList` 中覆盖更新的所有渠道与字段：
-  * 美团属性：`mt_channel_category_property`
-  * 饿了么属性：`elm_channel_category_property`
-  * 京东到家属性：`jd_channel_category_property`
-  * 详情图（如有补齐）：`picture`
-* **完成判定**：以返回 `code === 0` 为准。
+### 阶段 4：门店自定义分流与安全保存（独立回读验真）
+* **写前全量快照（强制前置）**：
+  * 修改任何主档或门店商品前，必须先将主档 `tenant/detail` 及关联门店的 `store/detail`（含完整 `picInfoList` URL 数组、`spuName`、`customizedNameFlag`、`customizedPicFlag`、`storeSkuList` 价格与上下架状态）完整落盘备份。
+* **主档与自定义门店分流维护**：
+  1. **纯渠道类目属性同步（不触碰名称与图片）**：
+     * 接口：`POST /qnh-gw3/api/product/tenant/update/v2`
+     * `coverageRequest.fieldCoverageInfoList` **严格仅限包含本次实际修改的渠道属性字段**：
+       - 美团属性：`mt_channel_category_property`
+       - 饿了么属性：`elm_channel_category_property`
+       - 京东到家属性：`jd_channel_category_property`
+     * **绝对禁止**在 `fieldCoverageInfoList` 中夹带 `{ field: 'spu_name', coverToStore: 1 }`、`{ field: 'product_name', coverToStore: 1 }`、`{ field: 'picture', coverToStore: 1 }` 或 `{ field: 'pic_url_list', coverToStore: 1 }`！
+  2. **存在门店自定义的商品（`customizedNameFlag: true` 或 `customizedPicFlag: true`）**：
+     * 当某个门店的商品开启了自定义名称或自定义图片（甚至与主档不是同一品牌/款式）时，严禁将其强制改为“跟随总部”！
+     * 必须**单独以该门店为单位**调用 `POST /qnh-gw3/api/product/store/update` 进行维护：
+       - 显式保留 `customizedNameFlag: true`、`customizedPicUrlListFlag: true`；
+       - 严格按照该门店当前的自定义名称（`spuName`）、自定义主图（`picInfoList` 转换的 `picUrlList`）、自定义分类（`mainFrontCategoryList`）维护该门店商品信息；
+       - 顶层请求体必须携带 `operateType: 2, actCheckType: 1, source: 2, adjustStock: { entityId: sd.storeId, entityType: sd.storeEntityType || 1, comment: 'WEB-门店商品详情调整库存', skuList: [] }`；
+       - 100% 保持该门店各 SKU 原有的 `storePrice`、`unifiedOnlinePrice`、`channelOnlinePriceList`、`spuSaleStatus`、`saleStatus` 与 `onlineStatus` 不变。
+* **完成判定**：`code === 0` 仅代表保存受理，必须经独立详情回读（主档 `tenant/detail` 及自定义门店 `store/detail`）确认目标属性生效且门店自定义名称、主图、价格、上下架状态 100% 无损，方可判定完成。
 
 ---
 

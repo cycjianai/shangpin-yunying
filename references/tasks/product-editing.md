@@ -2,6 +2,7 @@
 
 - 美团（`runtime_guided`）：完整读取 [美团商品编辑合同](../meituan-product-editing.md)。
 - 翱象（`implemented`）：完整读取 [翱象实战防坑指南](../platforms/aoxiang-playbook-and-pitfalls.md)，使用 `scripts/aoxiang_high_concurrency_product_engine.mjs` 执行，强制通过多规格四道防降级硬门禁。
+- 牵牛花（门店商品与主档商品维护红线）：若涉及牵牛花商品名称、主图或分类维护，必须严格区分**总部主档**与**门店自定义商品（`customizedNameFlag: true` / `customizedPicFlag: true`）**——严禁将门店自定义强制改为“跟随总部”，也严禁在主档用 `coverToStore: 1` 级联覆盖自定义门店的名称或图片；有自定义的门店必须单独调用 `/qnh-gw3/api/product/store/update` 按该门店当前自定义信息维护。
 - 饿了么等其他平台：未注册独立 writer，不得套用美团或翱象保存链。
 
 先生成只读匹配账本；名称只能辅助识别，最终按稳定 SPU/SKU、旧店内码/条码和明确规格唯一匹配。保存若为完整 SPU：

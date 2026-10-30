@@ -6,11 +6,6 @@ import { loadChromium } from '../../qnh_playwright_loader.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_DETAIL_IMAGES = [
-  'https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png',
-  'https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png'
-];
-
 function parseArgs() {
   const args = {
     concurrency: 6,
@@ -51,8 +46,14 @@ async function patchSingleSpu(page, spuId) {
     return { spuId, status: 'already_has_images', count: detail.picContentList.length };
   }
 
-  // Patch with the 2 default detail images
-  detail.picContentList = [...DEFAULT_DETAIL_IMAGES];
+  // 图片原值与门店自定义保护铁律：
+  // 1. 严禁注入通用说明占位图，仅允许原样复用当前商品自身已有主图 detail.picUrlList；
+  // 2. 严禁发送 { field: 'picture', coverToStore: 1 }（会冲掉自定义门店的 customizedPicFlag: true 主图！仅允许 coverToStore: 2）
+  const ownMainPics = Array.isArray(detail.picUrlList) ? detail.picUrlList.filter(Boolean) : [];
+  if (ownMainPics.length === 0) {
+    return { spuId, status: 'skipped_no_own_main_images' };
+  }
+  detail.picContentList = [...ownMainPics.slice(0, 5)];
 
   const updateRes = await page.evaluate(async ({ url, body }) => {
     let reqUrl = url;
@@ -69,7 +70,7 @@ async function patchSingleSpu(page, spuId) {
     body: {
       tenantSpu: detail,
       coverageRequest: {
-        fieldCoverageInfoList: [{ field: 'picture', coverToStore: 1 }]
+        fieldCoverageInfoList: [{ field: 'picture', coverToStore: 2 }]
       }
     }
   });

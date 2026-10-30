@@ -1440,6 +1440,41 @@ function gtinValid(value) {
   return (10 - (total % 10)) % 10 === digits.at(-1);
 }
 
+const STORE_CUSTOMIZABLE_MASTER_FIELDS = new Set([
+  'product_name',
+  'spu_name',
+  'picture',
+  'pic_url_list',
+]);
+
+const BANNED_PLACEHOLDER_IMAGE_HASHES = [
+  '6f244c5f3cb8b26399bbf31116c40de81422507',
+  '064b297f2dffbf5ad8d0e51e6f35cd5b1391479',
+];
+
+function assertNoBannedPlaceholderImages(urls, label = '图片') {
+  for (const url of toArray(urls)) {
+    const text = String(url || '');
+    if (BANNED_PLACEHOLDER_IMAGE_HASHES.some((hash) => text.includes(hash))) {
+      throw new Error(`严禁向${label}写入已拉黑的通用说明占位图：${text}`);
+    }
+  }
+}
+
+/**
+ * 门店自定义隔离硬门禁：
+ * 在牵牛花主档 tenant/update/v2 中，对 product_name / spu_name / picture / pic_url_list 传入 coverToStore: 1
+ * 会触发后台“主档级联更新”，强行将已开启门店自定义（customizedNameFlag / customizedPicFlag）的门店重置为“跟随总部”。
+ * 因此针对可自定义的名称与图片字段，主档保存一律强制使用 coverToStore: 2（仅同步未自定义门店，严禁覆盖自定义门店）；
+ * 存在门店自定义的门店必须通过 /qnh-gw3/api/product/store/update 按门店维度独立维护。
+ */
+function resolveSafeCoverToStore(field, plan = {}) {
+  if (STORE_CUSTOMIZABLE_MASTER_FIELDS.has(String(field || ''))) {
+    return 2;
+  }
+  return plan?.coverage_scope === 'all_stores' ? 1 : 2;
+}
+
 function applyDirectPlanToDetail(detail, plan) {
   const patched = structuredClone(detail);
   const changedChannelIds = new Set();
@@ -3556,7 +3591,7 @@ async function applyDirectPlanCore(
           coverage_request: {
             fieldCoverageInfoList: [{
               field: 'picture',
-              coverToStore: plan.coverage_scope === 'all_stores' ? 1 : 2,
+              coverToStore: resolveSafeCoverToStore('picture', plan),
             }],
           },
           before: beforeSummary,
@@ -3650,13 +3685,15 @@ async function applyDirectPlanCore(
       stage_timings: stageTimings,
     };
   }
+  assertNoBannedPlaceholderImages(patched.picUrlList, '主图');
+  assertNoBannedPlaceholderImages(patched.picContentList, '详情图');
   const coverageRequest = {
     fieldCoverageInfoList: [
       ...changedChannelIds.map(coverageField),
       ...changedCoverageFields,
     ].filter(Boolean).filter((field, index, values) => values.indexOf(field) === index).map((field) => ({
       field,
-      coverToStore: plan.coverage_scope === 'all_stores' ? 1 : 2,
+      coverToStore: resolveSafeCoverToStore(field, plan),
     })),
   };
   const preview = {
@@ -7437,6 +7474,7 @@ async function main() {
 
 export {
   applyDirectPlanToDetail,
+  assertNoBannedPlaceholderImages,
   businessEnvelope,
   businessOk,
   channelPropertyContractMatches,
@@ -7445,6 +7483,7 @@ export {
   diffSummaries,
   findTotal,
   propertyDisplayValues,
+  resolveSafeCoverToStore,
   summarizeDetail,
   titleOf,
   unwrapData,

@@ -193,30 +193,11 @@ async function processSingleSpu(page, spuItem) {
     }
   }
 
-  // 3.5 Detail Images Check & Fill (若详情图为空，自动补齐2张标准合规详情图)
-  const DEFAULT_DETAIL_IMAGES = [
-    'https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png',
-    'https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png'
-  ];
-  let detailImagesFilled = false;
-  if (!detail.picContentList || detail.picContentList.length === 0) {
-    detail.picContentList = [...DEFAULT_DETAIL_IMAGES];
-    detailImagesFilled = true;
-  }
-
-  // 3.6 资质特殊图补齐 (3C证书, 包装标签, 配料图, 背签图)
-  let specialPicsFilled = false;
-  for (const listName of ['mtSpecialPictureList', 'elmSpecialPictureList']) {
-    for (const pic of (detail[listName] || [])) {
-      if (!pic.pictureUrl || pic.pictureUrl.length === 0 || (pic.pictureUrl[0] && pic.pictureUrl[0].includes('sgfn/010508'))) {
-        const example = (pic.pictureExample && pic.pictureExample.length > 0)
-          ? pic.pictureExample[0]
-          : (pic.pictureType === 4 ? 'https://p0.meituan.net/sgspyy/e850e82302d53bb398d6c3ecb4c47aaf1363997.jpg' : 'https://img.meituan.net/operatingtool/5385a7153c253f61c4c69af682b6a9ef111342.jpg');
-        pic.pictureUrl = [example];
-        specialPicsFilled = true;
-      }
-    }
-  }
+  // 3.5 & 3.6 图片原值与门店自定义主图隔离保护铁律：
+  // 严禁注入通用说明占位图，严禁将平台示例图(pictureExample)写入特殊图槽位，
+  // 且严禁在主档 update/v2 中推送 { field: 'picture', coverToStore: 1 }（会冲掉门店 customizedPicFlag: true 自定义主图！）
+  const detailImagesFilled = false;
+  const specialPicsFilled = false;
 
   // 4. Remaining Properties Fallback (必填 + 非必填全量填满，做到 0 空白)
   const mtChannel = activeChannels.find(c => Number(c.channelId) === 100);
@@ -331,20 +312,12 @@ async function processSingleSpu(page, spuItem) {
     }
   }
 
-  // 5. Save to QNH
-  if (modifiedChannels.size > 0 || detailImagesFilled || specialPicsFilled) {
+  // 5. Save to QNH (仅限纯渠道类目属性字段，严禁级联覆盖门店自定义名称 spu_name 或自定义图片 picture)
+  if (modifiedChannels.size > 0) {
     const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({
       field: coverageField(cid),
       coverToStore: 1,
     })).filter(f => f.field);
-
-    if (detailImagesFilled) {
-      fieldCoverageInfoList.push({ field: 'picture', coverToStore: 1 });
-    }
-    if (specialPicsFilled) {
-      fieldCoverageInfoList.push({ field: 'mtSpecialPictureList', coverToStore: 1 });
-      fieldCoverageInfoList.push({ field: 'elmSpecialPictureList', coverToStore: 1 });
-    }
 
     const updateRes = await page.evaluate(async ({ url, body }) => {
       let reqUrl = url;

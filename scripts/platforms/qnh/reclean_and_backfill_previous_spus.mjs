@@ -7,11 +7,6 @@ import { isPropertyValid, fillProperty } from './required_property_rules.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_DETAIL_IMAGES = [
-  'https://img.meituan.net/sgfn/6f244c5f3cb8b26399bbf31116c40de81422507.png',
-  'https://img.meituan.net/sgfn/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png'
-];
-
 function parseArgs() {
   const args = {
     concurrency: 12,
@@ -194,12 +189,8 @@ async function processSingleSpu(page, spuId) {
     }
   }
 
-  // 3.5 Detail Images Check & Fill (若详情图为空，自动补齐2张标准合规详情图)
-  let detailImagesFilled = false;
-  if (!detail.picContentList || detail.picContentList.length === 0) {
-    detail.picContentList = [...DEFAULT_DETAIL_IMAGES];
-    detailImagesFilled = true;
-  }
+  // 3.5 图片原值与门店自定义主图隔离保护铁律：严禁塞入通用说明图，严禁发送 { field: 'picture', coverToStore: 1 }
+  const detailImagesFilled = false;
 
   // 4. Remaining Properties Fallback (必填 + 非必填全量填满，做到 0 空白)
   const mtChannel = activeChannels.find(c => Number(c.channelId) === 100);
@@ -314,16 +305,12 @@ async function processSingleSpu(page, spuId) {
     }
   }
 
-  // 5. Save to QNH if modified
-  if (modifiedChannels.size > 0 || detailImagesFilled) {
+  // 5. Save to QNH if modified (仅限纯渠道类目属性字段，严禁级联覆盖门店自定义名称 spu_name 或自定义图片 picture)
+  if (modifiedChannels.size > 0) {
     const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({
       field: coverageField(cid),
       coverToStore: 1,
     })).filter(f => f.field);
-
-    if (detailImagesFilled) {
-      fieldCoverageInfoList.push({ field: 'picture', coverToStore: 1 });
-    }
 
     const updateRes = await page.evaluate(async ({ url, body }) => {
       let reqUrl = url;

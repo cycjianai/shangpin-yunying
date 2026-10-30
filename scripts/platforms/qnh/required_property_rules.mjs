@@ -14,7 +14,7 @@
  *    - 品牌未明确标注且无推荐时：优先选择“其他”（若无则“无品牌”）；
  *    - 其余未明确或模糊的单选/多选：优先选择“其他”或包含更多情况的安全通用选项；
  *    - 结构值（Type 10）严格按照模版 sequence 与单位 optionId 组装；
- *    - 每次提交保存携带 coverToStore: 1 全门店覆盖。
+ *    - 主档提交保存仅对纯渠道类目属性字段携带 coverToStore: 1；严禁对 spu_name / picture 发送 coverToStore: 1 冲掉门店自定义，存在门店自定义（customizedNameFlag / customizedPicFlag）的门店必须按门店维度独立维护。
  */
 
 export function extractNumber(title, propName) {

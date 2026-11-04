@@ -132,7 +132,7 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("headquarters_price_fill")
     if contains(text, r"调价", r"价格推送", r"目标价", r"target_price", r"活动价", r"修改原价"):
         candidates.add("price_push")
-    if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑"):
+    if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑", r"商品新增", r"创建商品", r"全店复制", r"快照导入", r"商品保存", r"商品信息保存", r"批量新增", r"unisave"):
         candidates.add("product_editing")
     if contains(text, r"资质图", r"专项图", r"配料营养图", r"背签图", r"3c证书", r"吊牌", r"洗唛"):
         candidates.add("qualification_images_only")

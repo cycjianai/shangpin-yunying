@@ -20,7 +20,23 @@
 ## 功能分支
 
 - 调价推送：`runtime_guided`；加载 `tasks/price-push.md` 与 [美团调价线索](../meituan.md)。
-- 商品名称/规格/条码/店内码编辑：`runtime_guided`；加载 `tasks/product-editing.md`。
+- 商品名称/规格/条码/店内码编辑与全量快照新增：`runtime_guided`（全量复制/保存成熟协议）；加载 `tasks/product-editing.md` 与 [美团商品编辑与快照新增保存](../meituan-product-editing.md)。
 - 医疗器械整店迁移：`runtime_guided`；加载 `tasks/medical-device-store-migration.md`，不得走闪购 payload。
 - 闪购不可售治理：`implemented`；加载 `tasks/unavailable-one-pass.md` 与 [美团直连模块](../platform-meituan.md)。
 - 独立渠道属性与独立资质图模式：当前为 `planned`；不可借用不可售 writer 冒充实现。
+
+## 全量商品保存与快照极速新增核心规程（uniSave 协议）
+
+1. **会话级注入环境**：必须依附已登录美团闪购后台（`shangoue.meituan.com`）的 Chrome 实例（端口 `9222`+），严禁外挂 HTTP 直接调用（防 Yoda 滑块拦截）。
+2. **两阶段操作流程**：
+   - 第一阶段：调 `POST /reuse/sc/product/hqcc/w/batchSaveHqTags` 创建目标门店两级店内分类体系，并通过 `/tagList` 建立 `原分类 -> 新分类tagId` 映射；
+   - 第二阶段：组装标准 `uniSave` 表单，在页面 `#hashframe` 上下文通过原生 `fetch` 并发推流。
+3. **关键数据防护**：
+   - 无条码 SKU 必须在 `commonProperty` 中注入 `{"allowUpcEmpty": "true"}`；
+   - 新增商品必须将快照中的 `spuId/skuId/id` 清零，严禁沿用老店主键；
+   - 图片 URL 清除 `@500w_500h...` 等 CDN 裁剪后缀。
+4. **三级容错自愈引擎**：
+   - 优先以 Rich 完整参数提交；
+   - 遇类目属性校验错误自动剥离 `categoryAttrMap="{}"` 降级重试；
+   - 遇视频/导购图错误自动剥离 `video="{}"` 重试；
+   - 遇并发写入/频繁锁执行 1~3s 指数退避，确保万级商品零卡死。

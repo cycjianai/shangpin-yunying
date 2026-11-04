@@ -1,6 +1,6 @@
 # 任务分支：商品信息与店内码编辑
 
-- 美团（`runtime_guided`）：完整读取 [美团商品编辑合同](../meituan-product-editing.md)。
+- 美团（`runtime_guided`）：完整读取 [美团商品编辑与快照新增保存](../meituan-product-editing.md)。涵盖单品修改与全量快照/货盘批量新增复制；店内分类建树走 `batchSaveHqTags`，商品保存走 `uniSave` 协议；基于 CDP 浏览器会话级原生 RPC 注入，执行无条码 `allowUpcEmpty: "true"` 防护与三级自愈降级。
 - 翱象（`implemented`）：完整读取 [翱象实战防坑指南](../platforms/aoxiang-playbook-and-pitfalls.md)，使用 `scripts/aoxiang_high_concurrency_product_engine.mjs` 执行，强制通过多规格四道防降级硬门禁。
 - 牵牛花（门店商品与主档商品维护红线）：若涉及牵牛花商品名称、主图或分类维护，必须严格区分**总部主档**与**门店自定义商品（`customizedNameFlag: true` / `customizedPicFlag: true`）**——严禁将门店自定义强制改为“跟随总部”，也严禁在主档用 `coverToStore: 1` 级联覆盖自定义门店的名称或图片；有自定义的门店必须单独调用 `/qnh-gw3/api/product/store/update` 按该门店当前自定义信息维护。
 - 饿了么等其他平台：未注册独立 writer，不得套用美团或翱象保存链。

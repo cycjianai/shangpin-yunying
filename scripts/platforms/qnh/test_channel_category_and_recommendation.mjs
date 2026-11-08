@@ -1,9 +1,14 @@
 import { loadChromium } from '../../qnh_playwright_loader.mjs';
 
 async function main() {
-  const chromium = await loadChromium();
+  if (process.env.QNH_LIVE_E2E !== '1') {
+    console.log('[SKIPPED] Set QNH_LIVE_E2E=1 to run live QNH mutation test');
+    return;
+  }
+  let chromium;
   let browser;
   try {
+    chromium = await loadChromium();
     browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
   } catch (err) {
     console.log('[SKIPPED] Live CDP not connected (127.0.0.1:9222):', err.message);

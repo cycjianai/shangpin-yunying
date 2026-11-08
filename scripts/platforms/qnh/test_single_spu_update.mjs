@@ -6,6 +6,10 @@ const CDP_URL = 'http://127.0.0.1:9222';
 const UPDATE_V2_URL = 'https://qnh.meituan.com/qnh-gw3/api/product/tenant/update/v2?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
 
 async function main() {
+  if (process.env.QNH_LIVE_E2E !== '1') {
+    console.log('[SKIPPED] Set QNH_LIVE_E2E=1 to run live QNH single SPU update test');
+    return;
+  }
   let details;
   try {
     details = JSON.parse(await fs.readFile('runs/qnh-run-1/details-canary-20-20.json', 'utf8'));

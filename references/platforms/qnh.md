@@ -47,6 +47,10 @@ writer 和回读器不得复用于其他平台。
   2. `POST /qnh-gw3/api/product/store/update` 顶层 Payload **必须携带** `operateType: 2, actCheckType: 1, source: 2, adjustStock: { entityId: sd.storeId, entityType: sd.storeEntityType || 1, comment: 'WEB-门店商品详情调整库存', skuList: [] }`，否则服务端会报 `"门店商品库存信息不能为空"` 拒绝保存；
   3. 门店更新自定义图片时必须传 `picUrlList`（完整 URL 数组）+ `customizedPicUrlListFlag: true`；更新自定义名称时必须传 `spuName` + `customizedNameFlag: true`。
 
+### 铁律七：【多规格京东到家（`channelId=300`）销售属性与 SKU 规格必关联铁律】
+- 多规格商品（`specType === 2` 或 `detail.skus.length > 1`）在补齐京东到家渠道类目与京东品牌（`ch300.brandInfo`）的同时，**必须同步检查并补齐京东到家销售属性（`ch300.saleAttrList`）与全量 SKU 规格关联（`sku.skuChannelInfoList` 中 `channelId === 300` 的 `saleAttrValueList`）**。
+- 若 `ch300.saleAttrList` 为空，页面会提示 `请至少选择1项` 且无法推送至京东到家渠道：必须调 `POST /qnh-gw5/api/v1/channelCategory/property/batchQuery` 获取该京东类目的 `jdSaleAttrList`，默认选第 1 个销售属性（`jdSaleAttrList[0]`）写入 `ch300.saleAttrList`，再将 `detail.skus` 中每个 SKU 的规格值（`sku.specName`）一一放入对应 SKU 的京东 `saleAttrValueList` 中关联，并携带 `{ field: 'jd_channel_category_property', coverToStore: 1 }` 保存后独立回读验真。
+
 ---
 
 ## 可复用快速进入流

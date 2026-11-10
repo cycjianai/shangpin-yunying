@@ -6,6 +6,7 @@
 ## 平台叶子
 
 - 牵牛花：完整读取 [渠道属性结构合同](../channel-attribute-contract-v2.md)。QNH 原生请求、签名和 writer 只属于 QNH。
+  - **多规格京东到家（`channelId=300`）销售属性与规格关联必做**：多规格商品（`specType === 2` 或 `detail.skus.length > 1`）除补齐三渠道类目、京东品牌（`ch300.brandInfo`）与美团/饿了么类目属性外，必须检查 `ch300.saleAttrList` 与 `detail.skus` 的京东 `saleAttrValueList`；未设置时默认选定 `jdSaleAttrList[0]` 并将全部 SKU 规格名称（`sku.specName`）关联写入 `sci300.saleAttrValueList` 保存，消除 `请至少选择1项` 阻断。
   - **门店自定义隔离与原值保护红线**：在主档 `tenant/update/v2` 保存时，`coverageRequest.fieldCoverageInfoList` **严格仅限包含渠道类目属性字段（`mt_channel_category_property`、`elm_channel_category_property`、`jd_channel_category_property`）**，**绝对禁止传入 `{ field: 'spu_name', coverToStore: 1 }` 或 `{ field: 'picture', coverToStore: 1 }`**（否则会触发 `主档级联更新` 静默抹平门店自定义名称与自定义主图！）。凡开启了门店自定义（`customizedNameFlag: true` 或 `customizedPicFlag: true`）的门店商品，必须单独按该门店自定义信息调 `/qnh-gw3/api/product/store/update` 维护，严禁将其强制改为“跟随总部”。严禁塞入 `6f244c5f...` / `064b297f...` 等通用占位图，严禁触碰任何价格与上下架状态。
 - 翱象：完整读取 [翱象渠道属性合同](../aoxiang-channel-contract-v1.md)。`MT/ELE` 值按目标结构重新物化。
 - 美团、饿了么、淘宝闪购直连：能力表为 `planned` 时固定零写入。

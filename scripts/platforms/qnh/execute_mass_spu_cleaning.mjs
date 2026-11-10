@@ -312,6 +312,133 @@ async function processSingleSpu(page, spuItem) {
     }
   }
 
+  // 4.5. 京东到家品牌（brandInfo）与多规格销售属性（saleAttrList）及全量 SKU 规格关联
+  const ch300 = activeChannels.find(c => Number(c.channelId) === 300);
+  if (ch300 && ch300.categoryCode) {
+    if (!ch300.brandInfo || !ch300.brandInfo.brandCode || !ch300.brandInfo.brandName) {
+      ch300.brandInfo = { clean: null, brandName: '无品牌', brandCode: '35247' };
+      modifiedChannels.add(300);
+    }
+
+    const skus = Array.isArray(detail.skus) ? detail.skus : [];
+    const isMultiSku = Number(detail.specType) === 2 || skus.length > 1;
+    if (isMultiSku && skus.length > 0) {
+      const hasCh300SaleAttr =
+        Array.isArray(ch300.saleAttrList) &&
+        ch300.saleAttrList.length > 0 &&
+        Boolean(ch300.saleAttrList[0]?.attrId);
+      const allSkusHaveJdAttr = skus.every(sku => {
+        const sci300 = (sku.skuChannelInfoList || []).find(sci => Number(sci.channelId) === 300);
+        return (
+          Array.isArray(sci300?.saleAttrValueList) &&
+          sci300.saleAttrValueList.length > 0 &&
+          Boolean(sci300.saleAttrValueList[0]?.attrValue)
+        );
+      });
+
+      if (!hasCh300SaleAttr || !allSkusHaveJdAttr) {
+        let targetAttr = null;
+        if (hasCh300SaleAttr) {
+          targetAttr = {
+            attrId: String(ch300.saleAttrList[0].attrId),
+            attrName: ch300.saleAttrList[0].attrName || '颜色',
+          };
+        } else {
+          try {
+            const jdPropRes = await page.evaluate(async (catId) => {
+              let url = 'https://qnh.meituan.com/qnh-gw5/api/v1/channelCategory/property/batchQuery?yodaReady=h5&csecplatform=4&csecversion=4.3.0';
+              let headers = { 'Content-Type': 'application/json' };
+              let body = JSON.stringify({
+                channelCategoryCodeMapV2: { 300: [{ channelCategoryId: String(catId) }] }
+              });
+              if (window.H5guard && typeof window.H5guard.sign === 'function') {
+                const signed = await window.H5guard.sign({ url, method: 'POST', data: body });
+                Object.assign(headers, signed.headers || {});
+                if (signed.url) url = signed.url;
+              }
+              const resp = await fetch(url, { method: 'POST', headers, body, credentials: 'include' });
+              return await resp.json();
+            }, ch300.categoryCode);
+            const jdSaleAttrs = jdPropRes?.data?.['300']?.[0]?.jdSaleAttrList || [];
+            const first = jdSaleAttrs[0] || { attrId: '1577293', attrName: '颜色' };
+            targetAttr = {
+              attrId: String(first.attrId),
+              attrName: first.attrName,
+            };
+          } catch {
+            targetAttr = { attrId: '1577293', attrName: '颜色' };
+          }
+
+          ch300.saleAttrList = [{
+            attrId: String(targetAttr.attrId),
+            attrName: targetAttr.attrName,
+            picRelated: false,
+            saleAttrValueList: [],
+            attrSortNum: 0,
+          }];
+          if (ch300.skuPicSetting === null || ch300.skuPicSetting === undefined) {
+            ch300.skuPicSetting = 0;
+          }
+          modifiedChannels.add(300);
+          fallbacksFilledCount++;
+        }
+
+        const usedValues = new Set();
+        for (const sku of skus) {
+          const sci300 = (sku.skuChannelInfoList || []).find(sci => Number(sci.channelId) === 300);
+          const existingVal = sci300?.saleAttrValueList?.[0]?.attrValue;
+          if (existingVal && String(sci300.saleAttrValueList[0].attrId) === String(targetAttr.attrId)) {
+            usedValues.add(String(existingVal));
+          }
+        }
+
+        for (let i = 0; i < skus.length; i++) {
+          const sku = skus[i];
+          sku.skuChannelInfoList = Array.isArray(sku.skuChannelInfoList) ? sku.skuChannelInfoList : [];
+          const mtSci = sku.skuChannelInfoList.find(sci => Number(sci.channelId) === 100);
+          const rawSpec =
+            sku.specName ||
+            (mtSci?.saleAttrValueList || []).map(v => v.attrValue).filter(Boolean).join('/') ||
+            `规格${i + 1}`;
+          let specText = String(rawSpec).trim().slice(0, 28) || `规格${i + 1}`;
+
+          let sci300 = sku.skuChannelInfoList.find(sci => Number(sci.channelId) === 300);
+          if (!sci300) {
+            sci300 = {
+              channelId: 300,
+              skuPicUrlList: null,
+              saleAttrValueList: [],
+              upc: null,
+              channelSkuList: null,
+            };
+            sku.skuChannelInfoList.push(sci300);
+          }
+
+          const hasValidExisting =
+            Array.isArray(sci300.saleAttrValueList) &&
+            sci300.saleAttrValueList.length > 0 &&
+            sci300.saleAttrValueList[0]?.attrValue &&
+            String(sci300.saleAttrValueList[0]?.attrId) === String(targetAttr.attrId);
+
+          if (!hasValidExisting) {
+            if (usedValues.has(specText)) {
+              specText = `${specText.slice(0, 25)}_${i + 1}`;
+            }
+            usedValues.add(specText);
+            sci300.saleAttrValueList = [{
+              attrId: Number(targetAttr.attrId),
+              attrName: targetAttr.attrName,
+              attrValue: specText,
+              attrValueId: null,
+            }];
+            modifiedChannels.add(300);
+            fallbacksFilledCount++;
+          }
+        }
+      }
+    }
+  }
+
   // 5. Save to QNH (仅限纯渠道类目属性字段，严禁级联覆盖门店自定义名称 spu_name 或自定义图片 picture)
   if (modifiedChannels.size > 0) {
     const fieldCoverageInfoList = Array.from(modifiedChannels).map(cid => ({

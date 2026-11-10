@@ -1,6 +1,6 @@
 # 多平台商品运营自动化 Skill (multiplatform-product-operations)
 
-[![Skill Version](https://img.shields.io/badge/version-1.9.1-blue.svg)](VERSION)
+[![Skill Version](https://img.shields.io/badge/version-1.7.5-blue.svg)](VERSION)
 [![Platform Coverage](https://img.shields.io/badge/platforms-美团%20%7C%20牵牛花%20%7C%20翱象%20%7C%20mini橙%20%7C%20饿了么-green.svg)](#一全景平台矩阵与能力分布)
 [![Architecture](https://img.shields.io/badge/architecture-三级按需加载-orange.svg)](#二三级按需加载架构)
 
@@ -68,7 +68,7 @@ flowchart LR
 | 平台板块 | 对应业务场景 | 核心执行机制与避坑点 | 对应规范合同文件 |
 | :--- | :--- | :--- | :--- |
 | **美团直连 (`meituan`)** | 美团外卖/闪购单品编辑与全店全量极速建品复制 | • **CDP 原生 RPC 注入**：免受控 Chrome 9222 端口依附，在 `#hashframe` 内调用原生 `fetch`，0 滑块 0 封控；<br>• **两阶段建品**：先调 `batchSaveHqTags` 建齐分类树，再调 `uniSave` 批量落库；<br>• **无条码防阻断**：无条形码商品必须配置 `allowUpcEmpty: "true"`；新建商品 `spuId/skuId` 清零；三级降级自愈容错。 | [`references/meituan-product-editing.md`](references/meituan-product-editing.md)<br>[`references/platforms/meituan.md`](references/platforms/meituan.md) |
-| **牵牛花 (`qnh`)** | 渠道属性治理、资质图、不可售激活 | • **0 空白全量属性**：四级物化梯队（官方推荐第一优先，真实品牌原值保护）；<br>• **特殊图双向强对齐**：美团 Type 5（配料表图）与饿了么 Type 8（背签图）双向强制挂载；<br>• **门店自定义隔离**：严禁传 `coverToStore: 1` 抹平门店独立改名与主图。 | [`references/channel-attribute-contract-v2.md`](references/channel-attribute-contract-v2.md)<br>[`references/qualification-image-policy.md`](references/qualification-image-policy.md)<br>[`references/platforms/qnh.md`](references/platforms/qnh.md) |
+| **牵牛花 (`qnh`)** | 渠道属性治理、资质图、不可售激活 | • **0 空白全量属性**：四级物化梯队（官方推荐第一优先，真实品牌原值保护）；<br>• **多规格京东到家销售属性与全规格关联**：对 `specType === 2` 多规格商品自动拉取 `jdSaleAttrList`，默认选第 1 个销售属性（如 `颜色`/`尺码`/`规格`）并将全部 SKU 规格值一一关联写入 `sci300.saleAttrValueList`，彻底消除 `请至少选择1项` 无法推送京东到家问题；<br>• **特殊图双向强对齐**：美团 Type 5（配料表图）与饿了么 Type 8（背签图）双向强制挂载；<br>• **门店自定义隔离**：严禁传 `coverToStore: 1` 抹平门店独立改名与主图。 | [`references/channel-attribute-contract-v2.md`](references/channel-attribute-contract-v2.md)<br>[`references/qualification-image-policy.md`](references/qualification-image-policy.md)<br>[`references/platforms/qnh.md`](references/platforms/qnh.md) |
 | **翱象 (`aoxiang`)** | 阿里天猫闪购渠道属性与商品编辑 | • **多规格防覆盖四道门禁**：无条件调 `relation/detail`，执行 `assertMultiSpecSafe` 断言，严密保护门店子规格库存与独立库位。 | [`references/platforms/aoxiang-playbook-and-pitfalls.md`](references/platforms/aoxiang-playbook-and-pitfalls.md) |
 | **mini橙 (`minicheng`)** | 果冻橙中台全量属性治理 | • **Vue 双轨绑定**：美团与饿了么渠道属性结构解耦，销售单位规范补齐。 | [`references/platforms/minicheng-playbook-and-pitfalls.md`](references/platforms/minicheng-playbook-and-pitfalls.md) |
 

@@ -100,6 +100,14 @@
   - `ct === "3,4"` 营养素填 `0`，功率/电压填合理数字。
 * **持久化（Durability）保障**：QNH `update/v2` 接口对于 Type 1/2（可扩展单多选）、Type 3（文本）、Type 4（自定义字典）、Type 8（日期）、Type 9（期限），**必须同步设置 `prop.originalInputValue = newValue`**，否则独立回读重新加载时自定义值会被丢弃。
 
+### 5. 多规格京东到家（`channelId=300`）销售属性选择与全量 SKU 规格关联铁律
+* **为什么必补**：多规格商品（`specType === 2` 或 `detail.skus.length > 1`）若未设置京东到家销售属性（`ch300.saleAttrList` 为空），页面京东到家销售属性框会红字报错 `请至少选择1项`，且规格列表无京东到家规格列，导致商品无法推送到京东到家渠道；
+* **四步关联与保存规范**：
+  1. 通过 `POST /qnh-gw5/api/v1/channelCategory/property/batchQuery` 拉取当前京东三级类目的 `data["300"][0].jdSaleAttrList`；
+  2. 若 `ch300.saleAttrList` 为空，默认选择第 1 个属性（`jdSaleAttrList[0]`，如 `颜色` / `尺码` / `规格`）写入 `ch300.saleAttrList`，并设置 `ch300.skuPicSetting = 0`；
+  3. 遍历 `detail.skus`（先确保 `sku.skuChannelInfoList = Array.isArray(sku.skuChannelInfoList) ? sku.skuChannelInfoList : []`），提取各 SKU 的规格名称（`sku.specName` 或美团渠道 `saleAttrValueList` 值，截断至 `<= 28` 字符并同 SPU 去重），写入每个 SKU 的 `channelId: 300` `saleAttrValueList`（`[{ attrId: Number(targetAttr.attrId), attrName: targetAttr.attrName, attrValue: specText, attrValueId: null }]`）；对已推送京东门店（`ch300.channelSpuList?.length > 0`）且已有值的存量 SKU 保持原值不变；
+  4. 携带 `{ field: 'jd_channel_category_property', coverToStore: 1 }` 提交 `tenant/update/v2` 保存并经 `tenant/detail` 独立回读验证。
+
 ---
 
 牵牛花模块拥有 QNH H5guard、tenant 身份、列表/详情/保存接口、Chrome 扩展 transport 和专项图槽位合同。

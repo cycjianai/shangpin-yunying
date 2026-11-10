@@ -2001,3 +2001,113 @@ export function processSpuRecord(record) {
     unfilled200,
   };
 }
+
+/**
+ * 多规格商品京东到家（channelId=300）销售属性选择与全量 SKU 规格关联：
+ * 1. 当多规格商品（specType === 2 或 skus.length > 1）的 ch300.saleAttrList 为空时，
+ *    默认选择 jdSaleAttrList 的第 1 个属性（如 颜色 / 尺码 / 规格）挂载到 ch300.saleAttrList；
+ * 2. 将 detail.skus 中所有规格的 specName（或美团 100 渠道规格值）一一放入每个 SKU 的
+ *    skuChannelInfoList (channelId === 300) saleAttrValueList 中关联；
+ * 3. 已推送京东渠道且已有值的存量 SKU 保持原值不变，防止触发 400 变更拦截。
+ */
+export function fillJdMultiSpecSaleAttrs(detail, jdSaleAttrList = []) {
+  if (!detail || typeof detail !== 'object') {
+    return { changed: false, attrName: null, specValues: [] };
+  }
+  const channels = Array.isArray(detail.spuChannelInfoList) ? detail.spuChannelInfoList : [];
+  const ch300 = channels.find(c => Number(c.channelId) === 300);
+  const skus = Array.isArray(detail.skus) ? detail.skus : [];
+  const isMultiSku = Number(detail.specType) === 2 || skus.length > 1;
+  if (!ch300 || !isMultiSku || skus.length === 0) {
+    return { changed: false, attrName: null, specValues: [] };
+  }
+
+  let changed = false;
+  let targetAttr = null;
+  if (Array.isArray(ch300.saleAttrList) && ch300.saleAttrList.length > 0 && ch300.saleAttrList[0]?.attrId) {
+    targetAttr = {
+      attrId: String(ch300.saleAttrList[0].attrId),
+      attrName: ch300.saleAttrList[0].attrName || '颜色',
+    };
+  } else {
+    const first = (Array.isArray(jdSaleAttrList) && jdSaleAttrList[0]) || { attrId: '1577293', attrName: '颜色' };
+    targetAttr = {
+      attrId: String(first.attrId),
+      attrName: first.attrName || '颜色',
+    };
+    ch300.saleAttrList = [{
+      attrId: String(targetAttr.attrId),
+      attrName: targetAttr.attrName,
+      picRelated: false,
+      saleAttrValueList: [],
+      attrSortNum: 0,
+    }];
+    if (ch300.skuPicSetting === null || ch300.skuPicSetting === undefined) {
+      ch300.skuPicSetting = 0;
+    }
+    changed = true;
+  }
+
+  const usedValues = new Set();
+  for (const sku of skus) {
+    const sci300 = (sku.skuChannelInfoList || []).find(sci => Number(sci.channelId) === 300);
+    const existingVal = sci300?.saleAttrValueList?.[0]?.attrValue;
+    if (existingVal && String(sci300.saleAttrValueList[0].attrId) === String(targetAttr.attrId)) {
+      usedValues.add(String(existingVal));
+    }
+  }
+
+  const specValues = [];
+  for (let i = 0; i < skus.length; i++) {
+    const sku = skus[i];
+    sku.skuChannelInfoList = Array.isArray(sku.skuChannelInfoList) ? sku.skuChannelInfoList : [];
+    const mtSci = sku.skuChannelInfoList.find(sci => Number(sci.channelId) === 100);
+    const rawSpec =
+      sku.specName ||
+      (mtSci?.saleAttrValueList || []).map(v => v.attrValue).filter(Boolean).join('/') ||
+      `规格${i + 1}`;
+    let specText = String(rawSpec).trim().slice(0, 28) || `规格${i + 1}`;
+
+    let sci300 = sku.skuChannelInfoList.find(sci => Number(sci.channelId) === 300);
+    if (!sci300) {
+      sci300 = {
+        channelId: 300,
+        skuPicUrlList: null,
+        saleAttrValueList: [],
+        upc: null,
+        channelSkuList: null,
+      };
+      sku.skuChannelInfoList.push(sci300);
+    }
+
+    const hasValidExisting =
+      Array.isArray(sci300.saleAttrValueList) &&
+      sci300.saleAttrValueList.length > 0 &&
+      sci300.saleAttrValueList[0]?.attrValue &&
+      String(sci300.saleAttrValueList[0]?.attrId) === String(targetAttr.attrId);
+
+    if (!hasValidExisting) {
+      if (usedValues.has(specText)) {
+        specText = `${specText.slice(0, 25)}_${i + 1}`;
+      }
+      usedValues.add(specText);
+      sci300.saleAttrValueList = [{
+        attrId: Number(targetAttr.attrId),
+        attrName: targetAttr.attrName,
+        attrValue: specText,
+        attrValueId: null,
+      }];
+      changed = true;
+      specValues.push(specText);
+    } else {
+      specValues.push(String(sci300.saleAttrValueList[0].attrValue));
+    }
+  }
+
+  return {
+    changed,
+    attrId: targetAttr.attrId,
+    attrName: targetAttr.attrName,
+    specValues,
+  };
+}

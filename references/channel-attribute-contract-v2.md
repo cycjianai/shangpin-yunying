@@ -74,6 +74,38 @@
    * 牵牛花 `update/v2` 接口对于自由文本（type 3）、自定义文本（type 4，`attrValueId: "0"`）、日期（type 8）、期限时长（type 9，`attrValueId: unitOption.optionId`）、无候选项的扩展单选（type 1/2，`attrValueId: "0"`），若仅赋值 `customValue`，更新接口返回 200 成功，但在后台独立回读时会被静默置空！
    * **必须同时同步赋值 `prop.originalInputValue = newValue`**，方可实现 100% 落地持久化！
 
+10. **【v6.1 重大升级】多规格商品京东到家（`channelId=300`）销售属性选择与全规格关联保存铁律**
+   * *历史漏项痛点*：过去在商品信息修复时，只补了京东到家渠道类目与京东品牌（`ch300.brandInfo`），漏掉了**多规格商品（`specType === 2` 或 `detail.skus.length > 1`）的京东到家销售属性（`ch300.saleAttrList`）与各 SKU 规格值关联（`sku.skuChannelInfoList` 中 `channelId === 300` 的 `saleAttrValueList`）**。一旦未设置京东到家销售属性，编辑页“销售属性”京东到家框下会报错 **`请至少选择1项`**，且多规格表格缺少京东到家销售属性列，导致**该商品完全无法推送到京东到家渠道**！
+   * *真正业务成功的四步闭环*：
+     1. **拉取当前京东三级类目的销售属性候选（`jdSaleAttrList`）**：调用 `POST /qnh-gw5/api/v1/channelCategory/property/batchQuery`，传入 `{ channelCategoryCodeMapV2: { "300": [{ channelCategoryId: String(ch300.categoryCode) }] } }`，从 `data["300"][0].jdSaleAttrList` 读取支持的销售属性列表（如 `[{ attrId: "1577293", attrName: "颜色" }, { attrId: "1577303", attrName: "尺码" }]`）；
+     2. **默认选择第 1 个京东销售属性挂载到 SPU `ch300.saleAttrList`**：当 `ch300.saleAttrList` 为空（或原选属性不在新类目 `jdSaleAttrList` 支持范围内且尚未推送京东门店）时，**默认选择第 1 个属性 `firstAttr = jdSaleAttrList[0]`**（若已选且合法则沿用 `ch300.saleAttrList[0]`），写入：
+        ```javascript
+        ch300.saleAttrList = [{
+          attrId: String(targetAttr.attrId),
+          attrName: targetAttr.attrName,
+          picRelated: false,
+          saleAttrValueList: [],
+          attrSortNum: 0,
+        }];
+        if (ch300.skuPicSetting === null || ch300.skuPicSetting === undefined) {
+          ch300.skuPicSetting = 0;
+        }
+        ```
+     3. **将全部 SKU 的规格值一一放进 `sci300.saleAttrValueList` 完成关联**：遍历 `detail.skus`（注意：`tenant/detail` 的规格列表字段为 `detail.skus`，规格名字段为 `sku.specName`；新增 SKU 的 `sku.skuChannelInfoList` 可能为 `null`，需先初始化为 `[]`）：
+        - 提取规格名：优先取 `sku.specName`，次取美团渠道（`channelId === 100`）`saleAttrValueList` 的 `attrValue`；
+        - 长度与去重保护：截断至 `<= 28` 字符（京东上限 30 字符），同 SPU 下若多个 SKU 规格文本重复则追加 `_${i + 1}`；
+        - 对未关联（或 `attrId` 不匹配且未推送京东）的 SKU，在 `sku.skuChannelInfoList` 的 `channelId: 300` 节点写入：
+          ```javascript
+          sci300.saleAttrValueList = [{
+            attrId: Number(targetAttr.attrId),
+            attrName: targetAttr.attrName,
+            attrValue: specText,
+            attrValueId: null,
+          }];
+          ```
+        - **已推送京东渠道存量 SKU 防报错边界**：若该 SPU 已推送到京东到家门店（`ch300.channelSpuList?.length > 0`），牵牛花服务端锁定存量已推送 SKU 的京东销售属性值（强改会报 `400 已经推送渠道的情况下，京东销售属性值不允许变更`），故对已有值的存量 SKU 保持原值不动。
+     4. **携带 `jd_channel_category_property` 保存并独立回读验真**：在 `coverageRequest.fieldCoverageInfoList` 中包含 `{ field: "jd_channel_category_property", coverToStore: 1 }` 提交 `tenant/update/v2`，保存后通过 `tenant/detail` 独立回读确认 `ch300.saleAttrList` 与全部 SKU 的 `channelId=300` `saleAttrValueList` 均已持久生效，才算真正业务意义上的成功。
+
 ---
 
 ## 资质属性等价别名网络（Alias Equivalence Network）
@@ -157,9 +189,10 @@ flowchart TD
     H -- 存在空缺或失效 --> I["【Pass 2: 别名网络双向继承】对向渠道优先 ➔ 本渠道同义 ➔ 标题常识抽取"]
     I --> J["【药监与品类合规联动推导】医疗器械/避孕套/食品/数码专属业务链条"]
     J --> K["【售后防纠纷与全类型兜底】肯定性赠品留空 / 否定赠品优先 / 文本与结构化拉满"]
-    H -- 全部填满合规 --> L["设置 originalInputValue 镜像保护"]
-    K --> L
-    L --> M["调用 update/v2 批量保存并覆盖更新渠道"]
+    K --> L["设置 originalInputValue 镜像保护"]
+    H -- 全部填满合规 --> L
+    L --> JD["【多规格京东到家销售属性与SKU规格关联】默认选 jdSaleAttrList[0] + 关联全量 detail.skus 规格"]
+    JD --> M["调用 update/v2 批量保存并覆盖更新渠道"]
 ```
 
 ### 阶段 1：渠道类目检查、推荐与三级语义兜底
@@ -225,6 +258,15 @@ flowchart TD
 * **永久拉黑通用占位图**：绝对禁止注入 `6f244c5f...` / `064b297f...` 通用说明图；
 * **严禁把平台示例图写入特殊图**：严禁将 `pictureExample` 写入特殊图；
 * **详情图为空时的唯一合规处理**：纯渠道属性任务不改动图片；如需补齐，仅允许复用当前商品自身已有主图 URL，严禁在主档传入 `{ field: 'picture', coverToStore: 1 }`。
+
+### 阶段 3.6：京东到家品牌（`brandInfo`）与多规格销售属性（`saleAttrList`）+ 全量 SKU 规格关联契约
+* **京东品牌（`ch300.brandInfo`）补齐**：若 `ch300.brandInfo?.brandCode` 为空，优先通过 `/qnh-gw5/api/v1/channel/brand/search` 检索商品真实品牌名称，未命中时兜底填入 `{ clean: null, brandName: "无品牌", brandCode: "35247" }`。
+* **多规格（`specType === 2` 或 `detail.skus.length > 1`）京东销售属性与规格值必关联**：
+  1. 若商品为多规格且开通/存在京东到家渠道（`channelId === 300`），必须检查 `ch300.saleAttrList` 是否已选定销售属性，以及 `detail.skus` 中每个 SKU 的 `skuChannelInfoList`（`channelId === 300`）是否已关联 `saleAttrValueList`；
+  2. 当 `ch300.saleAttrList` 为空时，通过 `POST /qnh-gw5/api/v1/channelCategory/property/batchQuery` 拉取 `data["300"][0].jdSaleAttrList`，**默认选择第 1 个属性**（`jdSaleAttrList[0]`，如 `颜色` / `尺码` / `规格`）写入 `ch300.saleAttrList`，并设 `ch300.skuPicSetting = 0`；
+  3. 遍历 `detail.skus`，将每个 SKU 的规格名称（`sku.specName` 或美团渠道 `saleAttrValueList` 规格值，截断至 `<= 28` 字符并同 SPU 去重）填入该 SKU 的 `channelId === 300` `saleAttrValueList`：
+     `[{ attrId: Number(targetAttr.attrId), attrName: targetAttr.attrName, attrValue: specText, attrValueId: null }]`；
+  4. 同步将 `jd_channel_category_property` 加入 `coverageRequest.fieldCoverageInfoList`（`coverToStore: 1`）一并保存。
 
 ### 阶段 4：门店自定义分流与安全保存（独立回读验真）
 * **写前全量快照（强制前置）**：写前将主档 `tenant/detail` 及各门店 `store/detail` 完整落盘备份；

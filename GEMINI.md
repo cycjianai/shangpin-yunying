@@ -35,7 +35,7 @@ When working on MiniCheng (mini.guodongcheng.cn / `storeCode: 33280018`) product
 - 酒水、数码、日用等非服饰类目的复合属性（麦汁浓度、酒精度、容量、线长）严禁误填为面料棉，必须装配各自专用结构体。
 
 ### 4. 资质图绝对隔离保护（Zero Qualification Modification）
-- `specialPictureList` 与 `eleSpecialPictureList` 严格透传原值快照中的图片 URL，严禁清空、修改或重新生成。
+- `specialPictureList` 与 `eleSpecialPictureList` 默认透传原值快照中的图片 URL，严禁清空或缩短；本次任务明确要求补图时，允许按 [`upstream-image-generation.md`](references/upstream-image-generation.md) 的上游生图链路生成并追加新 URL。
 
 ### 5. 修改前 100% 全量快照与随时回滚
 - 在调用 `updateProductDetail` 前，必须通过 `queryProductDetail` 获取完整原始商品实体，落盘至 `artifacts/snapshots/minicheng_${storeCode}/`。

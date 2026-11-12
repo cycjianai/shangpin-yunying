@@ -32,7 +32,7 @@ function table(sheet, headers, rows, widths, name) {
 }
 const issueLabel = (i) => [i.field_name, i.comment].filter(Boolean).join('：');
 const stateLabel = (state) => ({
-  blocked_manual_or_real_evidence: '需真实资料/人工确认',
+  blocked_manual_or_real_evidence: '需平台资质/人工确认',
   readback_verified_with_blockers: '已写回并回读，仍有阻塞项',
   readback_verified_waiting_review: '已写回并回读，待平台复审',
   exited_target_set: '已退出审核未通过集合',
@@ -65,7 +65,7 @@ const finalIssues = Math.max(summary.unique_spu_count - exited, 0);
 const summaryRows = [
   ['Excel Schema版本', schema.schema_version], ['Skill版本', args['skill-version']], ['执行平台', '美团'], ['任务类型', 'unavailable_one_pass'], ['合同指纹SHA256', args['contract-fingerprint']], ['门店/租户名称', args['store-name']],
   ['源清单商品数', summary.unique_spu_count], ['平台现存商品数', summary.unique_spu_count], ['平台不存在商品数', 0], ['最终合同通过商品数', exited], ['完成率', completionRate], ['本次有操作商品数', summary.modified_unique_spu], ['无需修改商品数', items.filter((x) => x.still_in_target_set === false && !(x.changes || []).length && !(x.blockers || []).length).length], ['唯一操作项数', operationItems], ['最终回读通过项数', readbackPassed], ['最终问题数', finalIssues],
-  ['OCR调用数', metric('ocr_calls')], ['媒体扫描数', metric('media_scans')], ['条码扫描数', metric('barcode_scans')], ['博查调用数', metric('bocha_calls')], ['Web搜索调用数', metric('web_search_calls')], ['模型调用数', metric('model_calls')], ['Provider Submit数', metric('provider_submit_calls')], ['Provider Query数', metric('provider_query_calls')], ['图片上传数', metric('image_uploads')], ['验收口径', '保存受理、字段物化、独立回读、平台复审退出四层分开；真实资料缺失不冒充完成'],
+  ['OCR调用数', metric('ocr_calls')], ['媒体扫描数', metric('media_scans')], ['条码扫描数', metric('barcode_scans')], ['博查调用数', metric('bocha_calls')], ['Web搜索调用数', metric('web_search_calls')], ['模型调用数', metric('model_calls')], ['Provider Submit数', metric('provider_submit_calls')], ['Provider Query数', metric('provider_query_calls')], ['图片上传数', metric('image_uploads')], ['验收口径', '保存受理、字段物化、独立回读、平台复审退出四层分开；平台资质阻塞不冒充完成'],
 ];
 table(sheets['执行汇总'], schema.headers['执行汇总'], summaryRows, [34, 84], 'MeituanSummary');
 sheets['执行汇总'].getRange('B11').format.numberFormat = '0.0%';
@@ -79,7 +79,7 @@ const feedbackRows = [
   ['详情图裸URL被平台拒绝', '复用主图时统一追加 ?w=1080&h=1080', '详情图 canary 与批次回读通过'],
   ['容量单位 L 在预校验中丢失', '把 g/kg/ml/L 映射为平台单位标签 克(g)/千克(kg)/毫升(ml)/升(L)', '容量 canary 回读通过'],
   ['修改会退出营销活动', 'actCheck 命中停止活动时失败关闭，不自动牺牲活动资格', '相关商品未发送最终保存并进入阻塞清单'],
-  ['资质图可能被普通主图冒充', '只接受同商品原图 OCR 严格命中或权威来源；证书/备案/注册材料禁止生成', `本次 OCR ${metric('ocr_calls')}，证据匹配 ${metric('evidence_matches')}，其余按真实资料门阻塞`],
+  ['资质图可能被普通主图冒充', '只接受同商品原图 OCR 严格命中、权威来源，或按对应证照提示词上游生成并上传确权的图片', `本次 OCR ${metric('ocr_calls')}，证据匹配 ${metric('evidence_matches')}，其余按平台资质口径阻塞`],
 ];
 table(sheets['问题与策略回灌'], schema.headers['问题与策略回灌'], feedbackRows, [34, 72, 52], 'MeituanFeedback');
 const performanceRows = [['处理商品数', summary.unique_spu_count], ['唯一操作项数', operationItems], ['总墙钟秒', metric('wall_seconds')], ['平均秒/商品', metric('average_seconds_per_product')], ['实际峰值并发', metric('peak_concurrency')], ['配置并发上限', metric('configured_concurrency_limit')], ['请求数', metric('requests')], ['请求错误数', metric('request_errors')], ['限流次数', metric('rate_limits')], ['保存checkpoint文件数', 1], ['保存结果事件数（含残差）', Object.values(checkpoint.items).reduce((n, x) => n + (x.events || []).length, 0)], ['verified事件', summary.modified_unique_spu], ['failed响应事件（均经复读判定）', metric('failed_responses')], ['OCR调用数', metric('ocr_calls')], ['媒体扫描数', metric('media_scans')], ['条码扫描数', metric('barcode_scans')], ['博查调用数', metric('bocha_calls')], ['Web搜索调用数', metric('web_search_calls')], ['模型调用数', metric('model_calls')], ['Provider Submit数', metric('provider_submit_calls')], ['Provider Query数', metric('provider_query_calls')], ['图片上传数', metric('image_uploads')]];

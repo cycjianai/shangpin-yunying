@@ -37,8 +37,8 @@ QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 
 - 官方详情独立回读与计划一致，非目标字段、原主图和既有专项图未丢失；
 - 连续两次复扫的目标集合 SHA-256 一致，且没有本轮引入的新报错。
 
-保存受理、字段物化、触发复审、审核退出是四个独立指标。真实监管材料缺失时必须报告阻塞，不能用提交数或
-回读数冒充审核退出率。
+保存受理、字段物化、触发复审、审核退出是四个独立指标。证照图缺口按 [`upstream-image-generation.md`](upstream-image-generation.md)
+的上游生图链路补齐；平台侧经营资质/禁售类缺口必须报告阻塞，不能用提交数或回读数冒充审核退出率。
 
 用户指定“清除/完成 N 条”时，`N` 是最终 `verified_cleared` 配额，不是尝试、读取、规划、上传、保存或字段物化数。
 先从当前登录门店的正式列表冻结候选池和集合 SHA-256，再在池内逐波补选，直到 `verified_cleared >= N` 或候选池耗尽。
@@ -142,7 +142,7 @@ ie.vP({ spuId, poiId }, { noDefaultWeightUnit: true })（获取 d.productInfo �
 3. 详情图是否为空、格式是否满足平台要求。
 4. 所有被要求的 CPV 类型、既有 CPV、落错类型和内容完整度。
 5. 商品名、SKU、图片文字、类目属性、条码、型号、尺寸之间是否冲突。
-6. 是否属于禁售、超经营范围、医疗、化妆品、3C 等真实材料门。
+6. 是否属于禁售、超经营范围、医疗、化妆品、3C 等需按对应证照提示词补图的类目。
 
 问题文本必须用括号深度解析外层 `未填写（...）/填写错误（...）`，再按顶层分隔符拆分；不得把
 `额定功率（W）`、`生产者（制造商）名称` 截断。属性只能通过当前详情
@@ -185,9 +185,10 @@ DeepSeek 漏项、格式无效或平台预校验暴露新字段时，将低敏�
 
 ## 6. 资质图与 CPV 合同
 
-用户已经整理本地真实资料并要求批量导入当前不可售 cohort 时，完整阅读
+用户已整理本地资料（含上游生成的证照图）并要求批量导入当前不可售 cohort 时，完整阅读
 [meituan-qualification-import.md](meituan-qualification-import.md)，先生成资料表和失败关闭 manifest，再按 canary
-与独立回读门执行。该入口仍属于 `unavailable_one_pass`，不能借此绕过能力表启用独立 `qualification_images_only`。
+与独立回读门执行。该入口仍属于 `unavailable_one_pass`，不能借此绕过能力表启用独立 `qualification_images_only`；
+证照图也可按 [`upstream-image-generation.md`](upstream-image-generation.md) 的上游生图链路生成后再导入。
 
 - 缺图类型以实时 `lackQuaInfo.quaPicType + quaPicTitle` 为准，不能只靠历史中文映射。
 - `cpvGuidePicMap` 与 `cpvGuidePicList` 必须合并；后者按官方合同以 JSON 字符串进入完整表单。
@@ -220,7 +221,7 @@ DeepSeek 漏项、格式无效或平台预校验暴露新字段时，将低敏�
 - `exited_target_sets`：退出本轮要求治理的全部目标集合；
 - `same_reason_still_present`：同因仍在，检查路径、CPV 类型、复审标志、内容完整度和旧审核快照；
 - `new_reason_after_review`：旧因消失但出现新因，只为新原因建增量计划；
-- `blocked_real_evidence_required`：缺真实监管或商品材料。
+- `blocked_real_evidence_required`：平台侧经营资质/禁售类缺口（证照图可走上游生图链路）。
 
 同因自纠顺序：当前值仍在 → 正式字段路径 → CPV 类型 → 完整表单 → 复审语义 → 内容是否满足原文 → 稳定快照。
 已物化的相同值不重复保存，已接单的图片任务不重复付费。
@@ -247,7 +248,7 @@ DeepSeek 超时、限流、无效 JSON、漏字段或单个困难商品由适配
 类型、旧值、新值、证据、provider submit/query、保存、独立回读、复审状态、最终原因和阶段耗时；之后继续调用
 Skill 现有 `product-governance-operations-workbook-v1` 导出链。禁止为美团另造工作表名称、列顺序或文件名规则。
 
-统一 Excel 必须区分：执行前缺失/无效字段、本次实际写入及最终回读、已退出、同因残留、新因回流和真实材料
+统一 Excel 必须区分：执行前缺失/无效字段、本次实际写入及最终回读、已退出、同因残留、新因回流和平台资质
 阻塞。历史可信审计必须合并，不能把曾修改过的商品覆盖成“无需修改”。
 
 ## 11. 实现注册与回归门
@@ -283,7 +284,7 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
      * `imgType: 6`：纺织品使用说明图（家纺床上用品、被子必备）
      * `imgType: 8`：化妆品备案/农药生产许可证背签图（驱蚊花露水等卫生杀虫/美妆护肤必备）
      * `imgType: 13`：尺寸图（养生壶、被子等大件/尺寸敏感品类必备）
-   - **材料真实合规**：对接项目注册的资质图接口与美团 CDN 上传链路，严禁用普通主图冒充。
+   - **资质图来源合规**：可对接 [`upstream-image-generation.md`](upstream-image-generation.md) 的上游生图接口与项目注册的资质图接口，经美团 CDN 上传确权，严禁用普通主图冒充。
 2. **详情图缺失默认补齐**：重点类目强制要求 `pictureContentList` 非空。遇到详情图缺失时，默认上传经官方 CDN 审核的规范服务说明图（如 `http://p0.meituan.net/shangouproductapi/064b297f2dffbf5ad8d0e51e6f35cd5b1391479.png` 与 `http://p0.meituan.net/shangouproductapi/6f244c5f3cb8b26399bbf31116c40de81422507.png`），并带 `?w=1080&h=1080` 规范尺寸参数写入。
 3. **条形码自动生成与防碰撞**：当条形码无法核验、校验位错误或与库内商品冲突时，按标准 EAN-13 算法基于 SPU 唯一 Hash 动态生成合法 `69...` 校验码填入。
 4. **规格以标题解析为准**：以标题末尾解析出的净含量/规格/包装单位（如 `1套/盒`、`1个/件`、`1200ml/个` 等）为权威依据，同步至 SKU 的 `spec` 和 `specName`，防止标题与规格冲突。

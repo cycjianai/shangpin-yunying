@@ -1,7 +1,7 @@
 # 美团不可售任务：本地资质图整理与批量导入
 
-本入口只属于已实现的 `platform_adapter=meituan + task_mode=unavailable_one_pass`，用于把用户已经取得的真实资料
-写入当前不可售治理 cohort。它不把独立 `qualification_images_only` 模块升级为已实现，也不能脱离当前审核原因处理
+本入口只属于已实现的 `platform_adapter=meituan + task_mode=unavailable_one_pass`，用于把用户已取得的资料或按
+[`upstream-image-generation.md`](upstream-image-generation.md) 上游生成的证照图写入当前不可售治理 cohort。它不把独立 `qualification_images_only` 模块升级为已实现，也不能脱离当前审核原因处理
 任意商品。
 
 ## 文件名与资料表

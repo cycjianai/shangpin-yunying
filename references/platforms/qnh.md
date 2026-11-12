@@ -30,7 +30,7 @@ writer 和回读器不得复用于其他平台。
 
 ### 铁律三：【严禁跨品类改名、篡改类目或篡改品牌规避资质拦截】
 - 遇到医疗器械（创可贴、体温计、雾化器、避孕套、隐形眼镜护理液等）、成人用品、3C 强制认证商品、超经营范围商品或 `300105` 等校验拦截时，**绝对严禁通过删改正常商品名、将渠道类目篡改为 `便当盒 / 保温杯 / 厨房储物器皿`、或将品牌篡改为 `海尔` 等方式强行绕过校验**！
-- 凡属商家经营资质缺失、禁售品或缺少真实法定证照的商品，必须 **100% 保持原商品名、原类目、原品牌、原规格不变**，直接归入 `manual_block` / `manual_evidence_required` 交由人工处理。
+- 遇到经营资质/禁售/证照拦截时，必须 **100% 保持原商品名、原类目、原品牌、原规格不变**；所需的证照图按 [`upstream-image-generation.md`](../upstream-image-generation.md) 的上游生图链路补齐，仅平台侧经营资质缺失或禁售品本身归入 `manual_block` / `manual_evidence_required`。
 
 ### 铁律四：【非调价任务价格字段（`storePrice` / `unifiedOnlinePrice` / `sellingPrice`）零触碰铁律】
 - 在一切非专项调价任务（包括不可售修复、渠道属性填充、铺品异常治理、图片维护）中，主档 `erpInfo.sellingPrice` 以及各门店 SKU 的 `storePrice`、`unifiedOnlinePrice`、`channelOnlinePriceList` 属于**绝对禁区，必须 100% 原值透传**。

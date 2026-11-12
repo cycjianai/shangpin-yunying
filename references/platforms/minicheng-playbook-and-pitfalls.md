@@ -143,7 +143,7 @@ const updatePayload = {
     memberPrice: sku.memberPrice
   })),
   
-  // 6. 资质图原值隔离保护（严格禁止修改）
+  // 6. 资质图默认透传原值；需补图时按 upstream-image-generation.md 上游生图链路追加 URL
   specialPictureList: rawDetail.specialPictureList || [],
   eleSpecialPictureList: rawDetail.eleSpecialPictureList || []
 };

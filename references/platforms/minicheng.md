@@ -57,7 +57,7 @@ mini橙（澜橙数字 `mini.guodongcheng.cn`）是面向即时零售/外卖到�
 ### 3.3 资质图隔离原则（Zero-Qualification Modification）
 
 - 当任务明确约束“只填写美团属性和淘宝闪购属性，不填写资质图”时：
-  - 严禁调用任何外部商业生图模型或生成本地图；
+  - 该任务范围内不处理资质图；需要补图时改走 [`upstream-image-generation.md`](../upstream-image-generation.md) 的上游生图链路；
   - 严格保留原始商品快照中的 `specialPictureList` 与 `eleSpecialPictureList`，原值透传，不作增删。
 
 ### 3.4 全生命周期快照与随时回滚契约

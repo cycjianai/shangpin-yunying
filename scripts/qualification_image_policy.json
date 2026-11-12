@@ -45,6 +45,17 @@
       "expected_text_tokens"
     ],
     "allowed_picture_types": [3, 4, 5, 6, 7, 8, 10, 13, 15],
+    "prompt_templates": {
+      "3": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品包装标签图》，必须清晰展示生产企业名称（厂名）、生产企业地址（厂址）、产品型号/规格、执行标准号等关键说明文字，画面正向清晰。",
+      "4": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《中国国家强制性产品认证证书》（3C认证证书），证书需要在生效状态且在有效期内。证书需清晰完整，包含证书编号、委托人/生产者/生产企业、产品名称和型号规格、依据标准等必要信息，严禁使用虚假、涂抹或模糊的证书。",
+      "5": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品配料与营养成分表图》，文字清晰完整，包含完整的配料表与营养成分表（能量、蛋白质、脂肪、碳水化合物、钠等基础指标），画面正向，背景整洁，无水印、反光与折叠遮挡。",
+      "6": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《纺织品使用说明》图，必须清晰包含执行标准号、安全技术类别（如GB 18401 B类）、面料成分含量及洗涤维护说明，文字清晰可辨、画面正向。",
+      "7": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《服装/纺织品吊牌及洗唛使用说明图》，必须清晰包含：执行标准号、安全技术类别（如GB 18401 B类）、面料成分含量及洗涤维护说明。",
+      "8": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《化妆品外包装背签图/商品背签图》，必须清晰展示化妆品备案编号/注册证号（如粤妆网备字...）、备案人/生产企业名称及地址、全成分标识，或普通商品背签的配料、执行标准、厂名与厂址，文字清晰可辨。",
+      "10": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《医疗器械注册证/第一类医疗器械备案凭证》，证书在有效期内，清晰包含产品名称、注册证编号/备案号、注册人/备案人名称及生产地址。",
+      "13": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《商品主体尺寸标注图》，画面居中展示商品实物主体，清晰标明长、宽、高各维度尺寸线与毫米/厘米标注数值，背景白底纯净。",
+      "15": "商品名称：{title}\n生成一张能过平台认证的，确保真实有效，商品本商品对应的《原厂礼袋图》，展示与当前商品品牌和规格对应的原厂礼袋，主体完整、文字清晰、背景整洁，不添加赠品承诺或营销文案。"
+    },
     "prohibited_legal_content": {
       "message": "虚假伪造或欺诈性资质图片禁止进入生成链路",
       "tokens": [
@@ -72,7 +83,7 @@
       "maximum_accepted_provider_tasks_per_business_key": 1,
       "query_only_after_provider_task_id": true,
       "stop_failover_after_provider_task_id": true,
-      "strictly_single_generation_per_spu_type": true,
+      "deduplicate_accepted_jobs": true,
       "bidirectional_channel_reuse": true
     }
   },
@@ -346,7 +357,7 @@
   "channel_equivalence_mappings": {
     "schema": "qnh-special-picture-equivalence-v1",
     "description": "基于38000+ SPU实测统计的48种特殊图槽位归并与美团(100)/饿了么(200)跨渠道等价映射规则",
-    "deduplication_policy": "strictly_single_generation_per_spu_type",
+    "deduplication_policy": "job_key_idempotent_cost_dedupe",
     "bidirectional_forced_insertion": true,
     "categories": {
       "food_back_label_nutrition": {

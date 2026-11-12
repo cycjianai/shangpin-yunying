@@ -24,10 +24,11 @@
 3. 保存前校验 expected-old；同 SPU 合并写入。保存失败、超时或结果未知先独立回读，只有确认的残余才进入补写计划。
 4. 完成后重新读取全部平台现存目标并运行 `validate_channel_contracts.py`；`products_with_issues=0`、
    `issue_count=0` 仅证明结构通过，还须目标值证据、非目标保护及每个商品的唯一终态齐全。
-5. 保存交付率、结构通过率、真实材料覆盖率和审核退出率分别统计。
+5. 保存交付率、结构通过率、资质图覆盖率和审核退出率分别统计。
 
-既有 `channel_attributes_only` 动作合同的 OCR、Web、模型和图片预算为零；需要这些能力时先核对任务范围，
-不得在这个执行器里暗中扩展动作。其他模式按自己的合同使用相关能力。
+既有 `channel_attributes_only` 动作合同只处理渠道属性，不处理图片；资质图任务使用 `qualification_images_only`
+模式及 [`upstream-image-generation.md`](upstream-image-generation.md) 的上游生图链路，不得在纯属性执行器里暗中扩展动作。
+其他模式按自己的合同使用相关能力。
 
 ## 性能与恢复
 

@@ -114,7 +114,26 @@ else:
 
 assert len(policy["channel_equivalence_mappings"]["categories"]) >= 7
 assert channel_equivalence_mappings() == policy["channel_equivalence_mappings"]
-assert policy["generation"]["provider_idempotency"]["strictly_single_generation_per_spu_type"] is True
+assert policy["generation"]["provider_idempotency"]["deduplicate_accepted_jobs"] is True
+assert policy["channel_equivalence_mappings"]["deduplication_policy"] == "job_key_idempotent_cost_dedupe"
+
+# 回归样例：上游生图链路说明存在，且每个允许生成的 picture_type 都有独立提示词
+upstream_doc = (ROOT / "references" / "upstream-image-generation.md").read_text(encoding="utf-8")
+for token in ("api.aishuch.com", "QNH_ART_IMAGE_API_KEY", "prompt_templates", "gpt-image-2"):
+    assert token in upstream_doc
+prompt_templates = policy["generation"]["prompt_templates"]
+assert set(prompt_templates) == {str(item) for item in generation["allowed_picture_types"]}
+assert len({str(value) for value in prompt_templates.values()}) == len(prompt_templates)
+assert all(str(value).strip() for value in prompt_templates.values())
+for category in ("food_back_label_nutrition", "cosmetic_record_back_label",
+                 "package_label_and_back_label", "textile_label_and_instructions",
+                 "medical_device_registration", "ccc_quality_certification",
+                 "size_and_dimension_chart"):
+    assert str(policy["channel_equivalence_mappings"]["categories"][category]
+               ["generation_spec"]["prompt_template"]).strip()
+assert policy["asset_builders"]["nutrition"]["full_prompt_template"]
+assert policy["asset_builders"]["nutrition"]["ingredient_only_prompt_template"]
+assert len(policy["asset_builders"]["formal_assets"]) >= 6
 assert policy["generation"]["provider_idempotency"]["bidirectional_channel_reuse"] is True
 
 direct_source = (ROOT / "scripts" / "qnh_direct.mjs").read_text(encoding="utf-8")

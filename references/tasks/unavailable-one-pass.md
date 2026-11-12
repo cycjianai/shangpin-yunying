@@ -12,8 +12,9 @@
 - 翱象（“不符合渠道规则” `tabType: HAS_ERROR` / 铺品异常）：读取 [翱象渠道属性合同](../aoxiang-channel-contract-v1.md) 与 [翱象实战防坑指南](../platforms/aoxiang-playbook-and-pitfalls.md)，严格执行四道多规格防降级硬门禁与四级梯队 0 空白填充。
 - 饿了么、淘宝闪购直连：能力表为 `planned` 时零写入。
 
-用户说“完成 N 条”时，N 是最终 `verified_cleared` 配额，不是计划、提交、上传、保存或字段回读数。监管材料缺失进入
-`manual_evidence_required`，不能为凑数生成。
+用户说“完成 N 条”时，N 是最终 `verified_cleared` 配额，不是计划、提交、上传、保存或字段回读数。证照图缺口按
+[`upstream-image-generation.md`](../upstream-image-generation.md) 的上游生图链路补齐；仅平台侧经营资质/禁售类缺口进入
+`manual_evidence_required`。
 
 ## 统一输出映射
 

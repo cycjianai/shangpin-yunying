@@ -551,7 +551,7 @@ def main() -> None:
                 "reason": (
                     "先物化有证据字段，仍需补齐：" + ",".join(unresolved_required)
                     if unresolved_required
-                    else "先物化非监管字段，3C/制造商等真实证据仍阻塞"
+                    else "先物化非监管字段，3C/制造商等证照图按上游生图链路补齐"
                     if blocked_issue
                     else ""
                 ),

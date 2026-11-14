@@ -33,6 +33,7 @@ def main() -> int:
         ("饿了么批量调价", "eleme", "price_push", "runtime_guided"),
         ("美团医疗器械整店迁移并复制分类", "meituan", "medical_device_store_migration", "runtime_guided"),
         ("美团修改店内码并逐SKU回读", "meituan", "product_editing", "runtime_guided"),
+        ("把美团门店全部商品包括店内分类全部删除掉", "meituan", "product_editing", "runtime_guided"),
         ("翱象补齐美团和饿了么渠道属性", "aoxiang", "channel_attributes_only", "implemented"),
         ("牵牛花重试原点搬品助手历史新增失败", "qnh", "copy_history_retry", "implemented"),
         ("牵牛花新增前后映射表按末尾1回退名称和条形码做搬品冲突复核", "qnh", "copy_conflict_reconciliation", "runtime_guided"),
@@ -103,6 +104,8 @@ def main() -> int:
         ("牵牛花总部零售价只读核对，不要保存", "review"),
         ("开发美团商品信息编辑功能", "implementation"),
         ("美团修改店内码", "execution"),
+        ("把美团门店全部商品和店内分类全部删除掉", "execution"),
+        ("分析美团整店清空流程，不要删除", "review"),
     ]:
         result = run("--request-text", request)
         assert result["intent"] == intent, (request, result)

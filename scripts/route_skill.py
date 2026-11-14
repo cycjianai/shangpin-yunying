@@ -82,7 +82,7 @@ def infer_platform(request_text: str, page_url: str) -> tuple[str | None, list[s
         candidates.add("qnh")
     if contains(text, r"翱象", r"saas-retail\.ele\.me", r"tc-supply-chain-portal\.ele\.me"):
         candidates.add("aoxiang")
-    if contains(text, r"美团", r"yiyao\.meituan\.com", r"\bmeituan\b"):
+    if contains(text, r"美团", r"shangoue\.meituan\.com", r"waimaie\.meituan\.com", r"yiyao\.meituan\.com", r"\bmeituan\b"):
         candidates.add("meituan")
     if contains(text, r"饿了么", r"\beleme\b", r"(?<!saas-retail)(?<!portal)\.ele\.me"):
         candidates.add("eleme")
@@ -132,7 +132,7 @@ def infer_task(request_text: str) -> tuple[str | None, list[str]]:
         candidates.add("headquarters_price_fill")
     if contains(text, r"调价", r"价格推送", r"目标价", r"target_price", r"活动价", r"修改原价"):
         candidates.add("price_push")
-    if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑", r"商品新增", r"创建商品", r"全店复制", r"快照导入", r"商品保存", r"商品信息保存", r"批量新增", r"unisave"):
+    if contains(text, r"店内码", r"商品名称编辑", r"修改商品名", r"修改规格", r"修改条码", r"商品信息编辑", r"商品新增", r"创建商品", r"全店复制", r"快照导入", r"商品保存", r"商品信息保存", r"批量新增", r"unisave", r"整店清空", r"清空.*(?:商品|分类)", r"删除.*(?:全部商品|所有商品|店内分类)", r"(?:个商品|全部商品).*删除"):
         candidates.add("product_editing")
     if contains(text, r"资质图", r"专项图", r"配料营养图", r"背签图", r"3c证书", r"吊牌", r"洗唛"):
         candidates.add("qualification_images_only")
@@ -176,9 +176,9 @@ def infer_intent(request_text: str) -> str:
         return "diagnosis"
     if contains(text, r"实现", r"修复代码", r"改代码", r"开发", r"重构", r"优化.*skill", r"修改.*skill"):
         return "implementation"
-    if contains(text, r"解释", r"审查", r"阅读", r"分析", r"对比", r"设计", r"只读", r"不(?:要)?(?:执行|写入|修改|保存)"):
+    if contains(text, r"解释", r"审查", r"阅读", r"分析", r"对比", r"设计", r"只读", r"不(?:要)?(?:执行|写入|修改|保存|删除|清空)"):
         return "review"
-    if contains(text, r"执行", r"处理", r"填充", r"补齐", r"补价", r"推送", r"调价", r"迁移", r"新增", r"导入", r"清退", r"修改", r"保存", r"回填"):
+    if contains(text, r"执行", r"处理", r"填充", r"补齐", r"补价", r"推送", r"调价", r"迁移", r"新增", r"导入", r"清退", r"修改", r"保存", r"回填", r"清空", r"删除"):
         return "execution"
     return "review"
 

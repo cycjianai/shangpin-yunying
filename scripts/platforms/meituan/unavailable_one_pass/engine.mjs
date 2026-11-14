@@ -8,6 +8,33 @@ const DETAIL_MODULE = 42467;
 const FORM_MODULE = 86925;
 const HARD_EVIDENCE = /3C|认证证书|能效|水效|检测报告|医疗器械|备案|小金盾|许可证|注册证|公章|证书编号|生产者|制造商/i;
 
+export const MANAGER_EFFECT_TYPES = Object.freeze({
+  UNAVAILABLE_BASE: 1,
+  TRAFFIC_AFFECTED: 2,
+  HIGH_RISK_COMPLAINT: 4,
+  AUDIT_REJECTED: 5,
+  VIOLATION_DELETED: 6,
+  UNDER_REVIEW: 7,
+  ACTIVITY_AFFECTED: 8,
+});
+
+// Homepage "无法售卖" card count equals the union/sum of effectType 1 + 5 + 6.
+export const UNAVAILABLE_CARD_EFFECT_TYPES = Object.freeze([
+  MANAGER_EFFECT_TYPES.UNAVAILABLE_BASE,
+  MANAGER_EFFECT_TYPES.AUDIT_REJECTED,
+  MANAGER_EFFECT_TYPES.VIOLATION_DELETED,
+]);
+
+const WALLE_QUA_PIC_PATTERNS = [
+  { pattern: /包装标签图/, qua_pic_type: 3, qua_pic_title: '包装标签图' },
+  { pattern: /3C(?:认证)?证书/i, qua_pic_type: 4, qua_pic_title: '3C认证证书' },
+  { pattern: /配料.*营养成分图|营养成分图|配料表图/, qua_pic_type: 5, qua_pic_title: '配料&营养成分图' },
+  { pattern: /纺织品使用说明|洗唛|吊牌/, qua_pic_type: 6, qua_pic_title: '纺织品使用说明图' },
+  { pattern: /背签图|化妆品备案/, qua_pic_type: 8, qua_pic_title: '背签图' },
+  { pattern: /医疗器械注册证|医疗器械备案/, qua_pic_type: 10, qua_pic_title: '医疗器械注册证' },
+  { pattern: /尺寸图/, qua_pic_type: 13, qua_pic_title: '尺寸图' },
+];
+
 function sha(value) {
   return crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 }
@@ -32,7 +59,86 @@ export function issueItems(row) {
       }
     }
   }
+  for (const detail of row?.walleProblemItemDetail?.problemItemDetails || []) {
+    const groupName = String(detail?.name || detail?.problemTypeName || '').trim();
+    for (const prompt of detail?.qualityScorePromptList || []) {
+      const problemMsg = String(prompt?.problemMsg || '').trim();
+      const tipMsg = String(prompt?.tipMsg || '').trim();
+      const combined = `${problemMsg} ${tipMsg}`.trim();
+      if (!combined) continue;
+      const quaHit = /缺少|缺失|上传/.test(combined)
+        ? WALLE_QUA_PIC_PATTERNS.find((entry) => entry.pattern.test(combined))
+        : null;
+      if (quaHit) {
+        out.push({
+          type: 'qualification_image',
+          field_name: groupName || '商品图片',
+          comment: problemMsg || combined,
+          qua_pic_type: quaHit.qua_pic_type,
+          qua_pic_title: quaHit.qua_pic_title,
+          qua_pic_desc: tipMsg,
+          current_url: '',
+        });
+      } else {
+        out.push({
+          type: 'field',
+          field_name: problemMsg || groupName,
+          comment: tipMsg || problemMsg,
+        });
+      }
+    }
+  }
   return out;
+}
+
+export function classifyPostSubmitState(row, underReviewSpuIds = new Set()) {
+  const id = String(row?.id || row?.spuId || '').trim();
+  const bizStatus = Number(row?.auditInfo?.bizAuditStatus ?? 0);
+  const odinStatus = Number(row?.auditInfo?.odinAuditStatus ?? 0);
+  const inReviewSet = underReviewSpuIds instanceof Set ? underReviewSpuIds.has(id) : Array.isArray(underReviewSpuIds) && underReviewSpuIds.map(String).includes(id);
+  if (inReviewSet || bizStatus === 6 || odinStatus === 2) {
+    return {
+      status: 'materialized_waiting_review',
+      forbid_auto_fix: true,
+      forbid_resubmit: true,
+    };
+  }
+  return {
+    status: 'actionable',
+    forbid_auto_fix: false,
+    forbid_resubmit: false,
+  };
+}
+
+export function buildAppealPayload({ appealInfo, reasonCodes = [], detailText = '', acctId, wmPoiId, detailPicList = [], btnStatus = 0 }) {
+  if (Number(btnStatus) === 2) throw new Error('appeal_already_submitted');
+  if (!appealInfo || typeof appealInfo !== 'object') throw new Error('appeal_info_missing');
+  const trimmedText = String(detailText || '').trim();
+  if (!trimmedText) throw new Error('appeal_detail_text_required');
+  const storeId = String(wmPoiId || '').trim();
+  if (!/^\d{5,20}$/.test(storeId)) throw new Error('appeal_store_identity_invalid');
+  const codes = [...new Set((reasonCodes || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!codes.length) throw new Error('appeal_reason_codes_required');
+
+  const info = JSON.parse(JSON.stringify(appealInfo));
+  if (info.odinAuditAppealItem && typeof info.odinAuditAppealItem === 'object') {
+    info.odinAuditAppealItem.auditAppealReasonCodeList = codes;
+    for (const block of info.odinAuditAppealItem.auditAppealReasonBlock || []) {
+      for (const item of block?.auditAppealReasonList || []) {
+        item.isSelected = codes.includes(Number(item?.code)) ? 1 : 0;
+      }
+    }
+    info.odinAuditAppealItem.detailText = trimmedText;
+    info.odinAuditAppealItem.detailPicList = Array.isArray(detailPicList) ? detailPicList : [];
+  }
+  return {
+    auditAppealInfo: JSON.stringify(info),
+    type: 0,
+    acctId: Number(acctId || 0),
+    wmPoiId: Number(storeId),
+    appealSource: 1,
+    unifiedAppealType: 0,
+  };
 }
 
 export function buildAuditUrl(templateUrl, spuId, wmPoiId) {

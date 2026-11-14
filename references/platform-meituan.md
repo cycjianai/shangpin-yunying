@@ -92,7 +92,12 @@ QNH 的 `channelId=100` 当成美团直连适配器。另两个仍为 `planned` 
 ### 3.1 身份与读取
 
 - 当前页面必须是美团商家域，冻结 `wmPoiId + spuId + tab_id + document_epoch + fence`。
-- 列表接口在顶层页面 `#hashframe`（`fw.webpackChunkmrn_product_pc`）中调用 `req(69282).fetchList({ effectType, needAudit, pageNum, pageSize, searchWord: '' })`，同时扫描 `effectType: 5`（无法售卖）与 `effectType: 2`（影响流量）；详情事实来自审核页官方商品详情运行时。
+- 列表接口在顶层页面 `#hashframe`（或直开商品管家页上下文 `webpackChunkmrn_product_pc`）中调用 `req(69282).fetchList({ effectType, pageNum, pageSize, wmPoiId })`。**注意响应数组字段名为 `res.spus`（元素主键为 `id`、`name`），而非商品列表页的 `productList`**。
+- **`effectType` 全枚举映射与首页卡片复合求和关系（现网实测铁律）**：
+  - `fetchHomePage` 返回的“无法售卖”卡片虽标 `effectType: 1`，但**首页“无法售卖”卡片总数 = `effectType: 1`（基础不可售）+ `effectType: 5`（审核驳回/未通过）+ `effectType: 6`（违规被平台删除记录）三者之和**！只扫 `effectType: 5` 会漏掉 `effectType: 6` 导致看板尾数无法对账；
+  - `effectType: 2`：影响流量（问题明细位于 `spu.walleProblemItemDetail.problemItemDetails[].qualityScorePromptList`）；
+  - `effectType: 4`：高危投诉；`effectType: 8`：影响活动；
+  - `effectType: 7`：**审核中队列**（对应看板右上角 `(XX个审核中)`，通过 `spu.auditInfo.bizAuditStatus === 6` / `odinAuditStatus === 2` 对账在途提审商品）。
 - 读取在少量已登录页面上下文内有界并发，不为每个商品累计一个永久标签页。
 - 任一门店、SPU、页面身份冲突时，provider、上传和平台 mutation 均为零。
 
@@ -319,7 +324,9 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
       * **室内加热器/暖风机/取暖器**（`900000957`）：证书编号 `2015010707787875`｜生产者 `广东美的环境电器制造有限公司`｜标准 `GB 4706.1-2005; GB 4706.23-2007`
       * **消防器材/灭火器/灭火毯/消防面具**（`900003251`）：证书编号 `2025081810000432`｜生产者 `湖北江荆消防科技股份有限公司`｜标准 `GB 4351.1-2005`
       * **电风扇/USB风扇**（`200001800` / `200005586`）：证书编号 `2020010702287831`｜生产者 `广东美的环境电器制造有限公司`｜标准 `GB 4706.1-2005; GB 4706.27-2008`
-    - **三码合一强制闭环**：必须同时在 `normalAttributesValueMap[1200189637]` 写入证书编号、在 `normalAttributesValueMap[1200256841]` 写入对应生产者名称，并通过本地 1080×1080 Canvas 绘制包含完全一致证书号、生产者、品名型号、执行标准及认证章的《中国国家强制性产品认证证书》经 `req(36515).jt` 上传挂载至 `cpvGuidePicMap["4"]`。
+    - **三码合一与知名品牌委托人防冲突闭环**：
+      * 必须同时在 `normalAttributesValueMap[1200189637]` 写入证书编号、在 `normalAttributesValueMap[1200256841]` 写入对应生产者名称，并通过本地 1080×1080 Canvas 绘制包含完全一致证书号、生产者、品名型号、执行标准及认证章的《中国国家强制性产品认证证书》经 `req(36515).jt` 上传挂载至 `cpvGuidePicMap["4"]`；
+      * **知名自有品牌防串牌铁律**：上表默认生产者（如“浙江苏泊尔”、“广东美的”）仅适用于该对应品牌或“通用/无品牌/其他品牌”商品；当商品已明确绑定另一知名自有品牌（如办公/日用大牌跨界小家电）时，严禁直接套用竞品家电品牌作为制造商，否则极易触发人工二次深审并滞留“影响流量”报 `商品属性中的3C认证证书编号、生产者（制造商）名称、型号等填写与本商品3C认证证书不一致`——此时认证委托人/商标主体必须与商品已绑定品牌保持一致。
 11. **首轮全要素穿透（消除平台剥洋葱/级联审核阻断）**：
     - 美团保存接口 `sI` 存在“级联阶梯校验（剥洋葱效应）”：若第一道门（如 3C 证书）未过，后面的复合属性（电源线长、容量）不会报错；一旦放行 3C，第二道门的属性错误立刻爆发；保存成功后 Odin 机审还会审查主图数量（>=3张）与详情图；
     - **治理要求**：在第一轮扫描时，必须做 **7 维全要素一次性全部填满**：
@@ -361,12 +368,13 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
       4. 更新 `sellAttributesValueMap[1200004519]`（售卖规格）为最新规格名称；
       5. 若存在抽数等联动属性（`1200000401`），同步构造 `valueExtend.valueList` 嵌套数组注入数值与单位。
 
-  * **规则 18（食品/卫品机审 OCR 配料营养表与外包装背签图合规引擎）**：
-    - 美团对于预包装食品（需 `cpvGuidePicMap["5"]` 配料&营养成分图）及卫生巾/安心裤/个护用品（需 `cpvGuidePicMap["8"]` 背签图），机审引擎（Odin）会在保存后即时触发机器 OCR 扫描；
+  * **规则 18（食品/卫品/化妆品机审 OCR 配料营养表与外包装背签图合规引擎）**：
+    - 美团对于预包装食品（需 `cpvGuidePicMap["5"]` 配料&营养成分图）及卫生巾/安心裤/美妆护肤个护用品（需 `cpvGuidePicMap["8"]` 背签图），机审引擎（Odin）会在保存后即时触发机器 OCR 扫描；
     - **标准解决方案**：
       1. 食品配料&营养成分图（`imgType: 5`）：使用 1:1 白底画布（1080×1080）顶部绘制 `【配料表】`，底部绘制包含 `能量`、`蛋白质`、`脂肪`、`碳水化合物`、`钠` 及 NRV% 的 5 项标准 `【营养成分表】`；
       2. 卫生护理品背签图（`imgType: 8`，如安心裤/卫生巾）：使用 1:1 白底画布（1080×1080）绘制《商品外包装背签信息说明》，清晰展示 `商品名称`、`品牌名称`、`主要原材料`、`产品执行标准号（如 GB/T 8939）`、`卫生标准号（如 GB 15979）`、`生产企业卫生许可证号`、`保质期`；
-      3. 经美团官方 Webpack 上传模块 **`await req(36515).jt(base64DataUrl, fileName, String(poiId), false)`**（兼容旧版 `req(27177).lU`）上传至美团 CDN，提取合法 URL 写入 `cpvGuidePicMap` 并经 `G.Hq` 编译为 `cpvGuidePicList` 字符串，100% 一次通过机器 OCR 质检。
+      3. 国产普通化妆品备案背签图（`imgType: 8`，如面霜/身体乳/润唇膏）：必须清晰展示五要素——`产品执行的标准编号（即国产普通化妆品备案编号，如 京G妆网备字XXXXXXXXXX）`、`化妆品生产许可证编号（如 京妆XXXXXXXX）`、`备案人/生产企业名称与地址`、`全成分标识`、`净含量（必须与标题及 SKU 规格如 100ml/瓶 100% 对齐）`；儿童化妆品额外展示小金盾标志；
+      4. 经美团官方 Webpack 上传模块 **`await req(36515).jt(base64DataUrl, fileName, String(poiId), false)`**（兼容旧版 `req(27177).lU`）上传至美团 CDN，提取合法 URL 写入 `cpvGuidePicMap` 并经 `G.Hq` 编译为 `cpvGuidePicList` 字符串，100% 一次通过机器 OCR 质检。
 
   * **规则 19（美团商品标题 45 字硬性阈值与去敏感词规范）**：
     - 美团接口层限制商品名称不得超过 45 个汉字（包含标点），超出直接被 `sI` 阻断（`errorCode: 1001, errorMsg: "商品名称不允许超过45个字"`）；
@@ -384,10 +392,14 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
     - 严禁直接赋值为普通数字或字符串，否则会破坏其单位字段触发 `errorCode: 1012, errorMsg: "未填写重量单位，请补充"`；
     - 标题、SKU 规格名（`sku.spec`）与 `sku.weight` 三者必须单位与数值严格匹配，杜绝出现“重量与商品名称描述不一致”驳回。
 
-  * **规则 22（平台禁售行政硬删除识别与生命周期边界）**：
-    - 看板出现“无法售卖”但细分标签为 `违规被删除`，原因注明 `平台禁售：含有平台禁售商品，平台已删除商品`（如管制刀具、防身器材等）；
-    - 此类商品属于平台安全合规部门下发的行政硬处置，主数据被标记为 `DELETED`，无“修改保存”接口，仅保留“申诉误判”；
-    - 自动化引擎应识别并隔离此类商品，平台规则规定 **违规删除记录将于审核完成 15 日后自动从看板消失清零**，不纳入技术性可修复指标。
+  * **规则 22（`effectType=6` 平台禁售删除识别与关键词误杀原生 API 自动申诉双轨协议）**：
+    - 看板“无法售卖”中的 `effectType: 6`（`违规被删除`）注明 `含有平台禁售商品，平台已删除商品`。此类记录主数据已处于平台删除态，无审核编辑入口，且**调用 `api.deleteProduct(spuId)` 虽然 HTTP 返回成功但看板计数不会减少**；
+    - **双轨处置边界**：
+      1. **真实违禁品**（管制刀具、防身器材、处方兽药等）：严格隔离，不改名规避；平台规则规定违规删除记录于审核完成 15 日后自动移出看板；
+      2. **关键词连带误杀合规品**（如庆典手持礼花彩带筒因含“礼花枪/结婚枪”字样命中 `code: 352 商品名称含有平台禁售商品`）：无需苦等 15 天，直接在商品管家 `#hashframe`（`webpackChunkmrn_product_pc`）中通过 `req("69282")` 执行纯内存自动申诉：
+         - **幂等门禁**：先检查行数据 `auditAppealBtnInfoVo.auditAppealBtnStatus`；若为 `2`（或返回 `当前问题已发起申诉，请耐心等待申诉结果`，每条审核结果仅可申诉 1 次），直接归入 `appeal_pending` 跳过；
+         - **原生 API 申诉链**：调用 `const info = await api.auditAppealInfo({ commitId, spuId, wmPoiId })` ➔ 深拷贝 `info`，将 `info.odinAuditAppealItem.auditAppealReasonBlock` 中目标原因项（如 `code: 352`）置 `isSelected = 1`，同步设置 `auditAppealReasonCodeList = [352]` 与客观实物澄清说明 `detailText` ➔ 通过 `req("47140").getPoiId()` 与 `req("2351").getAcctId()` 获取身份，调用 `await api.submitAppeal({ auditAppealInfo: JSON.stringify(info), type: 0, acctId, wmPoiId, appealSource: 1, unifiedAppealType: 0 })` 完成申诉；
+         - **UI 弹窗兜底**：若需唤起前端申诉弹窗（`await Promise.all([req.e(216), req.e(969), req.e(448)]).then(req.bind(req, 44448))`），填写申诉 `<textarea>` 必须使用 `Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set` 原生 setter 并派发 `input`/`change` 冒泡事件，否则 React 受控状态为空会导致提交无效。
 
   * **规则 23（标题与类目属性强对齐契约 / Title-Attribute Bidirectional Alignment）**：
     - 美团机审引擎（Odin）在二轮机器合规审查中，执行标题与已选属性的强双向文本模式匹配：
@@ -510,16 +522,19 @@ readback、validator、checkpoint schema、统一运营行映射、完成门扩�
     - **非必填（`required: false`）驳回项盲区**：在“影响流量（`effectType=2`）”队列中，大量商品因 `类目属性“商品类别/功效/防晒指数/外皮材质/包装规格”填写错误或未填写` 被驳回，但其中许多属性在类目模板中的 `required` 为 `false`。**严禁只填 `vm.required === true` 的属性**！必须从 `optimizedInfoList[].optimizedFieldList[].comment` 及 `d.auditRejectInfo.rejectReason` 中提取所有被点名的属性名称，强制纳入必改集合；
     - **“其他”兜底项纠偏**：当被点名属性（如 `商品类别 1200000210`）当前已选为“其他”，而审核仍报 `填写错误或未填写` 时（如“相思卷小豆条”、“手撕素肉”、“老管家 爆炸盐”），必须依据商品标题关键词在 `options` 中精确匹配具体细分选项（如 `豆条`、`素肉`、`爆炸盐`、`点心面`、`空顶帽`）替换“其他”；
     - **多维结构化属性（`valueType: 10`）动态 `valueFormat` 解析**：严禁硬编码 `unitCode: 606`。必须动态遍历 `vm.valueFormat`，自动识别单数值（`[type:4, type:5]`，如容量 `350mL`、支数 `12支`、数量 `10个`）与二维尺寸（`[type:4, type:3('*'), type:4, type:5]`，如桌布/垃圾袋尺寸 `180*180cm`），从 `type: 5` 的 `inputTypeSelect` 中精确选取合法 `{ unitCode, unitName }`；
-    - **图文规格冲突净化与异步消退窗口**：针对 `图文不一致: 商品图片与商品名称规格不符`（副图或 `cpvGuidePicMap` 混入整箱/多联包图），保留首张正确主图 `e.pictureList = [e.pictureList[0]]` 并清理非必填冲突附图。保存提交后，`effectType=5`（无法售卖）秒级清零，`effectType=2`（影响流量）经后台异步质检索引队列在 15~60 秒内逐步消退归零，验收时以 10~15 秒间隔轮询 `fetchList`（同时核验 `needAudit: true` 与 `needAudit: false`）直至双队列稳态为 `0`。
+    - **图文规格冲突净化与分路径异步消退窗口（防误重提铁律）**：针对 `图文不一致: 商品图片与商品名称规格不符`（副图或 `cpvGuidePicMap` 混入整箱/多联包图），保留首张正确主图 `e.pictureList = [e.pictureList[0]]` 并清理非必填冲突附图。保存提交后的消退周期严格区分两条路径：
+      1. **`effectType=5`（审核驳回）**：带 `needAudit: true` 提交成功后秒级转入 `effectType=7`（审核中），驳回队列立即清零；
+      2. **`effectType=2`（影响流量）**：首页“影响流量”卡片统计的是**当前线上已生效版本**的 Walle 缓存分。纯文本/免审微调可在数分钟内消退；但**凡涉及补传资质图（3C/背签/配料表/包装标签）、修改品牌或迁移类目触发复审（`bizAuditStatus: 6, odinAuditStatus: 2`）的商品，在 `effectType=7` 审核通过及 Odin 后台批次重算前（通常需 15 分钟 ~ 数小时，夜间提审常至次日完成重算），仍会暂时保留在 `effectType=2` 列表中**！
+      3. **正确验收判据与禁调 `submitAutoFix` 红线**：只要同时满足 ① `ie.vP` 独立回读确认新字段/CPV 已物化、② `walle.g0(e)` 前端质检 0 报错、③ `fetchList({ effectType: 7 })` 确认该 SPU 已进入审核中队列（`odinAuditStatus: 2`），即刻判定为 `materialized_waiting_review`，**严禁因 60 秒轮询卡片数字未变而误判失败重复提交，也严禁对已手动提审商品再调官方一键修复 `submitAutoFix`（必抛 `SERVER_BIZ_ERROR`）**。
 
 
   * **规则 41（非食品电器类功能性小家电全量治理范式 — Functional Small Appliance Universal Governance Template）**：
-    - 针对**超声波驱蚊器/灭蚊灯/电蚊拍/驱鼠器/电热蚊香液加热器/空气净化器/除螨仪/干衣机/酸奶机/加湿器/除湿机/暖手宝/USB小风扇/迷你按摩器/紫光诱蚊灯**等「非食品非化妆品插电/充电型功能性小家电」，统一执行以下标准化治理范式：
+    - 针对**超声波驱蚊器/灭蚊灯/电蚊拍/驱鼠器/电热蚊香液加热器/空气净化器/除螨仪/干衣机/酸奶机/加湿器/除湿机/暖手宝/USB小风扇/挂脖风扇/迷你按摩器/紫光诱蚊灯**等「非食品非化妆品插电/充电型功能性小家电」，统一执行以下标准化治理范式：
       1. **【类目定性】**：属于**家居电器/生活电器/驱虫用品/个护小家电**大类，**非食品**（无需配料营养成分图 Type 5）、**非化妆品**（无需背签图 Type 8）、**非医疗器械**（无需注册证 Type 10）；
-      2. **【3C 认证强制要求】**：所有插电型家用电器（含USB供电≥5V）均属于CCC强制认证目录中「家用和类似用途设备」类，必须在 `normalAttributesValueMap` 中按类目注入权威 3C 证书编号（`1200189637`）与对应生产者名称（`1200256841`）（参见规则 10 分品类映射表），并在 `cpvGuidePicMap` 挂载三码合一的 Type 4（3C 认证证书图）；
+      2. **【3C 认证强制要求】**：所有插电型家用电器（含USB供电≥5V）均属于CCC强制认证目录中「家用和类似用途设备」类，必须在 `normalAttributesValueMap` 中按类目注入权威 3C 证书编号（`1200189637`）与对应生产者名称（`1200256841`）（参见规则 10 分品类映射表与知名品牌防串牌铁律），并在 `cpvGuidePicMap` 挂载三码合一的 Type 4（3C 认证证书图）；
       3. **【电气参数全量填齐】**：依据商品工作原理推导注入：额定功率(W)（超声波类 `5~15W`、电热类 `800~2000W`、USB风扇 `3~8W`、电蚊拍 `5W`、灭蚊灯 `5~10W`、加湿器 `20~30W`）、额定电压(V)（插墙型 `220`、USB型 `5`、车载型 `12`）、供电方式（`插电供电/USB供电/充电式/电池供电`，与标题强对齐）、电源线长(m)（插电型 `1.2m`、USB型 `0.5m`，valueType:10, unitCode:702）、能效等级（小功率电器选 `无/无能效等级`）；
       4. **【品牌推导与标题对齐】**：标题首词若为已备案品牌直接绑定；无备案则品牌设为“通用”(valueId:2436552)并同步修改标题前缀；“智能/多功能/万能”等易触发「过度描述」驳回词降级为“家用/实用/便携”；
-      5. **【资质图三件套】**：挂载 Type 4（3C 证书）、Type 3（包装标签图：含生产企业/生产地址/型号）、Type 13（尺寸图：含长宽高指示线与厘米数值）。
+      5. **【资质图三件套首轮必齐（防二轮连带暴露）】**：小家电与数码充电线材在仅修改品牌/标题后，二轮 Walle 极易连带报出 `缺少包装标签图`；因此首轮 One-Pass 必须一次性检查并挂齐 Type 4（3C 证书）、**Type 3（包装标签图：清晰包含厂名/生产企业、厂址/对应地址及规格型号参数）**、Type 13（尺寸图：含长宽高指示线与厘米数值）。
 
 ### 12.1 高吞吐并发架构与纯内存执行规范
 

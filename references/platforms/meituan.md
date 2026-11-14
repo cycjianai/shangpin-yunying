@@ -20,9 +20,9 @@
 ## 功能分支
 
 - 调价推送：`runtime_guided`；加载 `tasks/price-push.md` 与 [美团调价线索](../meituan.md)。
-- 商品名称/规格/条码/店内码编辑与全量快照新增：`runtime_guided`（全量复制/保存成熟协议）；加载 `tasks/product-editing.md` 与 [美团商品编辑与快照新增保存](../meituan-product-editing.md)。
+- 商品名称/规格/条码/店内码编辑、全量快照新增与整店商品/分类清空：`runtime_guided`（全量复制/保存与逆序清店成熟协议）；加载 `tasks/product-editing.md` 与 [美团商品编辑、快照新增与整店清空](../meituan-product-editing.md)。
 - 医疗器械整店迁移：`runtime_guided`；加载 `tasks/medical-device-store-migration.md`，不得走闪购 payload。
-- 闪购不可售治理：`implemented`；加载 `tasks/unavailable-one-pass.md` 与 [美团直连模块](../platform-meituan.md)。
+- 闪购不可售/影响流量治理与误判申诉：`implemented`；加载 `tasks/unavailable-one-pass.md` 与 [美团直连模块](../platform-meituan.md)。
 - 独立渠道属性与独立资质图模式：当前为 `planned`；不可借用不可售 writer 冒充实现。
 
 ## 全量商品保存与快照极速新增核心规程（uniSave 协议）
